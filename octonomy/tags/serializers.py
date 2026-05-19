@@ -9,6 +9,7 @@ from octonomy.tags.services import validate_metadata
 
 class TagSerializer(serializers.ModelSerializer):
     parent_id = serializers.UUIDField(source="parent.id", read_only=True)
+    usage_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Tag
@@ -23,10 +24,17 @@ class TagSerializer(serializers.ModelSerializer):
             "parent_id",
             "metadata",
             "is_active",
+            "usage_count",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "tenant_id", "created_at", "updated_at"]
+
+    def get_usage_count(self, tag) -> int:
+        usage_count = getattr(tag, "usage_count", None)
+        if usage_count is not None:
+            return usage_count
+        return tag.assignments.count()
 
 
 class TagWriteSerializer(serializers.Serializer):

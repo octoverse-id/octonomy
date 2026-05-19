@@ -9,6 +9,14 @@ Authorization: Bearer dev-token
 X-Tenant-ID: tenant_demo
 ```
 
+Optional mutation audit actor header:
+
+```text
+X-Actor-ID: svc-catalog
+```
+
+Tag responses include `usage_count`, computed from current tag assignments.
+
 Errors use this shape:
 
 ```json
@@ -21,6 +29,17 @@ Errors use this shape:
   }
 }
 ```
+
+Audit endpoints:
+
+```text
+GET /api/v1/audit-logs
+GET /api/v1/tags/{tag_id}/audit-logs
+GET /api/v1/resources/{resource_type}/{resource_id}/audit-logs
+```
+
+`GET /api/v1/audit-logs` supports filters for `application_id`, `action`, `entity_type`,
+`entity_id`, `tag_id`, `resource_type`, `resource_id`, `actor_id`, and `operation_id`.
 
 Paginated list endpoints use:
 

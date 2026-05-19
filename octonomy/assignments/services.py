@@ -7,6 +7,13 @@ from django.db import IntegrityError, transaction
 from rest_framework import serializers
 
 from octonomy.assignments.models import TagAssignment
+from octonomy.audit.services import (
+    assignment_snapshot,
+    build_audit_log,
+    create_audit_log,
+    create_audit_logs,
+)
+from octonomy.core.audit import AuditContext
 from octonomy.core.errors import ApplicationMismatchError, InactiveTagError
 from octonomy.tags.models import Tag
 
@@ -52,17 +59,32 @@ def assign_tag(
     resource_type: str,
     resource_id: str,
     assigned_by: str | None = None,
+    audit_context: AuditContext | None = None,
 ) -> AssignmentResult:
     validate_tag_for_assignment(tag, tenant_id, application_id)
     try:
-        assignment, created = TagAssignment.objects.get_or_create(
-            tenant_id=tenant_id,
-            application_id=application_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            tag=tag,
-            defaults={"assigned_by": assigned_by},
-        )
+        with transaction.atomic():
+            assignment, created = TagAssignment.objects.get_or_create(
+                tenant_id=tenant_id,
+                application_id=application_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                tag=tag,
+                defaults={"assigned_by": assigned_by},
+            )
+            if created:
+                create_audit_log(
+                    tenant_id=tenant_id,
+                    application_id=application_id,
+                    action="assignment.created",
+                    entity_type="tag_assignment",
+                    entity_id=str(assignment.id),
+                    tag_id=tag.id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    audit_context=audit_context,
+                    changes={"after": assignment_snapshot(assignment)},
+                )
     except IntegrityError:
         assignment = TagAssignment.objects.get(
             tenant_id=tenant_id,
@@ -81,14 +103,34 @@ def remove_tag_assignment(
     tag_id,
     resource_type: str,
     resource_id: str,
+    audit_context: AuditContext | None = None,
 ) -> int:
-    deleted, _ = TagAssignment.objects.filter(
+    queryset = TagAssignment.objects.filter(
         tenant_id=tenant_id,
         application_id=application_id,
         tag_id=tag_id,
         resource_type=resource_type,
         resource_id=resource_id,
-    ).delete()
+    )
+    assignments = list(queryset)
+    if not assignments:
+        return 0
+
+    with transaction.atomic():
+        for assignment in assignments:
+            create_audit_log(
+                tenant_id=tenant_id,
+                application_id=application_id,
+                action="assignment.removed",
+                entity_type="tag_assignment",
+                entity_id=str(assignment.id),
+                tag_id=assignment.tag_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                audit_context=audit_context,
+                changes={"before": assignment_snapshot(assignment)},
+            )
+        deleted, _ = queryset.delete()
     return deleted
 
 
@@ -99,6 +141,7 @@ def bulk_assign_tags(
     resource_id: str,
     tag_ids: list,
     assigned_by: str | None = None,
+    audit_context: AuditContext | None = None,
 ) -> dict:
     tags = get_assignable_tags(tenant_id, application_id, tag_ids)
     created = 0
@@ -106,18 +149,37 @@ def bulk_assign_tags(
     assignments = []
 
     with transaction.atomic():
+        audit_logs = []
         for tag in tags:
-            result = assign_tag(
+            assignment, was_created = TagAssignment.objects.get_or_create(
                 tenant_id=tenant_id,
                 application_id=application_id,
-                tag=tag,
                 resource_type=resource_type,
                 resource_id=resource_id,
-                assigned_by=assigned_by,
+                tag=tag,
+                defaults={"assigned_by": assigned_by},
             )
-            created += int(result.created)
-            existing += int(not result.created)
-            assignments.append(result.assignment)
+            created += int(was_created)
+            existing += int(not was_created)
+            assignments.append(assignment)
+
+            if was_created:
+                audit_log = build_audit_log(
+                    tenant_id=tenant_id,
+                    application_id=application_id,
+                    action="assignment.created",
+                    entity_type="tag_assignment",
+                    entity_id=str(assignment.id),
+                    tag_id=tag.id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    audit_context=audit_context,
+                    changes={"after": assignment_snapshot(assignment)},
+                )
+                if audit_log is not None:
+                    audit_logs.append(audit_log)
+
+        create_audit_logs(audit_logs)
 
     return {"created": created, "existing": existing, "skipped": 0, "assignments": assignments}
 
@@ -128,17 +190,41 @@ def bulk_remove_tags(
     resource_type: str,
     resource_id: str,
     tag_ids: list,
+    audit_context: AuditContext | None = None,
 ) -> int:
     max_bulk = getattr(settings, "MAX_BULK_TAGS", 200)
     if len(tag_ids) > max_bulk:
         raise serializers.ValidationError({"tag_ids": [f"Maximum bulk size is {max_bulk}."]})
-    deleted, _ = TagAssignment.objects.filter(
+    queryset = TagAssignment.objects.filter(
         tenant_id=tenant_id,
         application_id=application_id,
         resource_type=resource_type,
         resource_id=resource_id,
         tag_id__in=tag_ids,
-    ).delete()
+    )
+    assignments = list(queryset)
+    if not assignments:
+        return 0
+
+    with transaction.atomic():
+        audit_logs = []
+        for assignment in assignments:
+            audit_log = build_audit_log(
+                tenant_id=tenant_id,
+                application_id=application_id,
+                action="assignment.removed",
+                entity_type="tag_assignment",
+                entity_id=str(assignment.id),
+                tag_id=assignment.tag_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                audit_context=audit_context,
+                changes={"before": assignment_snapshot(assignment)},
+            )
+            if audit_log is not None:
+                audit_logs.append(audit_log)
+        create_audit_logs(audit_logs)
+        deleted, _ = queryset.delete()
     return deleted
 
 
@@ -149,6 +235,7 @@ def replace_resource_tags(
     resource_id: str,
     tag_ids: list,
     assigned_by: str | None = None,
+    audit_context: AuditContext | None = None,
 ) -> dict:
     tags = get_assignable_tags(tenant_id, application_id, tag_ids)
     requested_ids = {tag.id for tag in tags}
@@ -160,14 +247,41 @@ def replace_resource_tags(
             resource_type=resource_type,
             resource_id=resource_id,
         )
-        removed, _ = existing.exclude(tag_id__in=requested_ids).delete()
+        removed_assignments = list(existing.exclude(tag_id__in=requested_ids))
+        removed_ids = [assignment.id for assignment in removed_assignments]
+        audit_logs = []
+        for assignment in removed_assignments:
+            audit_log = build_audit_log(
+                tenant_id=tenant_id,
+                application_id=application_id,
+                action="assignment.removed",
+                entity_type="tag_assignment",
+                entity_id=str(assignment.id),
+                tag_id=assignment.tag_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                audit_context=audit_context,
+                changes={"before": assignment_snapshot(assignment)},
+            )
+            if audit_log is not None:
+                audit_logs.append(audit_log)
+        create_audit_logs(audit_logs)
+        removed, _ = TagAssignment.objects.filter(id__in=removed_ids).delete()
         remaining_ids = set(existing.values_list("tag_id", flat=True))
 
         created = 0
         for tag in tags:
             if tag.id in remaining_ids:
                 continue
-            assign_tag(tenant_id, application_id, tag, resource_type, resource_id, assigned_by)
+            assign_tag(
+                tenant_id,
+                application_id,
+                tag,
+                resource_type,
+                resource_id,
+                assigned_by,
+                audit_context=audit_context,
+            )
             created += 1
 
         final_assignments = list(
