@@ -1,0 +1,39 @@
+[project]
+name = "octonomy"
+version = "0.1.0"
+description = "Multi-tenant tag management and taxonomy service."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "django>=5.0,<5.2",
+  "djangorestframework>=3.15,<3.16",
+  "drf-spectacular>=0.27,<0.28",
+  "psycopg[binary]>=3.2,<3.3",
+  "dj-database-url>=2.2,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "factory-boy>=3.3,<3.4",
+  "pytest>=8.3,<9.0",
+  "pytest-django>=4.9,<5.0",
+  "ruff>=0.8,<0.9",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["test_*.py", "*_test.py"]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B904"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
