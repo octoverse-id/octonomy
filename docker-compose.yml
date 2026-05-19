@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: octonomy
+      POSTGRES_USER: octonomy
+      POSTGRES_PASSWORD: octonomy
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U octonomy -d octonomy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    environment:
+      DJANGO_SECRET_KEY: local-dev-secret
+      DJANGO_DEBUG: "true"
+      DATABASE_URL: postgres://octonomy:octonomy@db:5432/octonomy
+      ALLOWED_HOSTS: localhost,127.0.0.1,0.0.0.0
+      AUTH_BEARER_TOKEN_DEV: dev-token
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+
+volumes:
+  postgres_data:

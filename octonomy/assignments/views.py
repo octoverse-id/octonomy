@@ -1,0 +1,193 @@
+from __future__ import annotations
+
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
+from rest_framework import status
+from rest_framework.decorators import api_view
+from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.response import Response
+
+from octonomy.assignments.selectors import (
+    assignments_for_tenant,
+    filter_resource_tags,
+    filter_tag_resources,
+)
+from octonomy.assignments.serializers import (
+    AssignmentDeleteSerializer,
+    AssignmentSerializer,
+    AssignmentWriteSerializer,
+    BulkAssignSerializer,
+    BulkRemoveSerializer,
+    ResourceReplaceSerializer,
+    ResourceTagSerializer,
+    TagResourceSerializer,
+)
+from octonomy.assignments.services import (
+    assign_tag,
+    bulk_assign_tags,
+    bulk_remove_tags,
+    remove_tag_assignment,
+    replace_resource_tags,
+)
+from octonomy.core.pagination import OctonomyLimitOffsetPagination
+from octonomy.core.responses import data_response
+from octonomy.tags.models import Tag
+from octonomy.tags.serializers import TagSerializer
+
+
+def require_tenant(request) -> str:
+    if not request.tenant_id:
+        raise ValidationError({"X-Tenant-ID": ["This header is required."]})
+    return request.tenant_id
+
+
+def paginate(request, queryset, serializer_class):
+    paginator = OctonomyLimitOffsetPagination()
+    page = paginator.paginate_queryset(queryset, request)
+    serializer = serializer_class(page, many=True)
+    return paginator.get_paginated_response(serializer.data)
+
+
+@extend_schema(
+    methods=["POST"],
+    request=AssignmentWriteSerializer,
+    responses={200: AssignmentSerializer, 201: AssignmentSerializer},
+)
+@extend_schema(methods=["DELETE"], request=AssignmentDeleteSerializer, responses={204: None})
+@api_view(["POST", "DELETE"])
+def assignment_collection(request):
+    tenant_id = require_tenant(request)
+
+    if request.method == "DELETE":
+        serializer = AssignmentDeleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        remove_tag_assignment(
+            tenant_id=tenant_id,
+            application_id=data["application_id"],
+            tag_id=data["tag_id"],
+            resource_type=data["resource_type"],
+            resource_id=data["resource_id"],
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    serializer = AssignmentWriteSerializer(data=request.data, context={"tenant_id": tenant_id})
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+    result = assign_tag(
+        tenant_id=tenant_id,
+        application_id=data["application_id"],
+        tag=data["tag"],
+        resource_type=data["resource_type"],
+        resource_id=data["resource_id"],
+        assigned_by=data.get("assigned_by"),
+    )
+    response_status = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+    return data_response(AssignmentSerializer(result.assignment).data, status=response_status)
+
+
+@extend_schema(
+    methods=["POST"],
+    request=BulkAssignSerializer,
+    responses=AssignmentSerializer(many=True),
+)
+@api_view(["POST"])
+def bulk_assign(request):
+    tenant_id = require_tenant(request)
+    serializer = BulkAssignSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+    result = bulk_assign_tags(tenant_id=tenant_id, **data)
+    return data_response(
+        {
+            "created": result["created"],
+            "existing": result["existing"],
+            "skipped": result["skipped"],
+            "assignments": AssignmentSerializer(result["assignments"], many=True).data,
+        }
+    )
+
+
+@extend_schema(
+    methods=["POST"],
+    request=BulkRemoveSerializer,
+    responses={200: OpenApiResponse(description="Bulk remove summary.")},
+)
+@api_view(["POST"])
+def bulk_remove(request):
+    tenant_id = require_tenant(request)
+    serializer = BulkRemoveSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    removed = bulk_remove_tags(tenant_id=tenant_id, **serializer.validated_data)
+    return data_response({"removed": removed})
+
+
+@extend_schema(
+    methods=["GET"],
+    parameters=[
+        OpenApiParameter("application_id", str, required=True),
+        OpenApiParameter("include_inactive", bool, required=False),
+        OpenApiParameter("type", str, required=False),
+        OpenApiParameter("limit", int, required=False),
+        OpenApiParameter("offset", int, required=False),
+    ],
+    responses=ResourceTagSerializer(many=True),
+)
+@extend_schema(
+    methods=["POST"],
+    request=ResourceReplaceSerializer,
+    responses=ResourceTagSerializer(many=True),
+)
+@api_view(["GET", "POST"])
+def resource_tags(request, resource_type, resource_id):
+    tenant_id = require_tenant(request)
+
+    if request.method == "GET":
+        application_id = request.query_params.get("application_id")
+        if not application_id:
+            raise ValidationError({"application_id": ["This query parameter is required."]})
+        queryset = assignments_for_tenant(tenant_id).for_resource(
+            application_id=application_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+        )
+        queryset = filter_resource_tags(queryset, request.query_params)
+        return paginate(request, queryset, ResourceTagSerializer)
+
+    serializer = ResourceReplaceSerializer(
+        data={**request.data, "resource_type": resource_type, "resource_id": resource_id}
+    )
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+    result = replace_resource_tags(tenant_id=tenant_id, **data)
+    return data_response(
+        {
+            "created": result["created"],
+            "removed": result["removed"],
+            "tags": TagSerializer(
+                [assignment.tag for assignment in result["assignments"]], many=True
+            ).data,
+        }
+    )
+
+
+@extend_schema(
+    parameters=[
+        OpenApiParameter("application_id", str, required=False),
+        OpenApiParameter("resource_type", str, required=False),
+        OpenApiParameter("limit", int, required=False),
+        OpenApiParameter("offset", int, required=False),
+    ],
+    responses=TagResourceSerializer(many=True),
+)
+@api_view(["GET"])
+def tag_resources(request, tag_id):
+    tenant_id = require_tenant(request)
+    try:
+        tag = Tag.objects.for_tenant(tenant_id).get(id=tag_id)
+    except Tag.DoesNotExist:
+        raise NotFound("Tag was not found.")
+
+    queryset = filter_tag_resources(
+        assignments_for_tenant(tenant_id).filter(tag=tag), request.query_params
+    )
+    return paginate(request, queryset, TagResourceSerializer)
