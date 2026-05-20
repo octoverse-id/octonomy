@@ -37,6 +37,47 @@ def validate_tag_parent(tenant_id: str, application_id: str | None, parent: Tag 
         )
 
 
+def validate_tag_vocabulary(
+    tenant_id: str,
+    application_id: str | None,
+    vocabulary,
+    *,
+    require_active: bool = True,
+) -> None:
+    if vocabulary is None:
+        return
+
+    if vocabulary.tenant_id != tenant_id:
+        raise DomainError(
+            "Vocabulary must belong to the same tenant.",
+            {"vocabulary_id": ["Invalid tenant."]},
+        )
+
+    if require_active and not vocabulary.is_active:
+        raise DomainError(
+            "Inactive vocabularies cannot be assigned to tags.",
+            {"vocabulary_id": ["Inactive vocabularies cannot be assigned to tags."]},
+        )
+
+    if application_id is None and vocabulary.application_id is not None:
+        raise DomainError(
+            "Shared tags can only use shared vocabularies.",
+            {"vocabulary_id": ["Shared tags can only use shared vocabularies."]},
+        )
+
+    if application_id is not None and vocabulary.application_id not in {None, application_id}:
+        raise DomainError(
+            "Application tags can only use shared or same-application vocabularies.",
+            {"vocabulary_id": ["Vocabulary application is incompatible."]},
+        )
+
+
+def serialize_related_audit_value(field: str, value):
+    if field in {"parent", "vocabulary"} and value:
+        return str(value.id)
+    return value
+
+
 def create_tag(
     tenant_id: str,
     data: dict,
@@ -44,6 +85,7 @@ def create_tag(
 ) -> Tag:
     data["tenant_id"] = tenant_id
     validate_tag_parent(tenant_id, data.get("application_id"), data.get("parent"))
+    validate_tag_vocabulary(tenant_id, data.get("application_id"), data.get("vocabulary"))
     try:
         with transaction.atomic():
             tag = Tag.objects.create(**data)
@@ -72,7 +114,15 @@ def update_tag(
 ) -> Tag:
     application_id = data.get("application_id", tag.application_id)
     parent = data.get("parent", tag.parent)
+    vocabulary = data.get("vocabulary", tag.vocabulary)
+    vocabulary_changed = "vocabulary" in data and data["vocabulary"] != tag.vocabulary
     validate_tag_parent(tag.tenant_id, application_id, parent)
+    validate_tag_vocabulary(
+        tag.tenant_id,
+        application_id,
+        vocabulary,
+        require_active=vocabulary_changed,
+    )
 
     if "application_id" in data and data["application_id"] != tag.application_id:
         if tag.assignments.exists():
@@ -87,11 +137,9 @@ def update_tag(
         current_value = getattr(tag, field)
         if current_value == value:
             continue
-        audit_field = "parent_id" if field == "parent" else field
-        changed_before[audit_field] = (
-            str(current_value.id) if field == "parent" and current_value else current_value
-        )
-        changed_after[audit_field] = str(value.id) if field == "parent" and value else value
+        audit_field = f"{field}_id" if field in {"parent", "vocabulary"} else field
+        changed_before[audit_field] = serialize_related_audit_value(field, current_value)
+        changed_after[audit_field] = serialize_related_audit_value(field, value)
         setattr(tag, field, value)
 
     if not changed_before:

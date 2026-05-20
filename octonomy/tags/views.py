@@ -35,6 +35,7 @@ def get_tag_or_404(tenant_id: str, tag_id) -> object:
         OpenApiParameter("type", str, required=False),
         OpenApiParameter("slug", str, required=False),
         OpenApiParameter("parent_id", str, required=False),
+        OpenApiParameter("vocabulary_id", str, required=False),
         OpenApiParameter("is_active", bool, required=False),
         OpenApiParameter("q", str, required=False),
         OpenApiParameter("limit", int, required=False),

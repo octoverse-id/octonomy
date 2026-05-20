@@ -1,27 +1,15 @@
 from __future__ import annotations
 
-from django.db.models import Count, Q, QuerySet
+from django.db.models import Q, QuerySet
 
-from octonomy.tags.models import Tag
-
-
-def tags_for_tenant(tenant_id: str) -> QuerySet[Tag]:
-    return Tag.objects.for_tenant(tenant_id).annotate(usage_count=Count("assignments"))
+from octonomy.tags.models import Vocabulary
 
 
-def apply_usage_counts(tags) -> None:
-    tag_list = list(tags)
-    tag_ids = [tag.id for tag in tag_list]
-    counts = dict(
-        Tag.objects.filter(id__in=tag_ids)
-        .annotate(usage_count=Count("assignments"))
-        .values_list("id", "usage_count")
-    )
-    for tag in tag_list:
-        tag.usage_count = counts.get(tag.id, 0)
+def vocabularies_for_tenant(tenant_id: str) -> QuerySet[Vocabulary]:
+    return Vocabulary.objects.for_tenant(tenant_id)
 
 
-def filter_tags(queryset: QuerySet[Tag], params) -> QuerySet[Tag]:
+def filter_vocabularies(queryset: QuerySet[Vocabulary], params) -> QuerySet[Vocabulary]:
     application_id = params.get("application_id")
     include_shared = params.get("include_shared", "true").lower() != "false"
 
@@ -32,7 +20,7 @@ def filter_tags(queryset: QuerySet[Tag], params) -> QuerySet[Tag]:
     elif application_id:
         queryset = queryset.filter(application_id=application_id)
 
-    for field in ("type", "slug", "parent_id", "vocabulary_id"):
+    for field in ("slug",):
         value = params.get(field)
         if value:
             queryset = queryset.filter(**{field: value})

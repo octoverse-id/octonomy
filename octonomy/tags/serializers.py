@@ -3,12 +3,13 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from octonomy.core.validators import validate_external_id, validate_slug_like
-from octonomy.tags.models import Tag
+from octonomy.tags.models import Tag, Vocabulary
 from octonomy.tags.services import validate_metadata
 
 
 class TagSerializer(serializers.ModelSerializer):
     parent_id = serializers.UUIDField(source="parent.id", read_only=True)
+    vocabulary_id = serializers.UUIDField(source="vocabulary.id", read_only=True)
     usage_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -22,6 +23,7 @@ class TagSerializer(serializers.ModelSerializer):
             "type",
             "description",
             "parent_id",
+            "vocabulary_id",
             "metadata",
             "is_active",
             "usage_count",
@@ -44,6 +46,7 @@ class TagWriteSerializer(serializers.Serializer):
     type = serializers.CharField(max_length=100)
     description = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     parent_id = serializers.UUIDField(required=False, allow_null=True)
+    vocabulary_id = serializers.UUIDField(required=False, allow_null=True)
     metadata = serializers.JSONField(required=False, default=dict)
     is_active = serializers.BooleanField(required=False, default=True)
 
@@ -70,10 +73,21 @@ class TagWriteSerializer(serializers.Serializer):
         except Tag.DoesNotExist:
             raise serializers.ValidationError("Parent tag was not found.")
 
+    def validate_vocabulary_id(self, value):
+        if value is None:
+            return None
+        tenant_id = self.context["tenant_id"]
+        try:
+            return Vocabulary.objects.for_tenant(tenant_id).get(id=value)
+        except Vocabulary.DoesNotExist:
+            raise serializers.ValidationError("Vocabulary was not found.")
+
     def to_internal_value(self, data):
         value = super().to_internal_value(data)
         if "parent_id" in value:
             value["parent"] = value.pop("parent_id")
+        if "vocabulary_id" in value:
+            value["vocabulary"] = value.pop("vocabulary_id")
         return value
 
 
