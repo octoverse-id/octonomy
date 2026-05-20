@@ -55,8 +55,14 @@ Authorization: Bearer dev-token
 X-Tenant-ID: tenant_demo
 ```
 
+Mutation requests may also include:
+
+```text
+X-Actor-ID: svc-catalog
+```
+
 The bearer token is a development placeholder. `X-Tenant-ID` is the source of truth for tenant
-isolation.
+isolation. `X-Actor-ID` is an optional service-to-service audit actor placeholder.
 
 ## Common Commands
 
@@ -113,6 +119,14 @@ List resources assigned to a tag:
 
 ```bash
 curl "http://localhost:8000/api/v1/tags/<tag-uuid>/resources?application_id=commerce" \
+  -H "Authorization: Bearer dev-token" \
+  -H "X-Tenant-ID: tenant_demo"
+```
+
+List audit logs:
+
+```bash
+curl "http://localhost:8000/api/v1/audit-logs?action=assignment.created" \
   -H "Authorization: Bearer dev-token" \
   -H "X-Tenant-ID: tenant_demo"
 ```

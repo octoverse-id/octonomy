@@ -13,4 +13,5 @@ urlpatterns = [
     path("api/docs/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     path("api/v1/", include("octonomy.tags.urls")),
     path("api/v1/", include("octonomy.assignments.urls")),
+    path("api/v1/", include("octonomy.audit.urls")),
 ]

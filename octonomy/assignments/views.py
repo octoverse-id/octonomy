@@ -28,9 +28,11 @@ from octonomy.assignments.services import (
     remove_tag_assignment,
     replace_resource_tags,
 )
+from octonomy.core.audit import build_audit_context
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.tags.models import Tag
+from octonomy.tags.selectors import apply_usage_counts
 from octonomy.tags.serializers import TagSerializer
 
 
@@ -43,6 +45,8 @@ def require_tenant(request) -> str:
 def paginate(request, queryset, serializer_class):
     paginator = OctonomyLimitOffsetPagination()
     page = paginator.paginate_queryset(queryset, request)
+    if serializer_class is ResourceTagSerializer:
+        apply_usage_counts([assignment.tag for assignment in page])
     serializer = serializer_class(page, many=True)
     return paginator.get_paginated_response(serializer.data)
 
@@ -67,6 +71,7 @@ def assignment_collection(request):
             tag_id=data["tag_id"],
             resource_type=data["resource_type"],
             resource_id=data["resource_id"],
+            audit_context=build_audit_context(request),
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -80,6 +85,7 @@ def assignment_collection(request):
         resource_type=data["resource_type"],
         resource_id=data["resource_id"],
         assigned_by=data.get("assigned_by"),
+        audit_context=build_audit_context(request, data.get("assigned_by")),
     )
     response_status = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
     return data_response(AssignmentSerializer(result.assignment).data, status=response_status)
@@ -96,7 +102,11 @@ def bulk_assign(request):
     serializer = BulkAssignSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
-    result = bulk_assign_tags(tenant_id=tenant_id, **data)
+    result = bulk_assign_tags(
+        tenant_id=tenant_id,
+        audit_context=build_audit_context(request, data.get("assigned_by")),
+        **data,
+    )
     return data_response(
         {
             "created": result["created"],
@@ -117,7 +127,11 @@ def bulk_remove(request):
     tenant_id = require_tenant(request)
     serializer = BulkRemoveSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    removed = bulk_remove_tags(tenant_id=tenant_id, **serializer.validated_data)
+    removed = bulk_remove_tags(
+        tenant_id=tenant_id,
+        audit_context=build_audit_context(request),
+        **serializer.validated_data,
+    )
     return data_response({"removed": removed})
 
 
@@ -158,14 +172,18 @@ def resource_tags(request, resource_type, resource_id):
     )
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
-    result = replace_resource_tags(tenant_id=tenant_id, **data)
+    result = replace_resource_tags(
+        tenant_id=tenant_id,
+        audit_context=build_audit_context(request, data.get("assigned_by")),
+        **data,
+    )
+    tags = [assignment.tag for assignment in result["assignments"]]
+    apply_usage_counts(tags)
     return data_response(
         {
             "created": result["created"],
             "removed": result["removed"],
-            "tags": TagSerializer(
-                [assignment.tag for assignment in result["assignments"]], many=True
-            ).data,
+            "tags": TagSerializer(tags, many=True).data,
         }
     )
 

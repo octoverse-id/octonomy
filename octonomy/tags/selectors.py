@@ -1,12 +1,24 @@
 from __future__ import annotations
 
-from django.db.models import Q, QuerySet
+from django.db.models import Count, Q, QuerySet
 
 from octonomy.tags.models import Tag
 
 
 def tags_for_tenant(tenant_id: str) -> QuerySet[Tag]:
-    return Tag.objects.for_tenant(tenant_id)
+    return Tag.objects.for_tenant(tenant_id).annotate(usage_count=Count("assignments"))
+
+
+def apply_usage_counts(tags) -> None:
+    tag_list = list(tags)
+    tag_ids = [tag.id for tag in tag_list]
+    counts = dict(
+        Tag.objects.filter(id__in=tag_ids)
+        .annotate(usage_count=Count("assignments"))
+        .values_list("id", "usage_count")
+    )
+    for tag in tag_list:
+        tag.usage_count = counts.get(tag.id, 0)
 
 
 def filter_tags(queryset: QuerySet[Tag], params) -> QuerySet[Tag]:

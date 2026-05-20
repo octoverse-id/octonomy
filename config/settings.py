@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     "django.contrib.postgres",
     "rest_framework",
     "drf_spectacular",
+    "octonomy.audit",
     "octonomy.core",
     "octonomy.tags",
     "octonomy.assignments",
