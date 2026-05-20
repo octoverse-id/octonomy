@@ -36,7 +36,10 @@ the tag row.
 
 ## Future Extension Points
 
-- GraphQL read API
-- tag aliases
-- nested tag groups within vocabularies
-- event publishing for assignment changes
+- GraphQL read API for flexible tag and resource lookup.
+- Tag aliases and synonym resolution.
+- Nested tag groups within vocabularies.
+- Audit log retention, export, and compliance filtering.
+- Persisted or cached usage counters for high-volume tenants.
+- Event publishing for tag, vocabulary, and assignment changes.
+- Stronger auth integration with JWT, service tokens, or API gateway identity.
