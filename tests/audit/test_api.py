@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from octonomy.audit.models import AuditLog
-from tests.factories import make_tag
+from tests.factories import make_tag, make_vocabulary
 
 pytestmark = pytest.mark.django_db
 
@@ -50,6 +50,67 @@ def test_tag_create_update_and_deactivate_write_audit_logs(api_client):
         "before": {"is_active": True},
         "after": {"is_active": False},
     }
+
+
+def test_vocabulary_create_update_and_deactivate_write_audit_logs(api_client):
+    create_response = api_client.post(
+        "/api/v1/vocabularies",
+        {"name": "Labels", "slug": "labels", "metadata": {}},
+        format="json",
+        HTTP_X_ACTOR_ID="svc-taxonomy",
+    )
+    vocabulary_id = create_response.json()["data"]["id"]
+
+    update_response = api_client.patch(
+        f"/api/v1/vocabularies/{vocabulary_id}",
+        {"name": "Content Labels"},
+        format="json",
+        HTTP_X_ACTOR_ID="svc-taxonomy",
+    )
+    delete_response = api_client.delete(
+        f"/api/v1/vocabularies/{vocabulary_id}",
+        HTTP_X_ACTOR_ID="svc-taxonomy",
+    )
+    repeated_delete_response = api_client.delete(
+        f"/api/v1/vocabularies/{vocabulary_id}",
+        HTTP_X_ACTOR_ID="svc-taxonomy",
+    )
+
+    assert create_response.status_code == 201
+    assert update_response.status_code == 200
+    assert delete_response.status_code == 204
+    assert repeated_delete_response.status_code == 204
+
+    logs = AuditLog.objects.order_by("created_at")
+    assert list(logs.values_list("action", flat=True)) == [
+        "vocabulary.created",
+        "vocabulary.updated",
+        "vocabulary.deactivated",
+    ]
+    assert logs[0].actor_id == "svc-taxonomy"
+    assert logs[0].entity_type == "vocabulary"
+    assert logs[0].changes["after"]["slug"] == "labels"
+    assert logs[1].changes == {
+        "before": {"name": "Labels"},
+        "after": {"name": "Content Labels"},
+    }
+    assert logs[2].changes == {
+        "before": {"is_active": True},
+        "after": {"is_active": False},
+    }
+
+
+def test_noop_vocabulary_update_does_not_write_audit_log(api_client):
+    vocabulary = make_vocabulary(slug="labels", name="Labels")
+
+    response = api_client.patch(
+        f"/api/v1/vocabularies/{vocabulary.id}",
+        {"name": "Labels"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert AuditLog.objects.count() == 0
 
 
 def test_noop_tag_update_does_not_write_audit_log(api_client):

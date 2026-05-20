@@ -19,10 +19,26 @@ def tag_snapshot(tag) -> dict[str, Any]:
         "type": tag.type,
         "description": tag.description,
         "parent_id": str(tag.parent_id) if tag.parent_id else None,
+        "vocabulary_id": str(tag.vocabulary_id) if tag.vocabulary_id else None,
         "metadata": tag.metadata,
         "is_active": tag.is_active,
         "created_at": tag.created_at.isoformat() if tag.created_at else None,
         "updated_at": tag.updated_at.isoformat() if tag.updated_at else None,
+    }
+
+
+def vocabulary_snapshot(vocabulary) -> dict[str, Any]:
+    return {
+        "id": str(vocabulary.id),
+        "tenant_id": vocabulary.tenant_id,
+        "application_id": vocabulary.application_id,
+        "name": vocabulary.name,
+        "slug": vocabulary.slug,
+        "description": vocabulary.description,
+        "metadata": vocabulary.metadata,
+        "is_active": vocabulary.is_active,
+        "created_at": vocabulary.created_at.isoformat() if vocabulary.created_at else None,
+        "updated_at": vocabulary.updated_at.isoformat() if vocabulary.updated_at else None,
     }
 
 

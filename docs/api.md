@@ -15,7 +15,8 @@ Optional mutation audit actor header:
 X-Actor-ID: svc-catalog
 ```
 
-Tag responses include `usage_count`, computed from current tag assignments.
+Tag responses include `usage_count`, computed from current tag assignments, and
+`vocabulary_id` when the tag belongs to a vocabulary.
 
 Errors use this shape:
 
@@ -40,6 +41,36 @@ GET /api/v1/resources/{resource_type}/{resource_id}/audit-logs
 
 `GET /api/v1/audit-logs` supports filters for `application_id`, `action`, `entity_type`,
 `entity_id`, `tag_id`, `resource_type`, `resource_id`, `actor_id`, and `operation_id`.
+Vocabulary mutations emit `vocabulary.created`, `vocabulary.updated`, and
+`vocabulary.deactivated` audit actions with `entity_type = "vocabulary"`.
+
+Vocabulary endpoints:
+
+```text
+GET /api/v1/vocabularies
+POST /api/v1/vocabularies
+GET /api/v1/vocabularies/{vocabulary_id}
+PATCH /api/v1/vocabularies/{vocabulary_id}
+DELETE /api/v1/vocabularies/{vocabulary_id}
+```
+
+Vocabularies are tenant-scoped and may be shared across applications by leaving
+`application_id` null. Application-specific vocabularies may only contain tags for the same
+application. Shared tags can only belong to shared vocabularies.
+
+`GET /api/v1/vocabularies` supports `application_id`, `include_shared`, `slug`, `is_active`,
+`q`, `limit`, and `offset`.
+
+Tag endpoints:
+
+```text
+GET /api/v1/tags?vocabulary_id={vocabulary_id}
+POST /api/v1/tags
+PATCH /api/v1/tags/{tag_id}
+```
+
+`POST` and `PATCH` accept optional `vocabulary_id`. `GET /api/v1/tags` supports filtering by
+`vocabulary_id`.
 
 Paginated list endpoints use:
 

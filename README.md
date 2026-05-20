@@ -2,8 +2,9 @@
 
 Octonomy is a standalone, multi-tenant, multi-application tag management and taxonomy service.
 
-It stores tags and tag assignments for external resources such as articles, images, orders,
-products, and documents. Octonomy does not own or duplicate external resource data.
+It stores vocabularies, tags, and tag assignments for external resources such as articles,
+images, orders, products, and documents. Octonomy does not own or duplicate external resource
+data.
 
 ## Stack
 
@@ -75,6 +76,16 @@ make openapi
 
 ## API Examples
 
+Create a shared vocabulary:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/vocabularies \
+  -H "Authorization: Bearer dev-token" \
+  -H "X-Tenant-ID: tenant_demo" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Labels","slug":"labels","metadata":{}}'
+```
+
 Create a shared tag:
 
 ```bash
@@ -85,14 +96,22 @@ curl -X POST http://localhost:8000/api/v1/tags \
   -d '{"name":"Featured","slug":"featured","type":"label","metadata":{}}'
 ```
 
-Create an application-specific tag:
+Create an application-specific tag in a vocabulary:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/tags \
   -H "Authorization: Bearer dev-token" \
   -H "X-Tenant-ID: tenant_demo" \
   -H "Content-Type: application/json" \
-  -d '{"application_id":"commerce","name":"Sale","slug":"sale","type":"label","metadata":{}}'
+  -d '{"application_id":"commerce","vocabulary_id":"<vocabulary-uuid>","name":"Sale","slug":"sale","type":"label","metadata":{}}'
+```
+
+List tags in a vocabulary:
+
+```bash
+curl "http://localhost:8000/api/v1/tags?vocabulary_id=<vocabulary-uuid>" \
+  -H "Authorization: Bearer dev-token" \
+  -H "X-Tenant-ID: tenant_demo"
 ```
 
 Assign a tag to a resource:

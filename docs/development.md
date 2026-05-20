@@ -30,3 +30,9 @@ make openapi
 
 Use `X-Actor-ID` on mutation requests to make audit rows easier to inspect during local testing.
 Assignment APIs fall back to `assigned_by` when the actor header is not present.
+
+## Seed Data
+
+`make seed` creates demo vocabularies, tags, and assignments for tenant `tenant_demo`.
+The default vocabularies are shared `labels`, commerce `product-labels`, and CMS
+`content-labels`.

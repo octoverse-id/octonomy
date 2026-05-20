@@ -15,6 +15,59 @@ class TagQuerySet(models.QuerySet):
         return self.filter(is_active=True)
 
 
+class VocabularyQuerySet(models.QuerySet):
+    def for_tenant(self, tenant_id: str):
+        return self.filter(tenant_id=tenant_id)
+
+    def active(self):
+        return self.filter(is_active=True)
+
+
+class Vocabulary(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant_id = models.CharField(max_length=100)
+    application_id = models.CharField(max_length=100, null=True, blank=True)
+    name = models.CharField(max_length=255)
+    slug = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+    metadata = models.JSONField(default=dict)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = VocabularyQuerySet.as_manager()
+
+    class Meta:
+        db_table = "vocabularies"
+        ordering = ["name", "slug"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant_id", "slug"],
+                condition=Q(application_id__isnull=True, is_active=True),
+                name="uniq_active_shared_vocab_slug",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant_id", "application_id", "slug"],
+                condition=Q(application_id__isnull=False, is_active=True),
+                name="uniq_active_app_vocab_slug",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant_id", "application_id", "slug"],
+                name="vocab_tenant_app_slug_idx",
+            ),
+            models.Index(
+                fields=["tenant_id", "application_id", "is_active"],
+                name="vocab_tenant_app_active_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        scope = self.application_id or "shared"
+        return f"{self.tenant_id}/{scope}/{self.slug}"
+
+
 class Tag(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant_id = models.CharField(max_length=100)
@@ -28,6 +81,13 @@ class Tag(models.Model):
         null=True,
         blank=True,
         related_name="children",
+        on_delete=models.RESTRICT,
+    )
+    vocabulary = models.ForeignKey(
+        Vocabulary,
+        null=True,
+        blank=True,
+        related_name="tags",
         on_delete=models.RESTRICT,
     )
     metadata = models.JSONField(default=dict)
@@ -71,6 +131,7 @@ class Tag(models.Model):
                 name="tags_tenant__7a27de_idx",
             ),
             models.Index(fields=["tenant_id", "parent"], name="tags_tenant__5fdd65_idx"),
+            models.Index(fields=["tenant_id", "vocabulary"], name="tags_tenant_vocab_idx"),
             GinIndex(fields=["metadata"], name="tag_metadata_gin_idx"),
         ]
 
