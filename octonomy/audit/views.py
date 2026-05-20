@@ -6,6 +6,7 @@ from rest_framework.exceptions import ValidationError
 
 from octonomy.audit.selectors import audit_logs_for_tenant, filter_audit_logs
 from octonomy.audit.serializers import AuditLogSerializer
+from octonomy.core.auth import require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 
 
@@ -38,6 +39,7 @@ AUDIT_FILTER_PARAMETERS = [
 
 
 @extend_schema(parameters=AUDIT_FILTER_PARAMETERS, responses=AuditLogSerializer(many=True))
+@require_scopes(get="audit:read")
 @api_view(["GET"])
 def audit_logs_collection(request):
     tenant_id = require_tenant(request)
@@ -55,6 +57,7 @@ def audit_logs_collection(request):
     ],
     responses=AuditLogSerializer(many=True),
 )
+@require_scopes(get="audit:read")
 @api_view(["GET"])
 def tag_audit_logs(request, tag_id):
     tenant_id = require_tenant(request)
@@ -75,6 +78,7 @@ def tag_audit_logs(request, tag_id):
     ],
     responses=AuditLogSerializer(many=True),
 )
+@require_scopes(get="audit:read")
 @api_view(["GET"])
 def resource_audit_logs(request, resource_type, resource_id):
     tenant_id = require_tenant(request)

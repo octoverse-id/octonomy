@@ -28,7 +28,8 @@ Octonomy is a standalone, multi-tenant, multi-application Tag Management / Taxon
 - Prefer service-layer business rules over embedding cross-row logic directly in views.
 - Keep tenant isolation explicit in every query.
 - Add database constraints and indexes for uniqueness, lookup performance, and idempotency.
-- Do not hard-code real auth; use the bearer auth placeholder until auth integration is specified.
+- Use Octonomy service API keys for service-to-service auth.
+- Service tokens must be stored hashed and scoped by tenant, optional application, and scopes.
 
 ## Testing Expectations
 

@@ -136,10 +136,30 @@ def test_assignment_create_and_delete_write_audit_only_for_actual_mutations(api_
         "assigned_by": "svc-catalog",
     }
 
-    first_create = api_client.post("/api/v1/tag-assignments", payload, format="json")
-    repeated_create = api_client.post("/api/v1/tag-assignments", payload, format="json")
-    first_delete = api_client.delete("/api/v1/tag-assignments", payload, format="json")
-    repeated_delete = api_client.delete("/api/v1/tag-assignments", payload, format="json")
+    first_create = api_client.post(
+        "/api/v1/tag-assignments",
+        payload,
+        format="json",
+        HTTP_X_ACTOR_ID="svc-catalog",
+    )
+    repeated_create = api_client.post(
+        "/api/v1/tag-assignments",
+        payload,
+        format="json",
+        HTTP_X_ACTOR_ID="svc-catalog",
+    )
+    first_delete = api_client.delete(
+        "/api/v1/tag-assignments",
+        payload,
+        format="json",
+        HTTP_X_ACTOR_ID="svc-catalog",
+    )
+    repeated_delete = api_client.delete(
+        "/api/v1/tag-assignments",
+        payload,
+        format="json",
+        HTTP_X_ACTOR_ID="svc-catalog",
+    )
 
     assert first_create.status_code == 201
     assert repeated_create.status_code == 200
@@ -235,6 +255,7 @@ def test_audit_log_endpoints_filter_and_enforce_tenant_scope(api_client, other_t
             "assigned_by": "svc-catalog",
         },
         format="json",
+        HTTP_X_ACTOR_ID="svc-catalog",
     )
     other_tenant_client.post(
         "/api/v1/tag-assignments",

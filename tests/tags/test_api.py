@@ -72,8 +72,8 @@ def test_duplicate_active_slug_returns_conflict(api_client):
     assert response.json()["error"]["code"] == "conflict"
 
 
-def test_missing_tenant_uses_error_envelope(client):
-    response = client.get("/api/v1/tags", HTTP_AUTHORIZATION="Bearer dev-token")
+def test_missing_tenant_uses_error_envelope(client, service_token):
+    response = client.get("/api/v1/tags", HTTP_AUTHORIZATION=f"Bearer {service_token}")
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation_error"

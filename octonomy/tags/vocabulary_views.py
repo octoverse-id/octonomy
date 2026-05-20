@@ -7,6 +7,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from octonomy.core.audit import build_audit_context
+from octonomy.core.auth import require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.tags.vocabulary_selectors import filter_vocabularies, vocabularies_for_tenant
@@ -53,6 +54,7 @@ def get_vocabulary_or_404(tenant_id: str, vocabulary_id):
     request=VocabularyWriteSerializer,
     responses={201: VocabularySerializer},
 )
+@require_scopes(get="tags:read", post="tags:write")
 @api_view(["GET", "POST"])
 def vocabularies_collection(request):
     tenant_id = require_tenant(request)
@@ -77,6 +79,7 @@ def vocabularies_collection(request):
 @extend_schema(methods=["GET"], responses=VocabularySerializer)
 @extend_schema(methods=["PATCH"], request=VocabularyPatchSerializer, responses=VocabularySerializer)
 @extend_schema(methods=["DELETE"], responses={204: None})
+@require_scopes(get="tags:read", patch="tags:write", delete="tags:write")
 @api_view(["GET", "PATCH", "DELETE"])
 def vocabulary_detail(request, vocabulary_id):
     tenant_id = require_tenant(request)

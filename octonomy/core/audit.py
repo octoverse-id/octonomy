@@ -13,7 +13,9 @@ class AuditContext:
 
 def resolve_actor_id(request, fallback: str | None = None) -> str | None:
     actor_id = request.headers.get("X-Actor-ID")
-    return actor_id or fallback or None
+    service_client = getattr(request, "service_client", None)
+    service_actor = getattr(service_client, "name", None)
+    return actor_id or service_actor or fallback or None
 
 
 def build_audit_context(request, fallback_actor_id: str | None = None) -> AuditContext:

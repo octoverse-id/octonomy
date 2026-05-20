@@ -3,6 +3,7 @@ from __future__ import annotations
 from django.core.management.base import BaseCommand
 
 from octonomy.assignments.services import assign_tag
+from octonomy.service_auth.services import create_service_client_token
 from octonomy.tags.models import Tag, Vocabulary
 
 
@@ -102,4 +103,20 @@ class Command(BaseCommand):
         assign_tag(tenant_id, "cms", featured, "article", "article_123", "seed")
         assign_tag(tenant_id, "cms", editorial, "article", "article_123", "seed")
 
+        token, client = create_service_client_token(
+            name="svc-demo",
+            grants=[
+                {
+                    "tenant_id": tenant_id,
+                    "application_id": None,
+                    "scopes": ["tags:read", "tags:write", "audit:read"],
+                }
+            ],
+            metadata={"created_by": "seed_demo"},
+        )
+
         self.stdout.write(self.style.SUCCESS("Seeded Octonomy demo data."))
+        self.stdout.write("Created demo service token. Store this now; it cannot be shown again.")
+        self.stdout.write(f"  name: {client.name}")
+        self.stdout.write(f"  key prefix: {client.key_prefix}")
+        self.stdout.write(f"  token: {token}")
