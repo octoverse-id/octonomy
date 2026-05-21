@@ -7,6 +7,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from octonomy.core.audit import build_audit_context
+from octonomy.core.auth import require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.tags.selectors import apply_usage_counts, filter_tags, tags_for_tenant
@@ -44,6 +45,7 @@ def get_tag_or_404(tenant_id: str, tag_id) -> object:
     responses=TagSerializer(many=True),
 )
 @extend_schema(methods=["POST"], request=TagWriteSerializer, responses={201: TagSerializer})
+@require_scopes(get="tags:read", post="tags:write")
 @api_view(["GET", "POST"])
 def tags_collection(request):
     tenant_id = require_tenant(request)
@@ -65,6 +67,7 @@ def tags_collection(request):
 @extend_schema(methods=["GET"], responses=TagSerializer)
 @extend_schema(methods=["PATCH"], request=TagPatchSerializer, responses=TagSerializer)
 @extend_schema(methods=["DELETE"], responses={204: None})
+@require_scopes(get="tags:read", patch="tags:write", delete="tags:write")
 @api_view(["GET", "PATCH", "DELETE"])
 def tag_detail(request, tag_id):
     tenant_id = require_tenant(request)

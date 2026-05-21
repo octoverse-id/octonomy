@@ -6,7 +6,8 @@ systems retain ownership of resources.
 ## Layers
 
 - `config`: Django project settings and URL routing.
-- `octonomy.core`: request ids, auth placeholder, errors, pagination, health checks, logging.
+- `octonomy.core`: request ids, auth enforcement, errors, pagination, health checks, logging.
+- `octonomy.service_auth`: service clients, hashed API keys, and tenant/application grants.
 - `octonomy.tags`: vocabulary and tag models, validation, CRUD APIs, taxonomy filtering.
 - `octonomy.assignments`: assignment model, idempotent writes, resource/tag query APIs.
 - `octonomy.audit`: append-only audit logs for tag, vocabulary, and assignment mutations.
@@ -31,8 +32,19 @@ Mutation APIs write tenant-scoped audit logs for actual changes only. Idempotent
 such as assigning an already assigned tag or removing a missing assignment, do not create audit
 rows.
 
+Audit actor resolution prefers explicit `X-Actor-ID`, then the authenticated service client name,
+then assignment `assigned_by` for legacy/internal service paths. Service client names are readable
+for operators but mutable, so future audit hardening should add a stable service client id column
+alongside the display actor.
+
 Tag responses expose `usage_count`, computed from current tag assignments rather than persisted on
 the tag row.
+
+## Service Authentication
+
+Tenant-owned APIs require an Octonomy service token. Tokens are stored as keyed hashes and grant
+access by tenant, optional application, and scope. Health endpoints remain unauthenticated.
+Production deployments must provide a non-default `SERVICE_TOKEN_PEPPER`.
 
 ## Future Extension Points
 
@@ -42,4 +54,4 @@ the tag row.
 - Audit log retention, export, and compliance filtering.
 - Persisted or cached usage counters for high-volume tenants.
 - Event publishing for tag, vocabulary, and assignment changes.
-- Stronger auth integration with JWT, service tokens, or API gateway identity.
+- External auth integration with JWT or API gateway identity.

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import warnings
 from pathlib import Path
 
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -29,6 +31,7 @@ INSTALLED_APPS = [
     "django.contrib.postgres",
     "rest_framework",
     "drf_spectacular",
+    "octonomy.service_auth",
     "octonomy.audit",
     "octonomy.core",
     "octonomy.tags",
@@ -92,7 +95,18 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
-AUTH_BEARER_TOKEN_DEV = os.getenv("AUTH_BEARER_TOKEN_DEV", "dev-token")
+SERVICE_TOKEN_PEPPER = os.getenv("SERVICE_TOKEN_PEPPER", "")
+if not DEBUG and (
+    not SERVICE_TOKEN_PEPPER or SERVICE_TOKEN_PEPPER == "local-dev-service-token-pepper"
+):
+    raise ImproperlyConfigured(
+        "SERVICE_TOKEN_PEPPER must be set to a non-default value when DEBUG is False."
+    )
+if DEBUG and not SERVICE_TOKEN_PEPPER:
+    warnings.warn(
+        "SERVICE_TOKEN_PEPPER is empty; local service token hashes are not peppered.",
+        stacklevel=2,
+    )
 MAX_BULK_TAGS = int(os.getenv("MAX_BULK_TAGS", "200"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 

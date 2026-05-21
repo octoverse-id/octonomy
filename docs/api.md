@@ -5,15 +5,28 @@ Base path: `/api/v1`
 Required headers for tenant-owned endpoints:
 
 ```text
-Authorization: Bearer dev-token
+Authorization: Bearer <service-token>
 X-Tenant-ID: tenant_demo
 ```
+
+Service tokens are created by operators with `python manage.py create_service_token`. The command
+accepts optional `--metadata '<json-object>'` for operator-owned client metadata. Tokens are scoped
+by tenant, optional application, and scopes:
+
+- `tags:read`: read tag, vocabulary, assignment, and resource tag endpoints.
+- `tags:write`: mutate tags, vocabularies, and assignments.
+- `audit:read`: read audit log endpoints.
+
+A grant with `application_id = null` allows all applications in that tenant. A grant with a
+specific `application_id` only allows requests that supply the same application scope.
 
 Optional mutation audit actor header:
 
 ```text
 X-Actor-ID: svc-catalog
 ```
+
+When `X-Actor-ID` is omitted, audit logs use the authenticated service client name.
 
 Tag responses include `usage_count`, computed from current tag assignments, and
 `vocabulary_id` when the tag belongs to a vocabulary.

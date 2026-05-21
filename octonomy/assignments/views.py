@@ -29,6 +29,7 @@ from octonomy.assignments.services import (
     replace_resource_tags,
 )
 from octonomy.core.audit import build_audit_context
+from octonomy.core.auth import require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.tags.models import Tag
@@ -57,6 +58,7 @@ def paginate(request, queryset, serializer_class):
     responses={200: AssignmentSerializer, 201: AssignmentSerializer},
 )
 @extend_schema(methods=["DELETE"], request=AssignmentDeleteSerializer, responses={204: None})
+@require_scopes(post="tags:write", delete="tags:write")
 @api_view(["POST", "DELETE"])
 def assignment_collection(request):
     tenant_id = require_tenant(request)
@@ -96,6 +98,7 @@ def assignment_collection(request):
     request=BulkAssignSerializer,
     responses=AssignmentSerializer(many=True),
 )
+@require_scopes(post="tags:write")
 @api_view(["POST"])
 def bulk_assign(request):
     tenant_id = require_tenant(request)
@@ -122,6 +125,7 @@ def bulk_assign(request):
     request=BulkRemoveSerializer,
     responses={200: OpenApiResponse(description="Bulk remove summary.")},
 )
+@require_scopes(post="tags:write")
 @api_view(["POST"])
 def bulk_remove(request):
     tenant_id = require_tenant(request)
@@ -151,6 +155,7 @@ def bulk_remove(request):
     request=ResourceReplaceSerializer,
     responses=ResourceTagSerializer(many=True),
 )
+@require_scopes(get="tags:read", post="tags:write")
 @api_view(["GET", "POST"])
 def resource_tags(request, resource_type, resource_id):
     tenant_id = require_tenant(request)
@@ -197,6 +202,7 @@ def resource_tags(request, resource_type, resource_id):
     ],
     responses=TagResourceSerializer(many=True),
 )
+@require_scopes(get="tags:read")
 @api_view(["GET"])
 def tag_resources(request, tag_id):
     tenant_id = require_tenant(request)

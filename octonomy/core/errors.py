@@ -73,7 +73,7 @@ def exception_handler(exc, context):
     code = "validation_error"
     message = "Request validation failed."
 
-    if isinstance(exc, exceptions.NotAuthenticated):
+    if isinstance(exc, exceptions.NotAuthenticated | exceptions.AuthenticationFailed):
         code = "authentication_required"
         message = "Authentication credentials were not provided."
     elif isinstance(exc, exceptions.PermissionDenied):
