@@ -11,6 +11,8 @@ Octonomy is a standalone, multi-tenant, multi-application Tag Management / Taxon
 - `tag.application_id = null` means the tag is shared across applications in the same tenant.
 - App-specific tags may only be assigned inside their own application.
 - Shared tags may be assigned to any application in the same tenant.
+- Tag aliases are alternate identifiers for canonical tags and must follow tenant/application
+  compatibility rules.
 - Tag deletion should be implemented as deactivation, not hard delete.
 
 ## API Rules

@@ -27,6 +27,21 @@ def tag_snapshot(tag) -> dict[str, Any]:
     }
 
 
+def tag_alias_snapshot(alias) -> dict[str, Any]:
+    return {
+        "id": str(alias.id),
+        "tenant_id": alias.tenant_id,
+        "application_id": alias.application_id,
+        "tag_id": str(alias.tag_id),
+        "name": alias.name,
+        "slug": alias.slug,
+        "metadata": alias.metadata,
+        "is_active": alias.is_active,
+        "created_at": alias.created_at.isoformat() if alias.created_at else None,
+        "updated_at": alias.updated_at.isoformat() if alias.updated_at else None,
+    }
+
+
 def vocabulary_snapshot(vocabulary) -> dict[str, Any]:
     return {
         "id": str(vocabulary.id),

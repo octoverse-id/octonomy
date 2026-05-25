@@ -26,6 +26,14 @@ Vocabularies group tags into named tenant-scoped taxonomies. A shared vocabulary
 application in the tenant. An application-specific vocabulary can only contain tags from the same
 application. Shared tags cannot belong to application-specific vocabularies.
 
+Tag aliases are alternate names or slugs for canonical tags. Aliases are tenant-scoped and may be
+shared or application-specific. Shared tags may have shared or application-specific aliases, while
+application-specific tags may only have aliases in the same application. Aliases only resolve when
+both the alias and canonical tag are active; deactivating a tag deactivates its aliases.
+Cascade alias deactivation is covered by the parent tag's audit log and does not emit one
+`tag_alias.deactivated` row per alias. Tag and alias deactivation are currently one-way through
+the public API.
+
 ## Audit and Usage Counts
 
 Mutation APIs write tenant-scoped audit logs for actual changes only. Idempotent no-op writes,
@@ -49,7 +57,6 @@ Production deployments must provide a non-default `SERVICE_TOKEN_PEPPER`.
 ## Future Extension Points
 
 - GraphQL read API for flexible tag and resource lookup.
-- Tag aliases and synonym resolution.
 - Nested tag groups within vocabularies.
 - Audit log retention, export, and compliance filtering.
 - Persisted or cached usage counters for high-volume tenants.

@@ -102,7 +102,7 @@ def assignment_collection(request):
 @api_view(["POST"])
 def bulk_assign(request):
     tenant_id = require_tenant(request)
-    serializer = BulkAssignSerializer(data=request.data)
+    serializer = BulkAssignSerializer(data=request.data, context={"tenant_id": tenant_id})
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
     result = bulk_assign_tags(
@@ -173,7 +173,8 @@ def resource_tags(request, resource_type, resource_id):
         return paginate(request, queryset, ResourceTagSerializer)
 
     serializer = ResourceReplaceSerializer(
-        data={**request.data, "resource_type": resource_type, "resource_id": resource_id}
+        data={**request.data, "resource_type": resource_type, "resource_id": resource_id},
+        context={"tenant_id": tenant_id},
     )
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
