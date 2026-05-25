@@ -217,3 +217,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local code review pipeline artifacts
+code-review/*
+!code-review/.gitkeep
