@@ -138,3 +138,62 @@ class Tag(models.Model):
     def __str__(self) -> str:
         scope = self.application_id or "shared"
         return f"{self.tenant_id}/{scope}/{self.type}/{self.slug}"
+
+
+class TagAliasQuerySet(models.QuerySet):
+    def for_tenant(self, tenant_id: str):
+        return self.filter(tenant_id=tenant_id)
+
+    def active(self):
+        return self.filter(is_active=True)
+
+
+class TagAlias(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant_id = models.CharField(max_length=100)
+    application_id = models.CharField(max_length=100, null=True, blank=True)
+    tag = models.ForeignKey(
+        Tag,
+        related_name="aliases",
+        on_delete=models.RESTRICT,
+    )
+    name = models.CharField(max_length=255)
+    slug = models.CharField(max_length=255)
+    metadata = models.JSONField(default=dict)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = TagAliasQuerySet.as_manager()
+
+    class Meta:
+        db_table = "tag_aliases"
+        ordering = ["name", "slug"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant_id", "slug"],
+                condition=Q(application_id__isnull=True, is_active=True),
+                name="uniq_active_shared_alias_slug",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant_id", "application_id", "slug"],
+                condition=Q(application_id__isnull=False, is_active=True),
+                name="uniq_active_app_alias_slug",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant_id", "application_id", "slug"],
+                name="alias_tenant_app_slug_idx",
+            ),
+            models.Index(
+                fields=["tenant_id", "tag", "is_active"],
+                name="alias_tenant_tag_active_idx",
+            ),
+            models.Index(fields=["tenant_id", "is_active"], name="alias_tenant_active_idx"),
+            GinIndex(fields=["metadata"], name="alias_metadata_gin_idx"),
+        ]
+
+    def __str__(self) -> str:
+        scope = self.application_id or "shared"
+        return f"{self.tenant_id}/{scope}/{self.slug}->{self.tag_id}"

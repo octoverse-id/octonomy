@@ -123,6 +123,24 @@ curl -X POST http://localhost:8000/api/v1/tags \
   -d '{"application_id":"commerce","vocabulary_id":"<vocabulary-uuid>","name":"Sale","slug":"sale","type":"label","metadata":{}}'
 ```
 
+Create an alias for a tag:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/tag-aliases \
+  -H "Authorization: Bearer <service-token>" \
+  -H "X-Tenant-ID: tenant_demo" \
+  -H "Content-Type: application/json" \
+  -d '{"application_id":"commerce","tag_id":"<tag-uuid>","name":"Promo","slug":"promo","metadata":{}}'
+```
+
+Resolve a tag or alias slug:
+
+```bash
+curl "http://localhost:8000/api/v1/tag-resolution?slug=promo&application_id=commerce" \
+  -H "Authorization: Bearer <service-token>" \
+  -H "X-Tenant-ID: tenant_demo"
+```
+
 List tags in a vocabulary:
 
 ```bash

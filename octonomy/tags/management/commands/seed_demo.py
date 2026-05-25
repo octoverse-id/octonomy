@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand
 
 from octonomy.assignments.services import assign_tag
 from octonomy.service_auth.services import create_service_client_token
-from octonomy.tags.models import Tag, Vocabulary
+from octonomy.tags.models import Tag, TagAlias, Vocabulary
 
 
 class Command(BaseCommand):
@@ -97,6 +97,27 @@ class Command(BaseCommand):
         featured = next(tag for tag in created_tags if tag.slug == "featured")
         sale = next(tag for tag in created_tags if tag.slug == "sale")
         editorial = next(tag for tag in created_tags if tag.slug == "editorial")
+        breaking_news = next(tag for tag in created_tags if tag.slug == "breaking-news")
+
+        aliases = [
+            {"tag": featured, "application_id": None, "name": "Promoted", "slug": "promoted"},
+            {"tag": featured, "application_id": None, "name": "Hero", "slug": "hero"},
+            {"tag": sale, "application_id": "commerce", "name": "Discount", "slug": "discount"},
+            {"tag": sale, "application_id": "commerce", "name": "Promo", "slug": "promo"},
+            {
+                "tag": breaking_news,
+                "application_id": "cms",
+                "name": "Urgent",
+                "slug": "urgent",
+            },
+        ]
+        for data in aliases:
+            TagAlias.objects.get_or_create(
+                tenant_id=tenant_id,
+                application_id=data["application_id"],
+                slug=data["slug"],
+                defaults={**data, "metadata": {}},
+            )
 
         assign_tag(tenant_id, "commerce", featured, "product", "prod_123", "seed")
         assign_tag(tenant_id, "commerce", sale, "product", "prod_123", "seed")

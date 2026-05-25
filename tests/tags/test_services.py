@@ -3,8 +3,10 @@ from __future__ import annotations
 import pytest
 
 from octonomy.core.errors import ConflictError, DomainError
-from octonomy.tags.services import create_tag
-from tests.factories import make_tag
+from octonomy.tags.alias_services import create_tag_alias
+from octonomy.tags.models import Tag
+from octonomy.tags.services import create_tag, deactivate_tag
+from tests.factories import make_alias, make_tag
 
 pytestmark = pytest.mark.django_db
 
@@ -62,3 +64,50 @@ def test_duplicate_active_tag_raises_conflict():
                 "is_active": True,
             },
         )
+
+
+def test_deactivate_tag_locks_tag_before_cascading_aliases(monkeypatch):
+    tag = make_tag(slug="featured")
+    alias = make_alias(tag=tag, slug="promoted")
+    original_select_for_update = Tag.objects.select_for_update
+    calls = []
+
+    def spy_select_for_update(*args, **kwargs):
+        calls.append(True)
+        return original_select_for_update(*args, **kwargs)
+
+    monkeypatch.setattr(Tag.objects, "select_for_update", spy_select_for_update)
+
+    assert deactivate_tag(tag) is True
+
+    alias.refresh_from_db()
+    assert calls == [True]
+    assert tag.is_active is False
+    assert alias.is_active is False
+
+
+def test_create_alias_locks_tag_before_validation(monkeypatch):
+    tag = make_tag(slug="featured")
+    original_select_for_update = Tag.objects.select_for_update
+    calls = []
+
+    def spy_select_for_update(*args, **kwargs):
+        calls.append(True)
+        return original_select_for_update(*args, **kwargs)
+
+    monkeypatch.setattr(Tag.objects, "select_for_update", spy_select_for_update)
+
+    alias = create_tag_alias(
+        "tenant_a",
+        {
+            "application_id": None,
+            "tag": tag,
+            "name": "Promoted",
+            "slug": "promoted",
+            "metadata": {},
+            "is_active": True,
+        },
+    )
+
+    assert calls == [True]
+    assert alias.tag_id == tag.id

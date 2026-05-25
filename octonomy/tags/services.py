@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from rest_framework import serializers
 
 from octonomy.audit.services import create_audit_log, tag_snapshot
 from octonomy.core.audit import AuditContext
 from octonomy.core.errors import ConflictError, DomainError
-from octonomy.tags.models import Tag
+from octonomy.tags.models import Tag, TagAlias
 
 
 def validate_metadata(value) -> dict:
@@ -167,20 +168,41 @@ def update_tag(
 
 
 def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
-    if not tag.is_active:
-        return False
-
-    tag.is_active = False
     with transaction.atomic():
-        tag.save(update_fields=["is_active", "updated_at"])
+        locked_tag = Tag.objects.select_for_update().get(id=tag.id)
+        if not locked_tag.is_active:
+            tag.is_active = False
+            return False
+
+        locked_tag.is_active = False
+        locked_tag.save(update_fields=["is_active", "updated_at"])
+        tag.is_active = False
+        active_aliases = TagAlias.objects.filter(
+            tenant_id=locked_tag.tenant_id,
+            tag=locked_tag,
+            is_active=True,
+        )
+        cascaded_alias_ids = [
+            str(alias_id) for alias_id in active_aliases.values_list("id", flat=True)
+        ]
+        active_aliases.update(
+            is_active=False,
+            updated_at=timezone.now(),
+        )
+        changes = {
+            "before": {"is_active": True},
+            "after": {"is_active": False},
+        }
+        if cascaded_alias_ids:
+            changes["cascaded_alias_ids"] = cascaded_alias_ids
         create_audit_log(
-            tenant_id=tag.tenant_id,
-            application_id=tag.application_id,
+            tenant_id=locked_tag.tenant_id,
+            application_id=locked_tag.application_id,
             action="tag.deactivated",
             entity_type="tag",
-            entity_id=str(tag.id),
-            tag_id=tag.id,
+            entity_id=str(locked_tag.id),
+            tag_id=locked_tag.id,
             audit_context=audit_context,
-            changes={"before": {"is_active": True}, "after": {"is_active": False}},
+            changes=changes,
         )
     return True

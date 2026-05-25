@@ -56,9 +56,10 @@ APIs fall back to `assigned_by` only when no service client identity is availabl
 
 ## Seed Data
 
-`make seed` creates demo vocabularies, tags, assignments, and a tenant-wide `svc-demo` service
-token for tenant `tenant_demo`. Store the printed token immediately; Octonomy stores only the
-token hash and prefix.
+`make seed` creates demo vocabularies, tags, aliases, assignments, and a tenant-wide `svc-demo`
+service token for tenant `tenant_demo`. Store the printed token immediately; Octonomy stores only
+the token hash and prefix.
 
 The default vocabularies are shared `labels`, commerce `product-labels`, and CMS
-`content-labels`.
+`content-labels`. The default aliases include `promoted` and `hero` for `featured`, `discount`
+and `promo` for `sale`, and `urgent` for `breaking-news`.

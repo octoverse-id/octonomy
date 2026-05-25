@@ -31,6 +31,10 @@ When `X-Actor-ID` is omitted, audit logs use the authenticated service client na
 Tag responses include `usage_count`, computed from current tag assignments, and
 `vocabulary_id` when the tag belongs to a vocabulary.
 
+Tag aliases are alternate tenant-scoped names for canonical tags. Alias read endpoints require
+`tags:read`; alias mutation endpoints require `tags:write`. Aliases can only point at active
+canonical tags, and deactivating a tag also deactivates its aliases.
+
 Errors use this shape:
 
 ```json
@@ -56,6 +60,8 @@ GET /api/v1/resources/{resource_type}/{resource_id}/audit-logs
 `entity_id`, `tag_id`, `resource_type`, `resource_id`, `actor_id`, and `operation_id`.
 Vocabulary mutations emit `vocabulary.created`, `vocabulary.updated`, and
 `vocabulary.deactivated` audit actions with `entity_type = "vocabulary"`.
+Alias mutations emit `tag_alias.created`, `tag_alias.updated`, and `tag_alias.deactivated` audit
+actions with `entity_type = "tag_alias"`.
 
 Vocabulary endpoints:
 
@@ -84,6 +90,40 @@ PATCH /api/v1/tags/{tag_id}
 
 `POST` and `PATCH` accept optional `vocabulary_id`. `GET /api/v1/tags` supports filtering by
 `vocabulary_id`.
+
+Alias and resolution endpoints:
+
+```text
+GET /api/v1/tag-aliases
+POST /api/v1/tag-aliases
+GET /api/v1/tag-aliases/{alias_id}
+PATCH /api/v1/tag-aliases/{alias_id}
+DELETE /api/v1/tag-aliases/{alias_id}
+GET /api/v1/tags/{tag_id}/aliases
+GET /api/v1/tag-resolution?slug={slug}&type={type}&application_id={application_id}
+```
+
+`POST /api/v1/tag-aliases` accepts `application_id`, `tag_id`, `name`, `slug`, `metadata`, and
+`is_active`. `GET /api/v1/tag-aliases` supports `application_id`, `include_shared`, `tag_id`,
+`slug`, `is_active`, `q`, `limit`, and `offset`.
+`GET /api/v1/tag-resolution` resolves active canonical tags first, then active aliases whose
+canonical tag is also active. Without `application_id`, only shared tags and aliases are resolved.
+If multiple active canonical tags share the same slug across different tag types, provide `type`
+to disambiguate.
+
+Assignment writes can use aliases:
+
+```json
+{
+  "application_id": "commerce",
+  "alias_slug": "promo",
+  "resource_type": "product",
+  "resource_id": "prod_123"
+}
+```
+
+`POST /tag-assignments` accepts exactly one of `tag_id`, `alias_id`, or `alias_slug`.
+Bulk assign and resource replace accept `tag_ids`, `alias_slugs`, or both.
 
 Paginated list endpoints use:
 
