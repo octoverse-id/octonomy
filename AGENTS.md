@@ -45,6 +45,25 @@ Octonomy is a standalone, multi-tenant, multi-application Tag Management / Taxon
 - Keep `.env.example`, README setup steps, and Makefile commands current.
 - Do not introduce external services for v1 unless explicitly approved.
 
+## Development Pipeline
+
+- Branch names must follow Conventional Branch naming from
+  https://conventional-branch.github.io/.
+- Use `<type>/<description>` with lowercase alphanumerics, hyphens, and dots only where valid.
+- Allowed branch types are `feature`, `feat`, `bugfix`, `fix`, `hotfix`, `release`, and
+  `chore`.
+- Example branch names: `feature/tag-aliases`, `fix/audit-log-race`, and
+  `chore/update-agent-rules`.
+- Do not use the old `codex/...` branch prefix in this repository.
+- The `code-review/` directory is reserved for local code review pipeline artifacts.
+- Review agents must write findings to `code-review/findings.md`.
+- Patch agents must read `code-review/findings.md`, apply valid fixes, and write the patch
+  summary to `code-review/patches.md`.
+- Agents must never stage or commit `code-review/findings.md`, `code-review/patches.md`, or any
+  other generated review artifact.
+- After creating a PR, remove all local files under `code-review/` except the tracked
+  `code-review/.gitkeep` placeholder.
+
 ## Web Browsing
 
 - Use the `/browse` skill from gstack for all web browsing.
