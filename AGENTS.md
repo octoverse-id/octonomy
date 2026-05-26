@@ -55,6 +55,18 @@ Octonomy is a standalone, multi-tenant, multi-application Tag Management / Taxon
 - Example branch names: `feature/tag-aliases`, `fix/audit-log-race`, and
   `chore/update-agent-rules`.
 - Do not use the old `codex/...` branch prefix in this repository.
+- When the user explicitly asks to implement an approved development plan, such as
+  `PLEASE IMPLEMENT THIS PLAN`, create a GitHub issue before creating the development branch.
+- If the user provides an existing issue number, use that issue instead of creating a duplicate.
+- New plan-tracking issues must include the plan summary, key implementation tasks, and
+  acceptance checks.
+- If GitHub issue creation fails, stop and report the blocker instead of implementing untracked
+  work.
+- Planned-development branches must include the issue number using
+  `<type>/<issue-number>-<short-description>`, for example `feature/123-tag-aliases`,
+  `fix/124-audit-log-race`, or `chore/125-agent-pipeline-rules`.
+- PR bodies for planned development must include `Closes #<issue-number>` and summarize how the
+  implementation maps back to the approved plan.
 - The `code-review/` directory is reserved for local code review pipeline artifacts.
 - Review agents must write findings to `code-review/findings.md`.
 - Patch agents must read `code-review/findings.md`, apply valid fixes, and write the patch
