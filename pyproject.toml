@@ -3,6 +3,7 @@ name = "octonomy"
 version = "0.1.0"
 description = "Multi-tenant tag management and taxonomy service."
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
   "django>=5.0,<5.2",
