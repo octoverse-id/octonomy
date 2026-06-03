@@ -15,6 +15,7 @@ from octonomy.audit.services import (
 )
 from octonomy.core.audit import AuditContext
 from octonomy.core.errors import ApplicationMismatchError, InactiveTagError
+from octonomy.events.services import build_outbox_event, create_outbox_event, create_outbox_events
 from octonomy.tags.models import Tag
 
 
@@ -92,6 +93,18 @@ def assign_tag(
                     audit_context=audit_context,
                     changes={"after": assignment_snapshot(assignment)},
                 )
+                create_outbox_event(
+                    tenant_id=tenant_id,
+                    application_id=application_id,
+                    event_type="assignment.created",
+                    aggregate_type="tag_assignment",
+                    aggregate_id=str(assignment.id),
+                    tag_id=tag.id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    audit_context=audit_context,
+                    payload={"after": assignment_snapshot(assignment)},
+                )
     except IntegrityError:
         # Concurrent writers can race between the lookup and insert. Treat the
         # unique-constraint winner as the canonical assignment and report this
@@ -122,11 +135,12 @@ def remove_tag_assignment(
         resource_type=resource_type,
         resource_id=resource_id,
     )
-    assignments = list(queryset)
-    if not assignments:
-        return 0
-
     with transaction.atomic():
+        assignments = list(queryset.select_for_update())
+        if not assignments:
+            return 0
+        assignment_ids = [assignment.id for assignment in assignments]
+        outbox_events = []
         for assignment in assignments:
             create_audit_log(
                 tenant_id=tenant_id,
@@ -140,7 +154,22 @@ def remove_tag_assignment(
                 audit_context=audit_context,
                 changes={"before": assignment_snapshot(assignment)},
             )
-        deleted, _ = queryset.delete()
+            outbox_events.append(
+                build_outbox_event(
+                    tenant_id=tenant_id,
+                    application_id=application_id,
+                    event_type="assignment.removed",
+                    aggregate_type="tag_assignment",
+                    aggregate_id=str(assignment.id),
+                    tag_id=assignment.tag_id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    audit_context=audit_context,
+                    payload={"before": assignment_snapshot(assignment)},
+                )
+            )
+        create_outbox_events(outbox_events)
+        deleted, _ = TagAssignment.objects.filter(id__in=assignment_ids).delete()
     return deleted
 
 
@@ -160,6 +189,7 @@ def bulk_assign_tags(
 
     with transaction.atomic():
         audit_logs = []
+        outbox_events = []
         for tag in tags:
             # Bulk assignment preserves the same idempotency contract as the
             # single-write endpoint: tags already present count as existing.
@@ -190,8 +220,23 @@ def bulk_assign_tags(
                 )
                 if audit_log is not None:
                     audit_logs.append(audit_log)
+                outbox_events.append(
+                    build_outbox_event(
+                        tenant_id=tenant_id,
+                        application_id=application_id,
+                        event_type="assignment.created",
+                        aggregate_type="tag_assignment",
+                        aggregate_id=str(assignment.id),
+                        tag_id=tag.id,
+                        resource_type=resource_type,
+                        resource_id=resource_id,
+                        audit_context=audit_context,
+                        payload={"after": assignment_snapshot(assignment)},
+                    )
+                )
 
         create_audit_logs(audit_logs)
+        create_outbox_events(outbox_events)
 
     return {"created": created, "existing": existing, "skipped": 0, "assignments": assignments}
 
@@ -214,12 +259,13 @@ def bulk_remove_tags(
         resource_id=resource_id,
         tag_id__in=tag_ids,
     )
-    assignments = list(queryset)
-    if not assignments:
-        return 0
 
     with transaction.atomic():
+        assignments = list(queryset.select_for_update())
+        if not assignments:
+            return 0
         audit_logs = []
+        outbox_events = []
         for assignment in assignments:
             audit_log = build_audit_log(
                 tenant_id=tenant_id,
@@ -235,8 +281,25 @@ def bulk_remove_tags(
             )
             if audit_log is not None:
                 audit_logs.append(audit_log)
+            outbox_events.append(
+                build_outbox_event(
+                    tenant_id=tenant_id,
+                    application_id=application_id,
+                    event_type="assignment.removed",
+                    aggregate_type="tag_assignment",
+                    aggregate_id=str(assignment.id),
+                    tag_id=assignment.tag_id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    audit_context=audit_context,
+                    payload={"before": assignment_snapshot(assignment)},
+                )
+            )
         create_audit_logs(audit_logs)
-        deleted, _ = queryset.delete()
+        create_outbox_events(outbox_events)
+        deleted, _ = TagAssignment.objects.filter(
+            id__in=[assignment.id for assignment in assignments]
+        ).delete()
     return deleted
 
 
@@ -261,10 +324,11 @@ def replace_resource_tags(
             application_id=application_id,
             resource_type=resource_type,
             resource_id=resource_id,
-        )
+        ).select_for_update()
         removed_assignments = list(existing.exclude(tag_id__in=requested_ids))
         removed_ids = [assignment.id for assignment in removed_assignments]
         audit_logs = []
+        outbox_events = []
         for assignment in removed_assignments:
             audit_log = build_audit_log(
                 tenant_id=tenant_id,
@@ -280,7 +344,22 @@ def replace_resource_tags(
             )
             if audit_log is not None:
                 audit_logs.append(audit_log)
+            outbox_events.append(
+                build_outbox_event(
+                    tenant_id=tenant_id,
+                    application_id=application_id,
+                    event_type="assignment.removed",
+                    aggregate_type="tag_assignment",
+                    aggregate_id=str(assignment.id),
+                    tag_id=assignment.tag_id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    audit_context=audit_context,
+                    payload={"before": assignment_snapshot(assignment)},
+                )
+            )
         create_audit_logs(audit_logs)
+        create_outbox_events(outbox_events)
         removed, _ = TagAssignment.objects.filter(id__in=removed_ids).delete()
         remaining_ids = set(existing.values_list("tag_id", flat=True))
 

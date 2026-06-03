@@ -6,6 +6,7 @@ from rest_framework import serializers
 from octonomy.audit.services import create_audit_log, tag_alias_snapshot
 from octonomy.core.audit import AuditContext
 from octonomy.core.errors import ApplicationMismatchError, ConflictError, DomainError
+from octonomy.events.services import create_outbox_event
 from octonomy.tags.alias_selectors import (
     active_aliases_for_resolution,
     active_tags_for_resolution,
@@ -59,6 +60,16 @@ def create_tag_alias(
                 audit_context=audit_context,
                 changes={"after": tag_alias_snapshot(alias)},
             )
+            create_outbox_event(
+                tenant_id=tenant_id,
+                application_id=alias.application_id,
+                event_type="tag_alias.created",
+                aggregate_type="tag_alias",
+                aggregate_id=str(alias.id),
+                tag_id=alias.tag_id,
+                audit_context=audit_context,
+                payload={"after": tag_alias_snapshot(alias)},
+            )
             return alias
     except IntegrityError:
         raise ConflictError(
@@ -108,6 +119,16 @@ def update_tag_alias(
                 audit_context=audit_context,
                 changes={"before": changed_before, "after": changed_after},
             )
+            create_outbox_event(
+                tenant_id=alias.tenant_id,
+                application_id=alias.application_id,
+                event_type="tag_alias.updated",
+                aggregate_type="tag_alias",
+                aggregate_id=str(alias.id),
+                tag_id=alias.tag_id,
+                audit_context=audit_context,
+                payload={"before": changed_before, "after": changed_after},
+            )
     except IntegrityError:
         raise ConflictError(
             "An active tag alias with this tenant, application, and slug already exists.",
@@ -132,6 +153,16 @@ def deactivate_tag_alias(alias: TagAlias, audit_context: AuditContext | None = N
             tag_id=alias.tag_id,
             audit_context=audit_context,
             changes={"before": {"is_active": True}, "after": {"is_active": False}},
+        )
+        create_outbox_event(
+            tenant_id=alias.tenant_id,
+            application_id=alias.application_id,
+            event_type="tag_alias.deactivated",
+            aggregate_type="tag_alias",
+            aggregate_id=str(alias.id),
+            tag_id=alias.tag_id,
+            audit_context=audit_context,
+            payload={"before": {"is_active": True}, "after": {"is_active": False}},
         )
     return True
 
