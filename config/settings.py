@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "octonomy.service_auth",
     "octonomy.audit",
+    "octonomy.events",
     "octonomy.core",
     "octonomy.tags",
     "octonomy.assignments",
