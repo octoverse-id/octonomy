@@ -5,6 +5,7 @@ from django.db import IntegrityError, transaction
 from octonomy.audit.services import create_audit_log, vocabulary_snapshot
 from octonomy.core.audit import AuditContext
 from octonomy.core.errors import ConflictError
+from octonomy.events.services import create_outbox_event
 from octonomy.tags.models import Vocabulary
 from octonomy.tags.services import validate_metadata
 
@@ -27,6 +28,15 @@ def create_vocabulary(
                 entity_id=str(vocabulary.id),
                 audit_context=audit_context,
                 changes={"after": vocabulary_snapshot(vocabulary)},
+            )
+            create_outbox_event(
+                tenant_id=tenant_id,
+                application_id=vocabulary.application_id,
+                event_type="vocabulary.created",
+                aggregate_type="vocabulary",
+                aggregate_id=str(vocabulary.id),
+                audit_context=audit_context,
+                payload={"after": vocabulary_snapshot(vocabulary)},
             )
             return vocabulary
     except IntegrityError:
@@ -76,6 +86,15 @@ def update_vocabulary(
                 audit_context=audit_context,
                 changes={"before": changed_before, "after": changed_after},
             )
+            create_outbox_event(
+                tenant_id=vocabulary.tenant_id,
+                application_id=vocabulary.application_id,
+                event_type="vocabulary.updated",
+                aggregate_type="vocabulary",
+                aggregate_id=str(vocabulary.id),
+                audit_context=audit_context,
+                payload={"before": changed_before, "after": changed_after},
+            )
     except IntegrityError:
         raise ConflictError(
             "An active vocabulary with this tenant, application, and slug already exists.",
@@ -101,5 +120,14 @@ def deactivate_vocabulary(
             entity_id=str(vocabulary.id),
             audit_context=audit_context,
             changes={"before": {"is_active": True}, "after": {"is_active": False}},
+        )
+        create_outbox_event(
+            tenant_id=vocabulary.tenant_id,
+            application_id=vocabulary.application_id,
+            event_type="vocabulary.deactivated",
+            aggregate_type="vocabulary",
+            aggregate_id=str(vocabulary.id),
+            audit_context=audit_context,
+            payload={"before": {"is_active": True}, "after": {"is_active": False}},
         )
     return True

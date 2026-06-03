@@ -7,6 +7,7 @@ from rest_framework import serializers
 from octonomy.audit.services import create_audit_log, tag_snapshot
 from octonomy.core.audit import AuditContext
 from octonomy.core.errors import ConflictError, DomainError
+from octonomy.events.services import build_outbox_event, create_outbox_event, create_outbox_events
 from octonomy.tags.models import Tag, TagAlias
 
 
@@ -100,6 +101,16 @@ def create_tag(
                 audit_context=audit_context,
                 changes={"after": tag_snapshot(tag)},
             )
+            create_outbox_event(
+                tenant_id=tenant_id,
+                application_id=tag.application_id,
+                event_type="tag.created",
+                aggregate_type="tag",
+                aggregate_id=str(tag.id),
+                tag_id=tag.id,
+                audit_context=audit_context,
+                payload={"after": tag_snapshot(tag)},
+            )
             return tag
     except IntegrityError:
         raise ConflictError(
@@ -159,6 +170,16 @@ def update_tag(
                 audit_context=audit_context,
                 changes={"before": changed_before, "after": changed_after},
             )
+            create_outbox_event(
+                tenant_id=tag.tenant_id,
+                application_id=tag.application_id,
+                event_type="tag.updated",
+                aggregate_type="tag",
+                aggregate_id=str(tag.id),
+                tag_id=tag.id,
+                audit_context=audit_context,
+                payload={"before": changed_before, "after": changed_after},
+            )
     except IntegrityError:
         raise ConflictError(
             "An active tag with this tenant, application, type, and slug already exists.",
@@ -177,18 +198,40 @@ def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
         locked_tag.is_active = False
         locked_tag.save(update_fields=["is_active", "updated_at"])
         tag.is_active = False
-        active_aliases = TagAlias.objects.filter(
-            tenant_id=locked_tag.tenant_id,
-            tag=locked_tag,
-            is_active=True,
+        active_aliases = list(
+            TagAlias.objects.select_for_update().filter(
+                tenant_id=locked_tag.tenant_id,
+                tag=locked_tag,
+                is_active=True,
+            )
         )
-        cascaded_alias_ids = [
-            str(alias_id) for alias_id in active_aliases.values_list("id", flat=True)
+        active_alias_ids = [alias.id for alias in active_aliases]
+        cascaded_alias_ids = [str(alias_id) for alias_id in active_alias_ids]
+        if active_alias_ids:
+            TagAlias.objects.filter(id__in=active_alias_ids).update(
+                is_active=False,
+                updated_at=timezone.now(),
+            )
+        alias_events = [
+            build_outbox_event(
+                tenant_id=alias.tenant_id,
+                application_id=alias.application_id,
+                event_type="tag_alias.deactivated",
+                aggregate_type="tag_alias",
+                aggregate_id=str(alias.id),
+                tag_id=alias.tag_id,
+                audit_context=audit_context,
+                payload={
+                    "before": {"is_active": True},
+                    "after": {"is_active": False},
+                    "cascade": {
+                        "source_event_type": "tag.deactivated",
+                        "source_tag_id": str(locked_tag.id),
+                    },
+                },
+            )
+            for alias in active_aliases
         ]
-        active_aliases.update(
-            is_active=False,
-            updated_at=timezone.now(),
-        )
         changes = {
             "before": {"is_active": True},
             "after": {"is_active": False},
@@ -205,4 +248,15 @@ def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
             audit_context=audit_context,
             changes=changes,
         )
+        create_outbox_event(
+            tenant_id=locked_tag.tenant_id,
+            application_id=locked_tag.application_id,
+            event_type="tag.deactivated",
+            aggregate_type="tag",
+            aggregate_id=str(locked_tag.id),
+            tag_id=locked_tag.id,
+            audit_context=audit_context,
+            payload=changes,
+        )
+        create_outbox_events(alias_events)
     return True

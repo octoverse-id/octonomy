@@ -11,6 +11,7 @@ systems retain ownership of resources.
 - `octonomy.tags`: vocabulary and tag models, validation, CRUD APIs, taxonomy filtering.
 - `octonomy.assignments`: assignment model, idempotent writes, resource/tag query APIs.
 - `octonomy.audit`: append-only audit logs for tag, vocabulary, and assignment mutations.
+- `octonomy.events`: transactional outbox events and local dispatch support.
 - `octonomy.openapi`: OpenAPI metadata and future schema customizations.
 
 ## Tenant, Application, and Vocabulary Boundaries
@@ -31,8 +32,8 @@ shared or application-specific. Shared tags may have shared or application-speci
 application-specific tags may only have aliases in the same application. Aliases only resolve when
 both the alias and canonical tag are active; deactivating a tag deactivates its aliases.
 Cascade alias deactivation is covered by the parent tag's audit log and does not emit one
-`tag_alias.deactivated` row per alias. Tag and alias deactivation are currently one-way through
-the public API.
+`tag_alias.deactivated` audit row per alias. It does emit per-alias outbox events for downstream
+consumers. Tag and alias deactivation are currently one-way through the public API.
 
 ## Audit and Usage Counts
 
@@ -54,11 +55,63 @@ Tenant-owned APIs require an Octonomy service token. Tokens are stored as keyed 
 access by tenant, optional application, and scope. Health endpoints remain unauthenticated.
 Production deployments must provide a non-default `SERVICE_TOKEN_PEPPER`.
 
+## Delivered Extension Points
+
+The following extension points have moved from future design into the implemented backend:
+
+- Vocabularies: tenant-scoped tag groupings that can be shared or application-specific.
+- Tag aliases: alternate identifiers and synonym-style resolution for canonical tags.
+- Audit logs: append-only mutation history with actor, request, operation, tag, and resource
+  correlation.
+- Computed usage counts: `usage_count` on tag responses derived from current assignments.
+- Service API key auth: Octonomy-managed service clients with tenant/application grants and
+  scoped access checks.
+
+## Transactional Event Outbox
+
+Octonomy records integration-oriented domain events in `outbox_events` inside the same database
+transaction as successful mutations. Events are emitted for actual tag, vocabulary, alias, and
+assignment changes. Idempotent no-op writes, repeated deletes, and no-op updates do not emit
+events.
+
+Outbox events carry tenant/application context plus correlation fields such as `operation_id`,
+`request_id`, `actor_id`, `tag_id`, `resource_type`, and `resource_id`. Bulk and replace operations
+emit one event per concrete assignment created or removed while sharing the same `operation_id`.
+
+Current event types:
+
+- `tag.created`
+- `tag.updated`
+- `tag.deactivated`
+- `vocabulary.created`
+- `vocabulary.updated`
+- `vocabulary.deactivated`
+- `tag_alias.created`
+- `tag_alias.updated`
+- `tag_alias.deactivated`
+- `assignment.created`
+- `assignment.removed`
+
+When tag deactivation cascades to active aliases, Octonomy emits the parent `tag.deactivated` event
+with `cascaded_alias_ids` and one `tag_alias.deactivated` outbox event per alias using the same
+`operation_id`.
+
+The first dispatcher is intentionally local and broker-free:
+
+```bash
+python manage.py dispatch_outbox_events --limit 100
+python manage.py dispatch_outbox_events --limit 100 --retry-failed
+```
+
+The default transport logs structured event JSON and marks events as `published`. Failed dispatch
+attempts increment `attempts`, store `last_error`, and mark events as `failed`.
+
 ## Future Extension Points
 
 - GraphQL read API for flexible tag and resource lookup.
 - Nested tag groups within vocabularies.
 - Audit log retention, export, and compliance filtering.
 - Persisted or cached usage counters for high-volume tenants.
-- Event publishing for tag, vocabulary, and assignment changes.
 - External auth integration with JWT or API gateway identity.
+- External broker integrations such as Kafka, SNS/SQS, RabbitMQ, or webhooks backed by the
+  transactional outbox.
