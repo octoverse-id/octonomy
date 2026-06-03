@@ -9,6 +9,8 @@ class OctonomyLimitOffsetPagination(LimitOffsetPagination):
     max_limit = 200
 
     def get_paginated_response(self, data):
+        # v1 list endpoints expose limit/offset metadata beside the data envelope
+        # so clients can page without learning DRF default response shape.
         return Response(
             {
                 "data": data,

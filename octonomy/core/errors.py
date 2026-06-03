@@ -42,6 +42,9 @@ class InactiveTagError(DomainError):
 
 def error_response(code: str, message: str, details: Any, request, http_status: int) -> Response:
     request_id = getattr(request, "request_id", None)
+    # Keep every public API error in one envelope so clients can reliably inspect
+    # error.code, error.message, error.details, and error.request_id regardless of
+    # whether the error came from DRF or Octonomy domain validation.
     return Response(
         {
             "error": {
@@ -59,6 +62,9 @@ def exception_handler(exc, context):
     request = context.get("request")
 
     if isinstance(exc, DomainError):
+        # DomainError subclasses carry product-specific error codes such as
+        # tenant_mismatch and application_mismatch; preserve those instead of
+        # flattening them into DRF generic validation responses.
         return error_response(exc.code, exc.message, exc.details, request, exc.status_code)
 
     if isinstance(exc, Http404):

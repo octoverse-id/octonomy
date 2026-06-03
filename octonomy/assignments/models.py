@@ -45,6 +45,9 @@ class TagAssignment(models.Model):
                 condition=~models.Q(resource_id=""),
                 name="assignment_resource_id_not_blank",
             ),
+            # Assignments are the only Octonomy data stored for external
+            # resources. This uniqueness rule is what makes repeated assignment
+            # requests idempotent for the same tenant/application/resource/tag.
             models.UniqueConstraint(
                 fields=["tenant_id", "application_id", "resource_type", "resource_id", "tag"],
                 name="uniq_assignment_per_resource_tag",

@@ -29,6 +29,8 @@ def validate_tag_for_assignment(tag: Tag, tenant_id: str, application_id: str) -
         raise serializers.ValidationError({"tag_id": ["Tag was not found."]})
     if not tag.is_active:
         raise InactiveTagError(details={"tag_id": ["Inactive tags cannot be assigned."]})
+    # Shared tags have application_id=NULL and can be assigned anywhere in the
+    # tenant. App-specific tags must stay inside their own application.
     if tag.application_id is not None and tag.application_id != application_id:
         raise ApplicationMismatchError(
             details={"application_id": ["Tag belongs to another application."]}
@@ -41,6 +43,8 @@ def get_assignable_tags(tenant_id: str, application_id: str, tag_ids: list) -> l
         raise serializers.ValidationError({"tag_ids": [f"Maximum bulk size is {max_bulk}."]})
 
     unique_ids = list(dict.fromkeys(tag_ids))
+    # Always fetch through the tenant-scoped manager before checking existence so
+    # cross-tenant UUIDs are indistinguishable from missing tags to callers.
     tags = list(Tag.objects.for_tenant(tenant_id).filter(id__in=unique_ids))
     tags_by_id = {tag.id: tag for tag in tags}
     missing = [str(tag_id) for tag_id in unique_ids if tag_id not in tags_by_id]
@@ -64,6 +68,9 @@ def assign_tag(
     validate_tag_for_assignment(tag, tenant_id, application_id)
     try:
         with transaction.atomic():
+            # get_or_create plus the database unique constraint makes assignment
+            # creation idempotent. Retrying the same request should return the
+            # existing assignment instead of creating duplicate Octonomy state.
             assignment, created = TagAssignment.objects.get_or_create(
                 tenant_id=tenant_id,
                 application_id=application_id,
@@ -86,6 +93,9 @@ def assign_tag(
                     changes={"after": assignment_snapshot(assignment)},
                 )
     except IntegrityError:
+        # Concurrent writers can race between the lookup and insert. Treat the
+        # unique-constraint winner as the canonical assignment and report this
+        # request as idempotently existing.
         assignment = TagAssignment.objects.get(
             tenant_id=tenant_id,
             application_id=application_id,
@@ -151,6 +161,8 @@ def bulk_assign_tags(
     with transaction.atomic():
         audit_logs = []
         for tag in tags:
+            # Bulk assignment preserves the same idempotency contract as the
+            # single-write endpoint: tags already present count as existing.
             assignment, was_created = TagAssignment.objects.get_or_create(
                 tenant_id=tenant_id,
                 application_id=application_id,
@@ -241,6 +253,9 @@ def replace_resource_tags(
     requested_ids = {tag.id for tag in tags}
 
     with transaction.atomic():
+        # Replacement is scoped to one application/resource tuple so Octonomy
+        # never removes assignments for the same external resource id in another
+        # tenant or application.
         existing = TagAssignment.objects.filter(
             tenant_id=tenant_id,
             application_id=application_id,

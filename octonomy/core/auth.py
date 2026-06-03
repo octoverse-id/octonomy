@@ -38,6 +38,9 @@ def required_scope_for_request(request, view) -> str:
 def application_ids_from_request(request) -> set[str]:
     application_ids = set()
 
+    # Permission checks need every application id the request names, whether it
+    # came from query parameters or the body. A service with app-scoped grants
+    # must be authorized for all of them before the view runs.
     query_application_id = request.query_params.get("application_id")
     if query_application_id:
         application_ids.add(query_application_id)
@@ -103,6 +106,9 @@ class BearerTokenPermission(BasePermission):
             self.mark_client_used(client)
             return True
 
+        # App-scoped grants are only safe when the request identifies the target
+        # application. Endpoints without an application_id require a tenant-wide
+        # grant because the permission layer cannot narrow the data boundary.
         if not application_ids:
             raise ApplicationMismatchError(
                 "Tenant-wide grant is required when application_id is omitted.",
@@ -126,6 +132,8 @@ class BearerTokenPermission(BasePermission):
 
         raw_token, key_prefix = parsed
         try:
+            # Look up by prefix and peppered hash; the raw bearer token is never
+            # stored, and the prefix alone is not sufficient to authenticate.
             client = ServiceClient.objects.prefetch_related("grants").get(
                 key_prefix=key_prefix,
                 hashed_key=hash_service_token(raw_token),
@@ -143,6 +151,8 @@ class BearerTokenPermission(BasePermission):
 
     def mark_client_used(self, client: ServiceClient) -> None:
         now = timezone.now()
+        # Throttle last-used writes so high-volume service traffic does not turn
+        # every authorized request into a database update.
         if client.last_used_at and now - client.last_used_at <= LAST_USED_UPDATE_INTERVAL:
             return
         client.last_used_at = now

@@ -45,6 +45,9 @@ class ServiceClientGrant(models.Model):
     class Meta:
         db_table = "service_client_grants"
         constraints = [
+            # A grant is either tenant-wide (application_id=NULL) or scoped to one
+            # application. Split uniqueness preserves that distinction while
+            # avoiding duplicate grants under PostgreSQL NULL semantics.
             models.UniqueConstraint(
                 fields=["service_client", "tenant_id", "application_id"],
                 condition=Q(application_id__isnull=False),
