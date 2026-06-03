@@ -28,6 +28,9 @@ def validate_alias_tag(tenant_id: str, application_id: str | None, tag: Tag) -> 
             {"tag_id": ["Tag is inactive."]},
         )
 
+    # App-specific canonical tags cannot be given shared aliases or aliases in a
+    # different application; otherwise alias assignment could bypass the tag
+    # application boundary.
     if tag.application_id is not None and application_id != tag.application_id:
         raise ApplicationMismatchError(
             "App-specific tags can only use aliases in the same application.",
@@ -172,6 +175,9 @@ def resolve_tag_reference(
 ) -> dict:
     tags = list(active_tags_for_resolution(tenant_id, slug, application_id, tag_type))
     if tags:
+        # Canonical tags win over aliases for the same slug. Within an
+        # application, prefer the app-specific canonical tag before falling back
+        # to a shared tag so local vocabulary can override tenant-wide defaults.
         if application_id:
             app_tags = [tag for tag in tags if tag.application_id == application_id]
             if app_tags:
@@ -217,6 +223,9 @@ def resolve_assignable_alias(
     if not alias.tag.is_active:
         raise serializers.ValidationError({field: ["Alias tag is inactive."]})
 
+    # Alias assignment resolves to the canonical tag, but the alias scope still
+    # matters. Without this check an app-specific alias could assign tags outside
+    # the caller application.
     if alias.application_id is not None and alias.application_id != application_id:
         raise ApplicationMismatchError(
             details={"application_id": ["Alias belongs to another application."]}

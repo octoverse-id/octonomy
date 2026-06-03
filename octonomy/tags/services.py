@@ -26,6 +26,9 @@ def validate_tag_parent(tenant_id: str, application_id: str | None, parent: Tag 
             "Parent tag must belong to the same tenant.", {"parent_id": ["Invalid tenant."]}
         )
 
+    # Shared tags must remain portable across applications in the tenant. Linking
+    # a shared tag to an app-specific parent would quietly make the hierarchy
+    # application-specific while the tag still looks shared to assignment code.
     if application_id is None and parent.application_id is not None:
         raise DomainError(
             "Shared tags can only use shared parent tags.",
@@ -61,6 +64,9 @@ def validate_tag_vocabulary(
             {"vocabulary_id": ["Inactive vocabularies cannot be assigned to tags."]},
         )
 
+    # Vocabulary compatibility mirrors tag compatibility: shared tags can only
+    # depend on shared vocabularies, while app-specific tags may use shared or
+    # same-application vocabularies.
     if application_id is None and vocabulary.application_id is not None:
         raise DomainError(
             "Shared tags can only use shared vocabularies.",
@@ -137,6 +143,9 @@ def update_tag(
     )
 
     if "application_id" in data and data["application_id"] != tag.application_id:
+        # Assignments are scoped to an application independently from the tag
+        # row. Moving a tagged record across application scopes would leave
+        # existing assignments pointing at a tag they could no longer legally use.
         if tag.assignments.exists():
             raise ConflictError(
                 "Cannot change application_id for a tag with assignments.",
@@ -190,6 +199,9 @@ def update_tag(
 
 def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
     with transaction.atomic():
+        # Product deletion is soft deletion. Lock the row so concurrent deletes
+        # observe one state transition and produce at most one deactivation audit
+        # event for the tag.
         locked_tag = Tag.objects.select_for_update().get(id=tag.id)
         if not locked_tag.is_active:
             tag.is_active = False
@@ -205,6 +217,9 @@ def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
                 is_active=True,
             )
         )
+        # A deactivated canonical tag cannot have assignable aliases left behind;
+        # cascade by deactivation rather than hard delete so alias history remains
+        # visible in audit trails and outbox events can describe the cascade.
         active_alias_ids = [alias.id for alias in active_aliases]
         cascaded_alias_ids = [str(alias_id) for alias_id in active_alias_ids]
         if active_alias_ids:

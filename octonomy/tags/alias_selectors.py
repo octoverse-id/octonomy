@@ -60,6 +60,8 @@ def active_aliases_for_resolution(
 ) -> QuerySet[TagAlias]:
     queryset = aliases_for_tenant(tenant_id).active().filter(slug=slug, tag__is_active=True)
     if application_id:
+        # App-specific aliases should shadow shared aliases during resolution,
+        # while still allowing shared aliases to act as tenant-wide fallbacks.
         return queryset.filter(
             Q(application_id=application_id) | Q(application_id__isnull=True)
         ).annotate(
@@ -82,6 +84,8 @@ def active_aliases_for_resolution_bulk(
         tag__is_active=True,
     )
     if application_id:
+        # Keep bulk alias resolution ordered the same way as single resolution so
+        # repeated alias slugs consistently choose app-specific aliases first.
         return queryset.filter(
             Q(application_id=application_id) | Q(application_id__isnull=True)
         ).annotate(

@@ -29,6 +29,9 @@ Octonomy is a standalone, multi-tenant, multi-application Tag Management / Taxon
 - Use PostgreSQL JSONB for tag metadata.
 - Prefer service-layer business rules over embedding cross-row logic directly in views.
 - Keep tenant isolation explicit in every query.
+- When changing non-obvious business rules, invariants, or cross-tenant/application behavior,
+  add or update explanatory comments near the relevant code so future contributors understand
+  why the rule exists.
 - Add database constraints and indexes for uniqueness, lookup performance, and idempotency.
 - Use Octonomy service API keys for service-to-service auth.
 - Service tokens must be stored hashed and scoped by tenant, optional application, and scopes.

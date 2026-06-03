@@ -22,6 +22,8 @@ class AuthenticatedService:
 
 
 def hash_service_token(token: str) -> str:
+    # Store only a peppered HMAC of service tokens. The key prefix is enough for
+    # lookup, while the full secret remains unrecoverable if the database leaks.
     pepper = settings.SERVICE_TOKEN_PEPPER.encode()
     return hmac.new(pepper, token.encode(), hashlib.sha256).hexdigest()
 
@@ -33,6 +35,8 @@ def generate_service_token() -> tuple[str, str]:
 
 
 def parse_service_token(token: str) -> tuple[str, str] | None:
+    # Reject malformed tokens before hashing or database lookup so arbitrary
+    # bearer strings cannot force expensive work or bypass the prefix format.
     if len(token) > MAX_SERVICE_TOKEN_LENGTH:
         return None
 
@@ -52,6 +56,8 @@ def create_service_client_token(
 ) -> tuple[str, ServiceClient]:
     token, key_prefix = generate_service_token()
     with transaction.atomic():
+        # The raw token is returned exactly once. Persist only its prefix and
+        # hash, then attach explicit tenant/application grants for authorization.
         client = ServiceClient.objects.create(
             name=name,
             key_prefix=key_prefix,
@@ -106,6 +112,9 @@ def grant_allows(
     scope: str,
 ) -> bool:
     grants = client.grants.all()
+    # A tenant-wide grant authorizes any application in that tenant for the
+    # requested scope. Application grants are narrower and only match when the
+    # caller supplies the same application_id.
     tenant_wide = [
         grant
         for grant in grants

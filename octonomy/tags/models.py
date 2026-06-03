@@ -41,6 +41,10 @@ class Vocabulary(models.Model):
         db_table = "vocabularies"
         ordering = ["name", "slug"]
         constraints = [
+            # Shared records store application_id as NULL, so they need a separate
+            # active-only uniqueness rule from app-scoped records. Relying on a
+            # single nullable column in a unique constraint would permit duplicate
+            # shared slugs under PostgreSQL NULL semantics.
             models.UniqueConstraint(
                 fields=["tenant_id", "slug"],
                 condition=Q(application_id__isnull=True, is_active=True),
@@ -105,6 +109,9 @@ class Tag(models.Model):
                 condition=~Q(parent_id=models.F("id")),
                 name="tag_parent_cannot_be_self",
             ),
+            # Shared tags are tenant-wide because application_id is NULL. Keep the
+            # active uniqueness rules split so app-specific tags can reuse a slug
+            # without weakening the one-canonical-shared-tag invariant.
             models.UniqueConstraint(
                 fields=["tenant_id", "type", "slug"],
                 condition=Q(application_id__isnull=True, is_active=True),
@@ -170,6 +177,10 @@ class TagAlias(models.Model):
         db_table = "tag_aliases"
         ordering = ["name", "slug"]
         constraints = [
+            # Aliases are alternate identifiers for canonical tags, and their
+            # uniqueness follows the same shared-vs-application scope model as
+            # tags. The constraints are active-only so deactivated aliases do not
+            # permanently reserve a slug.
             models.UniqueConstraint(
                 fields=["tenant_id", "slug"],
                 condition=Q(application_id__isnull=True, is_active=True),
