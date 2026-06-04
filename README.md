@@ -1,10 +1,16 @@
 # Octonomy
 
+[![CI](https://github.com/octoverse-id/octonomy/actions/workflows/ci.yml/badge.svg)](https://github.com/octoverse-id/octonomy/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+
 Octonomy is a standalone, multi-tenant, multi-application tag management and taxonomy service.
 
 It stores vocabularies, tags, and tag assignments for external resources such as articles,
 images, orders, products, and documents. Octonomy does not own or duplicate external resource
 data.
+
+> **Project status:** early and evolving (`0.1.0`). APIs may change before `1.0`.
 
 ## Stack
 
@@ -184,3 +190,24 @@ curl "http://localhost:8000/api/v1/audit-logs?action=assignment.created" \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo"
 ```
+
+## Documentation
+
+- [Architecture](docs/architecture.md) — system design, layers, and extension points.
+- [API reference](docs/api.md) — endpoints, scopes, errors, and pagination.
+- [Development](docs/development.md) — local setup, environment variables, and service tokens.
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, conventions,
+and the PR process, and our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md). Do not open a
+public issue for security problems.
+
+## License
+
+Octonomy is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for
+attribution.
