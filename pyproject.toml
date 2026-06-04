@@ -18,7 +18,7 @@ dev = [
   "factory-boy>=3.3,<3.4",
   "pytest>=8.3,<9.0",
   "pytest-django>=4.9,<5.0",
-  "ruff>=0.8,<0.9",
+  "ruff>=0.8,<0.16",
 ]
 
 [tool.pytest.ini_options]
