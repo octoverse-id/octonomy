@@ -307,8 +307,7 @@ def test_management_command_creates_token_and_revoke_command_deactivates_it():
     assert token not in client.hashed_key
     assert client.metadata == {"owner": "platform"}
     assert (
-        authenticated_client(token).get("/api/v1/tags?application_id=commerce").status_code
-        == 200
+        authenticated_client(token).get("/api/v1/tags?application_id=commerce").status_code == 200
     )
 
     call_command("revoke_service_token", "--prefix", client.key_prefix)
@@ -316,8 +315,7 @@ def test_management_command_creates_token_and_revoke_command_deactivates_it():
 
     assert client.is_active is False
     assert (
-        authenticated_client(token).get("/api/v1/tags?application_id=commerce").status_code
-        == 403
+        authenticated_client(token).get("/api/v1/tags?application_id=commerce").status_code == 403
     )
 
 

@@ -80,10 +80,9 @@ def _next_event(*, retry_failed: bool) -> OutboxEvent | None:
     if retry_failed:
         statuses.append(OutboxEvent.Status.FAILED)
 
-    queryset = (
-        OutboxEvent.objects.filter(status__in=statuses, available_at__lte=timezone.now())
-        .order_by("available_at", "created_at", "id")
-    )
+    queryset = OutboxEvent.objects.filter(
+        status__in=statuses, available_at__lte=timezone.now()
+    ).order_by("available_at", "created_at", "id")
     if getattr(connection.features, "has_select_for_update_skip_locked", False):
         queryset = queryset.select_for_update(skip_locked=True)
     return queryset.first()

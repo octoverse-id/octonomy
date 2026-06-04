@@ -62,15 +62,17 @@ def active_aliases_for_resolution(
     if application_id:
         # App-specific aliases should shadow shared aliases during resolution,
         # while still allowing shared aliases to act as tenant-wide fallbacks.
-        return queryset.filter(
-            Q(application_id=application_id) | Q(application_id__isnull=True)
-        ).annotate(
-            scope_priority=Case(
-                When(application_id=application_id, then=Value(0)),
-                default=Value(1),
-                output_field=IntegerField(),
+        return (
+            queryset.filter(Q(application_id=application_id) | Q(application_id__isnull=True))
+            .annotate(
+                scope_priority=Case(
+                    When(application_id=application_id, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
             )
-        ).order_by("scope_priority", "name", "id")
+            .order_by("scope_priority", "name", "id")
+        )
     return queryset.filter(application_id__isnull=True)
 
 
@@ -79,20 +81,26 @@ def active_aliases_for_resolution_bulk(
     slugs: list[str],
     application_id: str | None,
 ) -> QuerySet[TagAlias]:
-    queryset = aliases_for_tenant(tenant_id).active().filter(
-        slug__in=slugs,
-        tag__is_active=True,
+    queryset = (
+        aliases_for_tenant(tenant_id)
+        .active()
+        .filter(
+            slug__in=slugs,
+            tag__is_active=True,
+        )
     )
     if application_id:
         # Keep bulk alias resolution ordered the same way as single resolution so
         # repeated alias slugs consistently choose app-specific aliases first.
-        return queryset.filter(
-            Q(application_id=application_id) | Q(application_id__isnull=True)
-        ).annotate(
-            scope_priority=Case(
-                When(application_id=application_id, then=Value(0)),
-                default=Value(1),
-                output_field=IntegerField(),
+        return (
+            queryset.filter(Q(application_id=application_id) | Q(application_id__isnull=True))
+            .annotate(
+                scope_priority=Case(
+                    When(application_id=application_id, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
             )
-        ).order_by("slug", "scope_priority", "name", "id")
+            .order_by("slug", "scope_priority", "name", "id")
+        )
     return queryset.filter(application_id__isnull=True).order_by("slug", "name", "id")
