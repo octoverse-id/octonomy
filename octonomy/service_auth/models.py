@@ -57,7 +57,7 @@ class ServiceClientGrant(models.Model):
                 fields=["service_client", "tenant_id"],
                 condition=Q(application_id__isnull=True),
                 name="uniq_service_tenant_grant",
-            )
+            ),
         ]
         indexes = [
             models.Index(

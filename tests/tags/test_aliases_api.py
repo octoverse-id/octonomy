@@ -202,12 +202,8 @@ def test_alias_query_params_validate_application_id(api_client):
     alias = make_alias(slug="promoted")
 
     list_response = api_client.get("/api/v1/tag-aliases?application_id=%20")
-    tag_aliases_response = api_client.get(
-        f"/api/v1/tags/{alias.tag_id}/aliases?application_id=%20"
-    )
-    resolution_response = api_client.get(
-        "/api/v1/tag-resolution?slug=promoted&application_id=%20"
-    )
+    tag_aliases_response = api_client.get(f"/api/v1/tags/{alias.tag_id}/aliases?application_id=%20")
+    resolution_response = api_client.get("/api/v1/tag-resolution?slug=promoted&application_id=%20")
 
     assert list_response.status_code == 400
     assert tag_aliases_response.status_code == 400
@@ -223,9 +219,7 @@ def test_alias_boolean_query_params_use_standard_parsing(api_client):
     )
     inactive = make_alias(slug="inactive", is_active=False)
 
-    app_only = api_client.get(
-        "/api/v1/tag-aliases?application_id=commerce&include_shared=0"
-    )
+    app_only = api_client.get("/api/v1/tag-aliases?application_id=commerce&include_shared=0")
     inactive_only = api_client.get("/api/v1/tag-aliases?is_active=0")
 
     assert app_only.status_code == 200

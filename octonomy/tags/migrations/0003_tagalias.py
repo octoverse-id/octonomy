@@ -6,9 +6,8 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('tags', '0002_vocabulary_tag_vocabulary'),
+        ("tags", "0002_vocabulary_tag_vocabulary"),
     ]
 
     operations = [

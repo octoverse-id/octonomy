@@ -57,11 +57,7 @@ class AssignmentWriteSerializer(serializers.Serializer):
         identifiers = [field for field in ("tag_id", "alias_id", "alias_slug") if attrs.get(field)]
         if len(identifiers) != 1:
             raise serializers.ValidationError(
-                {
-                    "non_field_errors": [
-                        "Provide exactly one of tag_id, alias_id, or alias_slug."
-                    ]
-                }
+                {"non_field_errors": ["Provide exactly one of tag_id, alias_id, or alias_slug."]}
             )
 
         tenant_id = self.context["tenant_id"]
@@ -104,9 +100,7 @@ class BulkAssignSerializer(serializers.Serializer):
     application_id = serializers.CharField(max_length=100)
     resource_type = serializers.CharField(max_length=100)
     resource_id = serializers.CharField(max_length=255)
-    tag_ids = serializers.ListField(
-        child=serializers.UUIDField(), required=False, allow_empty=True
-    )
+    tag_ids = serializers.ListField(child=serializers.UUIDField(), required=False, allow_empty=True)
     alias_slugs = serializers.ListField(
         child=serializers.CharField(max_length=255), required=False, allow_empty=True
     )
@@ -187,9 +181,7 @@ class BulkRemoveSerializer(serializers.Serializer):
 
 
 class ResourceReplaceSerializer(BulkAssignSerializer):
-    tag_ids = serializers.ListField(
-        child=serializers.UUIDField(), required=False, allow_empty=True
-    )
+    tag_ids = serializers.ListField(child=serializers.UUIDField(), required=False, allow_empty=True)
 
     def validate(self, attrs):
         tag_ids = list(attrs.get("tag_ids", []))
