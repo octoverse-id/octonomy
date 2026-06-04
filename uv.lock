@@ -191,15 +191,15 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dj-database-url", specifier = ">=2.2,<3.0" },
-    { name = "django", specifier = ">=5.0,<5.2" },
-    { name = "djangorestframework", specifier = ">=3.15,<3.16" },
-    { name = "drf-spectacular", specifier = ">=0.27,<0.28" },
+    { name = "dj-database-url", specifier = ">=2.2,<4.0" },
+    { name = "django", specifier = ">=5.0,<5.3" },
+    { name = "djangorestframework", specifier = ">=3.15,<3.18" },
+    { name = "drf-spectacular", specifier = ">=0.27,<0.30" },
     { name = "factory-boy", marker = "extra == 'dev'", specifier = ">=3.3,<3.4" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<3.3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<9.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<3.4" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<10.0" },
     { name = "pytest-django", marker = "extra == 'dev'", specifier = ">=4.9,<5.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8,<0.9" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8,<0.16" },
 ]
 provides-extras = ["dev"]
 

@@ -7,6 +7,14 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
+    # Bundle minor + patch bumps into a single PR. Major bumps still arrive as
+    # their own PRs so they get individual review.
+    groups:
+      python-packages:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -15,3 +23,8 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
