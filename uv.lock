@@ -171,7 +171,7 @@ wheels = [
 
 [[package]]
 name = "octonomy"
-version = "0.1.0"
+version = "1.0.0rc1"
 source = { virtual = "." }
 dependencies = [
     { name = "dj-database-url" },
