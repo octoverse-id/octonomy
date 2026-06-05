@@ -106,6 +106,17 @@ python manage.py dispatch_outbox_events --limit 100 --retry-failed
 The default transport logs structured event JSON and marks events as `published`. Failed dispatch
 attempts increment `attempts`, store `last_error`, and mark events as `failed`.
 
+## Release And Operations Readiness
+
+The v1 REST surface is entering release-candidate stabilization as `1.0.0-rc.1`. Release readiness
+is enforced through Django system checks, migration drift checks, OpenAPI schema generation,
+SQLite tests, and PostgreSQL tests in CI.
+
+Production deployments should run PostgreSQL, set non-default `DJANGO_SECRET_KEY` and
+`SERVICE_TOKEN_PEPPER` values, avoid wildcard `ALLOWED_HOSTS`, and use `/health/ready` for database
+readiness. Operational details for service-token rotation, outbox dispatch, backup, and smoke tests
+are documented in `docs/operations.md` and `docs/release.md`.
+
 ## Future Extension Points
 
 - GraphQL read API for flexible tag and resource lookup.
