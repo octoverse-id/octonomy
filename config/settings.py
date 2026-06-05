@@ -21,6 +21,7 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "local-dev-secret")
 DEBUG = env_bool("DJANGO_DEBUG", True)
+API_VERSION = os.getenv("OCTONOMY_API_VERSION", "1.0.0-rc.1")
 ALLOWED_HOSTS = [
     host.strip() for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 ]
@@ -97,7 +98,7 @@ REST_FRAMEWORK = {
 SPECTACULAR_SETTINGS = {
     "TITLE": "Octonomy API",
     "DESCRIPTION": "Multi-tenant tag management and taxonomy service.",
-    "VERSION": "0.1.0",
+    "VERSION": API_VERSION,
     "SERVE_INCLUDE_SCHEMA": False,
 }
 

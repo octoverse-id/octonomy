@@ -1,0 +1,1415 @@
+openapi: 3.0.3
+info:
+  title: Octonomy API
+  version: 1.0.0-rc.1
+  description: Multi-tenant tag management and taxonomy service.
+paths:
+  /api/v1/audit-logs:
+    get:
+      operationId: api_v1_audit_logs_list
+      parameters:
+      - in: query
+        name: action
+        schema:
+          type: string
+      - in: query
+        name: actor_id
+        schema:
+          type: string
+      - in: query
+        name: application_id
+        schema:
+          type: string
+      - in: query
+        name: entity_id
+        schema:
+          type: string
+      - in: query
+        name: entity_type
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+      - in: query
+        name: offset
+        schema:
+          type: integer
+      - in: query
+        name: operation_id
+        schema:
+          type: string
+      - in: query
+        name: resource_id
+        schema:
+          type: string
+      - in: query
+        name: resource_type
+        schema:
+          type: string
+      - in: query
+        name: tag_id
+        schema:
+          type: string
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLog'
+          description: ''
+  /api/v1/resources/{resource_type}/{resource_id}/audit-logs:
+    get:
+      operationId: api_v1_resources_audit_logs_list
+      parameters:
+      - in: query
+        name: action
+        schema:
+          type: string
+      - in: query
+        name: actor_id
+        schema:
+          type: string
+      - in: query
+        name: application_id
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+      - in: query
+        name: offset
+        schema:
+          type: integer
+      - in: query
+        name: operation_id
+        schema:
+          type: string
+      - in: path
+        name: resource_id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: resource_type
+        schema:
+          type: string
+        required: true
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLog'
+          description: ''
+  /api/v1/resources/{resource_type}/{resource_id}/tags:
+    get:
+      operationId: api_v1_resources_tags_list
+      parameters:
+      - in: query
+        name: application_id
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: include_inactive
+        schema:
+          type: boolean
+      - in: query
+        name: limit
+        schema:
+          type: integer
+      - in: query
+        name: offset
+        schema:
+          type: integer
+      - in: path
+        name: resource_id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: resource_type
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: type
+        schema:
+          type: string
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ResourceTag'
+          description: ''
+    post:
+      operationId: api_v1_resources_tags_create
+      parameters:
+      - in: path
+        name: resource_id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: resource_type
+        schema:
+          type: string
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceReplace'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResourceReplace'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ResourceReplace'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ResourceTag'
+          description: ''
+  /api/v1/tag-aliases:
+    get:
+      operationId: api_v1_tag_aliases_list
+      parameters:
+      - in: query
+        name: application_id
+        schema:
+          type: string
+      - in: query
+        name: include_shared
+        schema:
+          type: boolean
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+      - in: query
+        name: limit
+        schema:
+          type: integer
+      - in: query
+        name: offset
+        schema:
+          type: integer
+      - in: query
+        name: q
+        schema:
+          type: string
+      - in: query
+        name: slug
+        schema:
+          type: string
+      - in: query
+        name: tag_id
+        schema:
+          type: string
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TagAlias'
+          description: ''
+    post:
+      operationId: api_v1_tag_aliases_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagAliasWrite'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TagAliasWrite'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TagAliasWrite'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagAlias'
+          description: ''
+  /api/v1/tag-aliases/{alias_id}:
+    get:
+      operationId: api_v1_tag_aliases_retrieve
+      parameters:
+      - in: path
+        name: alias_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagAlias'
+          description: ''
+    patch:
+      operationId: api_v1_tag_aliases_partial_update
+      parameters:
+      - in: path
+        name: alias_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedTagAliasPatch'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedTagAliasPatch'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedTagAliasPatch'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagAlias'
+          description: ''
+    delete:
+      operationId: api_v1_tag_aliases_destroy
+      parameters:
+      - in: path
+        name: alias_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      responses:
+        '204':
+          description: No response body
+  /api/v1/tag-assignments:
+    post:
+      operationId: api_v1_tag_assignments_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignmentWrite'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AssignmentWrite'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AssignmentWrite'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Assignment'
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Assignment'
+          description: ''
+    delete:
+      operationId: api_v1_tag_assignments_destroy
+      tags:
+      - api
+      responses:
+        '204':
+          description: No response body
+  /api/v1/tag-assignments/bulk-assign:
+    post:
+      operationId: api_v1_tag_assignments_bulk_assign_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkAssign'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkAssign'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/BulkAssign'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Assignment'
+          description: ''
+  /api/v1/tag-assignments/bulk-remove:
+    post:
+      operationId: api_v1_tag_assignments_bulk_remove_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkRemove'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/BulkRemove'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/BulkRemove'
+        required: true
+      responses:
+        '200':
+          description: Bulk remove summary.
+  /api/v1/tag-resolution:
+    get:
+      operationId: api_v1_tag_resolution_retrieve
+      parameters:
+      - in: query
+        name: application_id
+        schema:
+          type: string
+      - in: query
+        name: slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: type
+        schema:
+          type: string
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagResolution'
+          description: ''
+  /api/v1/tags:
+    get:
+      operationId: api_v1_tags_list
+      parameters:
+      - in: query
+        name: application_id
+        schema:
+          type: string
+      - in: query
+        name: include_shared
+        schema:
+          type: boolean
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+      - in: query
+        name: limit
+        schema:
+          type: integer
+      - in: query
+        name: offset
+        schema:
+          type: integer
+      - in: query
+        name: parent_id
+        schema:
+          type: string
+      - in: query
+        name: q
+        schema:
+          type: string
+      - in: query
+        name: slug
+        schema:
+          type: string
+      - in: query
+        name: type
+        schema:
+          type: string
+      - in: query
+        name: vocabulary_id
+        schema:
+          type: string
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tag'
+          description: ''
+    post:
+      operationId: api_v1_tags_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagWrite'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TagWrite'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TagWrite'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+          description: ''
+  /api/v1/tags/{tag_id}:
+    get:
+      operationId: api_v1_tags_retrieve
+      parameters:
+      - in: path
+        name: tag_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+          description: ''
+    patch:
+      operationId: api_v1_tags_partial_update
+      parameters:
+      - in: path
+        name: tag_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedTagPatch'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedTagPatch'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedTagPatch'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+          description: ''
+    delete:
+      operationId: api_v1_tags_destroy
+      parameters:
+      - in: path
+        name: tag_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      responses:
+        '204':
+          description: No response body
+  /api/v1/tags/{tag_id}/aliases:
+    get:
+      operationId: api_v1_tags_aliases_list
+      parameters:
+      - in: query
+        name: application_id
+        schema:
+          type: string
+      - in: query
+        name: include_shared
+        schema:
+          type: boolean
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+      - in: query
+        name: limit
+        schema:
+          type: integer
+      - in: query
+        name: offset
+        schema:
+          type: integer
+      - in: path
+        name: tag_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TagAlias'
+          description: ''
+  /api/v1/tags/{tag_id}/audit-logs:
+    get:
+      operationId: api_v1_tags_audit_logs_list
+      parameters:
+      - in: query
+        name: action
+        schema:
+          type: string
+      - in: query
+        name: actor_id
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+      - in: query
+        name: offset
+        schema:
+          type: integer
+      - in: query
+        name: operation_id
+        schema:
+          type: string
+      - in: path
+        name: tag_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLog'
+          description: ''
+  /api/v1/tags/{tag_id}/resources:
+    get:
+      operationId: api_v1_tags_resources_list
+      parameters:
+      - in: query
+        name: application_id
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+      - in: query
+        name: offset
+        schema:
+          type: integer
+      - in: query
+        name: resource_type
+        schema:
+          type: string
+      - in: path
+        name: tag_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TagResource'
+          description: ''
+  /api/v1/vocabularies:
+    get:
+      operationId: api_v1_vocabularies_list
+      parameters:
+      - in: query
+        name: application_id
+        schema:
+          type: string
+      - in: query
+        name: include_shared
+        schema:
+          type: boolean
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+      - in: query
+        name: limit
+        schema:
+          type: integer
+      - in: query
+        name: offset
+        schema:
+          type: integer
+      - in: query
+        name: q
+        schema:
+          type: string
+      - in: query
+        name: slug
+        schema:
+          type: string
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Vocabulary'
+          description: ''
+    post:
+      operationId: api_v1_vocabularies_create
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VocabularyWrite'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/VocabularyWrite'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/VocabularyWrite'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vocabulary'
+          description: ''
+  /api/v1/vocabularies/{vocabulary_id}:
+    get:
+      operationId: api_v1_vocabularies_retrieve
+      parameters:
+      - in: path
+        name: vocabulary_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vocabulary'
+          description: ''
+    patch:
+      operationId: api_v1_vocabularies_partial_update
+      parameters:
+      - in: path
+        name: vocabulary_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedVocabularyPatch'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedVocabularyPatch'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedVocabularyPatch'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vocabulary'
+          description: ''
+    delete:
+      operationId: api_v1_vocabularies_destroy
+      parameters:
+      - in: path
+        name: vocabulary_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - api
+      responses:
+        '204':
+          description: No response body
+  /health/live:
+    get:
+      operationId: health_live_retrieve
+      tags:
+      - health
+      responses:
+        '200':
+          description: Service is live.
+  /health/ready:
+    get:
+      operationId: health_ready_retrieve
+      tags:
+      - health
+      responses:
+        '200':
+          description: Service is ready.
+components:
+  schemas:
+    Assignment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        tenant_id:
+          type: string
+          readOnly: true
+        application_id:
+          type: string
+          maxLength: 100
+        tag_id:
+          type: string
+          format: uuid
+          readOnly: true
+        resource_type:
+          type: string
+          maxLength: 100
+        resource_id:
+          type: string
+          maxLength: 255
+        assigned_by:
+          type: string
+          nullable: true
+          maxLength: 255
+        assigned_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - application_id
+      - assigned_at
+      - id
+      - resource_id
+      - resource_type
+      - tag_id
+      - tenant_id
+    AssignmentWrite:
+      type: object
+      properties:
+        application_id:
+          type: string
+          maxLength: 100
+        tag_id:
+          type: string
+          format: uuid
+        alias_id:
+          type: string
+          format: uuid
+        alias_slug:
+          type: string
+          maxLength: 255
+        resource_type:
+          type: string
+          maxLength: 100
+        resource_id:
+          type: string
+          maxLength: 255
+        assigned_by:
+          type: string
+          nullable: true
+          maxLength: 255
+      required:
+      - application_id
+      - resource_id
+      - resource_type
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        tenant_id:
+          type: string
+          readOnly: true
+        application_id:
+          type: string
+          readOnly: true
+          nullable: true
+        action:
+          type: string
+          readOnly: true
+        entity_type:
+          type: string
+          readOnly: true
+        entity_id:
+          type: string
+          readOnly: true
+        tag_id:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+        resource_type:
+          type: string
+          readOnly: true
+          nullable: true
+        resource_id:
+          type: string
+          readOnly: true
+          nullable: true
+        actor_id:
+          type: string
+          readOnly: true
+          nullable: true
+        request_id:
+          type: string
+          readOnly: true
+          nullable: true
+        operation_id:
+          type: string
+          format: uuid
+          readOnly: true
+        changes:
+          readOnly: true
+        metadata:
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - action
+      - actor_id
+      - application_id
+      - changes
+      - created_at
+      - entity_id
+      - entity_type
+      - id
+      - metadata
+      - operation_id
+      - request_id
+      - resource_id
+      - resource_type
+      - tag_id
+      - tenant_id
+    BulkAssign:
+      type: object
+      properties:
+        application_id:
+          type: string
+          maxLength: 100
+        resource_type:
+          type: string
+          maxLength: 100
+        resource_id:
+          type: string
+          maxLength: 255
+        tag_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        alias_slugs:
+          type: array
+          items:
+            type: string
+            maxLength: 255
+        assigned_by:
+          type: string
+          nullable: true
+          maxLength: 255
+      required:
+      - application_id
+      - resource_id
+      - resource_type
+    BulkRemove:
+      type: object
+      properties:
+        application_id:
+          type: string
+          maxLength: 100
+        resource_type:
+          type: string
+          maxLength: 100
+        resource_id:
+          type: string
+          maxLength: 255
+        tag_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+      required:
+      - application_id
+      - resource_id
+      - resource_type
+      - tag_ids
+    PatchedTagAliasPatch:
+      type: object
+      properties:
+        application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        tag_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          maxLength: 255
+        metadata: {}
+        is_active:
+          type: boolean
+    PatchedTagPatch:
+      type: object
+      properties:
+        application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          maxLength: 255
+        type:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          nullable: true
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        vocabulary_id:
+          type: string
+          format: uuid
+          nullable: true
+        metadata: {}
+        is_active:
+          type: boolean
+    PatchedVocabularyPatch:
+      type: object
+      properties:
+        application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        metadata: {}
+        is_active:
+          type: boolean
+    ResourceReplace:
+      type: object
+      properties:
+        application_id:
+          type: string
+          maxLength: 100
+        resource_type:
+          type: string
+          maxLength: 100
+        resource_id:
+          type: string
+          maxLength: 255
+        tag_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        alias_slugs:
+          type: array
+          items:
+            type: string
+            maxLength: 255
+        assigned_by:
+          type: string
+          nullable: true
+          maxLength: 255
+      required:
+      - application_id
+      - resource_id
+      - resource_type
+    ResourceTag:
+      type: object
+      properties:
+        assignment_id:
+          type: string
+          format: uuid
+        assigned_by:
+          type: string
+          nullable: true
+        assigned_at:
+          type: string
+          format: date-time
+        tag:
+          $ref: '#/components/schemas/Tag'
+      required:
+      - assigned_at
+      - assigned_by
+      - assignment_id
+      - tag
+    Tag:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        tenant_id:
+          type: string
+          readOnly: true
+        application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          maxLength: 255
+        type:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          nullable: true
+        parent_id:
+          type: string
+          format: uuid
+          readOnly: true
+        vocabulary_id:
+          type: string
+          format: uuid
+          readOnly: true
+        metadata: {}
+        is_active:
+          type: boolean
+        usage_count:
+          type: integer
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - application_id
+      - created_at
+      - id
+      - name
+      - parent_id
+      - slug
+      - tenant_id
+      - type
+      - updated_at
+      - usage_count
+      - vocabulary_id
+    TagAlias:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        tenant_id:
+          type: string
+          readOnly: true
+        application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        tag_id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          maxLength: 255
+        metadata: {}
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - application_id
+      - created_at
+      - id
+      - name
+      - slug
+      - tag_id
+      - tenant_id
+      - updated_at
+    TagAliasWrite:
+      type: object
+      properties:
+        application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        tag_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          maxLength: 255
+        metadata: {}
+        is_active:
+          type: boolean
+          default: true
+      required:
+      - name
+      - slug
+      - tag_id
+    TagResolution:
+      type: object
+      properties:
+        matched_type:
+          type: string
+        matched_alias:
+          allOf:
+          - $ref: '#/components/schemas/TagAlias'
+          nullable: true
+        tag:
+          $ref: '#/components/schemas/Tag'
+      required:
+      - matched_alias
+      - matched_type
+      - tag
+    TagResource:
+      type: object
+      properties:
+        application_id:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        assigned_by:
+          type: string
+          nullable: true
+        assigned_at:
+          type: string
+          format: date-time
+      required:
+      - application_id
+      - assigned_at
+      - assigned_by
+      - resource_id
+      - resource_type
+    TagWrite:
+      type: object
+      properties:
+        application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          maxLength: 255
+        type:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          nullable: true
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        vocabulary_id:
+          type: string
+          format: uuid
+          nullable: true
+        metadata: {}
+        is_active:
+          type: boolean
+          default: true
+      required:
+      - name
+      - slug
+      - type
+    Vocabulary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        tenant_id:
+          type: string
+          readOnly: true
+        application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        metadata: {}
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - application_id
+      - created_at
+      - id
+      - name
+      - slug
+      - tenant_id
+      - updated_at
+    VocabularyWrite:
+      type: object
+      properties:
+        application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        name:
+          type: string
+          maxLength: 255
+        slug:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        metadata: {}
+        is_active:
+          type: boolean
+          default: true
+      required:
+      - name
+      - slug

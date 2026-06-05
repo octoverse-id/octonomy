@@ -6,11 +6,13 @@
 
 Octonomy is a standalone, multi-tenant, multi-application tag management and taxonomy service.
 
-It stores vocabularies, tags, and tag assignments for external resources such as articles,
-images, orders, products, and documents. Octonomy does not own or duplicate external resource
-data.
+It stores vocabularies, tags, aliases, tag assignments, audit logs, and transactional outbox events
+for external resources such as articles, images, orders, products, and documents. Octonomy does not
+own or duplicate external resource data.
 
-> **Project status:** early and evolving (`0.1.0`). APIs may change before `1.0`.
+> **Project status:** `1.0.0-rc.1` release candidate. The REST v1 contract is in stabilization;
+> breaking changes should be avoided unless they fix a release-blocking correctness or security
+> issue.
 
 ## Stack
 
@@ -93,8 +95,10 @@ use the authenticated service client name.
 ```bash
 make test
 make lint
-make format
-make openapi
+make check
+make migration-check
+make openapi-check
+make release-check
 ```
 
 ## API Examples
@@ -196,6 +200,9 @@ curl "http://localhost:8000/api/v1/audit-logs?action=assignment.created" \
 - [Architecture](docs/architecture.md) — system design, layers, and extension points.
 - [API reference](docs/api.md) — endpoints, scopes, errors, and pagination.
 - [Development](docs/development.md) — local setup, environment variables, and service tokens.
+- [Operations](docs/operations.md) — deployment, health, logging, and outbox runbook.
+- [Release process](docs/release.md) — release checklist and `1.0.0-rc.1` readiness gates.
+- [Changelog](CHANGELOG.md) — notable changes by release.
 
 ## Contributing
 
