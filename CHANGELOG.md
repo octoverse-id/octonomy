@@ -7,9 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - 2026-06-04
+
+Release candidate for the Octonomy REST v1 API contract.
+
 ### Added
-- Open-source project scaffolding: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`,
-  this changelog, GitHub Actions CI, and issue/PR templates.
+- Release readiness documentation, including deployment checks, smoke tests, rollback notes, and
+  operational runbooks.
+- CI jobs for Django system checks, migration drift checks, OpenAPI schema generation, SQLite
+  tests, and PostgreSQL tests across supported Python versions.
+- Production readiness Django system checks for default secrets, missing token pepper, wildcard
+  hosts, and SQLite usage when `DJANGO_DEBUG=false`.
+
+### Changed
+- Project metadata now reports package version `1.0.0rc1`.
+- Generated OpenAPI metadata now defaults to API version `1.0.0-rc.1`.
+- README project status now describes the v1 release candidate stabilization posture.
 
 ## [0.1.0] - 2026-06-04
 
@@ -28,5 +41,6 @@ Initial public release.
 - OpenAPI schema and Swagger/ReDoc docs via drf-spectacular.
 - Apache License 2.0.
 
-[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v1.0.0-rc.1...HEAD
+[1.0.0-rc.1]: https://github.com/octoverse-id/octonomy/compare/v0.1.0...v1.0.0-rc.1
 [0.1.0]: https://github.com/octoverse-id/octonomy/releases/tag/v0.1.0
