@@ -10,9 +10,9 @@ It stores vocabularies, tags, aliases, tag assignments, audit logs, and transact
 for external resources such as articles, images, orders, products, and documents. Octonomy does not
 own or duplicate external resource data.
 
-> **Project status:** `1.0.0-rc.1` release candidate. The REST v1 contract is in stabilization;
-> breaking changes should be avoided unless they fix a release-blocking correctness or security
-> issue.
+> **Project status:** `1.0.0` stable. The REST v1 contract is stable and follows
+> [Semantic Versioning](https://semver.org/spec/v2.0.0.html); breaking changes to v1 are avoided
+> unless they fix a correctness or security issue.
 
 ## Stack
 
@@ -201,7 +201,7 @@ curl "http://localhost:8000/api/v1/audit-logs?action=assignment.created" \
 - [API reference](docs/api.md) — endpoints, scopes, errors, and pagination.
 - [Development](docs/development.md) — local setup, environment variables, and service tokens.
 - [Operations](docs/operations.md) — deployment, health, logging, and outbox runbook.
-- [Release process](docs/release.md) — release checklist and `1.0.0-rc.1` readiness gates.
+- [Release process](docs/release.md) — release checklist and `1.0.0` readiness gates.
 - [Changelog](CHANGELOG.md) — notable changes by release.
 
 ## Contributing

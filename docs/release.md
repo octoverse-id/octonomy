@@ -2,14 +2,14 @@
 
 ## Current Target
 
-Octonomy is preparing the `1.0.0-rc.1` release candidate. The REST API under `/api/v1` is the
-release surface for v1. GraphQL, external broker transports, persisted counters, and external JWT
-or API gateway auth remain future phases.
+Octonomy `1.0.0` is the stable release of the REST v1 contract. The REST API under `/api/v1` is the
+release surface for v1 and follows Semantic Versioning. GraphQL, external broker transports,
+persisted counters, and external JWT or API gateway auth remain future phases.
 
 ## Versioning
 
-- Python package metadata uses PEP 440 format: `1.0.0rc1`.
-- OpenAPI and user-facing docs use SemVer prerelease format: `1.0.0-rc.1`.
+- Python package metadata uses PEP 440 format: `1.0.0`.
+- OpenAPI and user-facing docs use SemVer format: `1.0.0`.
 - Set `OCTONOMY_API_VERSION` when a deployment should expose a different schema version string.
 
 ## Release Checklist
@@ -45,6 +45,18 @@ one from the repository:
 make openapi
 ```
 
+## Dependency Audit
+
+CI scans the locked runtime dependencies for known vulnerabilities (the `security` job; run
+locally with `make audit`). The gate fails closed: a newly disclosed runtime CVE — or a transient
+advisory-service or network outage — blocks merges until resolved. To accept a known, triaged
+advisory, suppress it explicitly by its ID in the audit command (`Makefile` `audit` target and the
+CI step):
+
+```bash
+pip-audit --no-deps -r /dev/stdin --ignore-vuln GHSA-xxxx-xxxx-xxxx
+```
+
 ## Contract Freeze Criteria
 
 A v1 release candidate should satisfy these checks:
@@ -67,7 +79,7 @@ Set these environment variables explicitly outside local development:
 - `DATABASE_URL=postgres://...`
 - `ALLOWED_HOSTS=<comma-separated-hostnames>`
 - `SERVICE_TOKEN_PEPPER=<non-default-secret-pepper>`
-- `OCTONOMY_API_VERSION=1.0.0-rc.1`
+- `OCTONOMY_API_VERSION=1.0.0`
 - `LOG_LEVEL=INFO`
 - `MAX_BULK_TAGS=200` or a deployment-specific cap
 

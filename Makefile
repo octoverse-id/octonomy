@@ -1,4 +1,4 @@
-.PHONY: install run test test-sqlite lint format check migrate migration-check makemigrations openapi openapi-check release-check seed db-up db-down
+.PHONY: install run test test-sqlite lint format check migrate migration-check makemigrations openapi openapi-check audit release-check seed db-up db-down
 
 install:
 	uv sync --extra dev
@@ -7,10 +7,10 @@ run:
 	uv run python manage.py runserver 0.0.0.0:8000
 
 test:
-	uv run pytest
+	uv run pytest --cov-fail-under=90
 
 test-sqlite:
-	DATABASE_URL=sqlite:////tmp/octonomy-test.sqlite3 uv run pytest
+	DATABASE_URL=sqlite:////tmp/octonomy-test.sqlite3 uv run pytest --cov-fail-under=90
 
 lint:
 	uv run ruff check .
@@ -34,9 +34,13 @@ openapi:
 	uv run python manage.py spectacular --file docs/openapi.yaml --format openapi
 
 openapi-check:
-	uv run python manage.py spectacular --file /tmp/octonomy-openapi.yaml --format openapi
+	uv run python manage.py spectacular --file docs/openapi.yaml --format openapi
+	git diff --exit-code docs/openapi.yaml
 
-release-check: lint check migration-check test openapi-check
+audit:
+	uv export --format requirements-txt --no-emit-project --frozen | uv run pip-audit --no-deps -r /dev/stdin
+
+release-check: lint check migration-check test openapi-check audit
 
 seed:
 	uv run python manage.py seed_demo
