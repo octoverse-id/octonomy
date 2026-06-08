@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Octonomy API
-  version: 1.0.0-rc.1
+  version: 1.0.0
   description: Multi-tenant tag management and taxonomy service.
 paths:
   /api/v1/audit-logs:

@@ -2,13 +2,12 @@
 
 ## Supported versions
 
-Octonomy is pre-1.0 and under active development. Security fixes are applied to the latest
-`0.1.x` line.
+Security fixes are applied to the latest `1.0.x` line.
 
 | Version | Supported |
 | ------- | --------- |
-| 0.1.x   | ✅        |
-| < 0.1   | ❌        |
+| 1.0.x   | ✅        |
+| < 1.0   | ❌        |
 
 ## Reporting a vulnerability
 

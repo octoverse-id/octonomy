@@ -108,9 +108,9 @@ attempts increment `attempts`, store `last_error`, and mark events as `failed`.
 
 ## Release And Operations Readiness
 
-The v1 REST surface is entering release-candidate stabilization as `1.0.0-rc.1`. Release readiness
-is enforced through Django system checks, migration drift checks, OpenAPI schema generation,
-SQLite tests, and PostgreSQL tests in CI.
+The v1 REST surface is stable as of `1.0.0` and follows Semantic Versioning. Release readiness
+is enforced through Django system checks, migration drift checks, an OpenAPI contract drift gate,
+test-coverage thresholds, a dependency vulnerability scan, SQLite tests, and PostgreSQL tests in CI.
 
 Production deployments should run PostgreSQL, set non-default `DJANGO_SECRET_KEY` and
 `SERVICE_TOKEN_PEPPER` values, avoid wildcard `ALLOWED_HOSTS`, and use `/health/ready` for database
