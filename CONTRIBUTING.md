@@ -69,6 +69,19 @@ For pull requests:
 - Reference the issue you're closing with `Closes #<issue-number>` in the PR body.
 - Summarize what changed and why, and note any new env vars, migrations, or API surface.
 - Ensure `make lint`, `make test`, and `make openapi` pass locally.
+- Add a `CHANGELOG.md` entry under `[Unreleased]` for any user-facing change.
+
+## Changelog and versioning
+
+- Octonomy follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). See
+  [`docs/versioning.md`](docs/versioning.md) for the bump rules and what counts as breaking.
+- Add an entry under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md) for any user-facing
+  change (Added / Changed / Fixed / Deprecated).
+- **Do not bump the version in feature or fix PRs.** Version bumps and tags happen only in a
+  dedicated release PR — see the "Cutting a Release" runbook in
+  [`docs/release.md`](docs/release.md).
+- Any change to `docs/openapi.yaml` must be classified per the policy: additive changes are a
+  minor and stay on `/api/v1`; breaking changes are not allowed on v1 and require a new `/api/v2`.
 
 ## Reporting security issues
 

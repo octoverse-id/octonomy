@@ -10,7 +10,7 @@ Closes #
 - [ ] New feature
 - [ ] Refactor / chore
 - [ ] Documentation
-- [ ] Breaking change
+- [ ] Breaking change (requires a major bump + a new `/api/v2` — see `docs/versioning.md`)
 
 ## Checklist
 
@@ -19,6 +19,7 @@ Closes #
 - [ ] `make test` passes
 - [ ] OpenAPI coverage updated for any new/changed endpoints (`make openapi`)
 - [ ] Docs updated (README / `docs/`) if behavior or setup changed
+- [ ] CHANGELOG `[Unreleased]` updated for user-facing changes
 - [ ] No secrets, credentials, or tenant data committed
 
 ## Notes for reviewers
