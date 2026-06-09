@@ -70,6 +70,9 @@ Octonomy is a standalone, multi-tenant, multi-application Tag Management / Taxon
   `fix/124-audit-log-race`, or `chore/125-agent-pipeline-rules`.
 - PR bodies for planned development must include `Closes #<issue-number>` and summarize how the
   implementation maps back to the approved plan.
+- Releases follow Semantic Versioning: cut them with the runbook in `docs/release.md` and the
+  policy in `docs/versioning.md`. Version bumps and tags happen only in a dedicated
+  `release/<version>` PR, never in feature or fix PRs.
 - The `code-review/` directory is reserved for local code review pipeline artifacts.
 - Review agents must write findings to `code-review/findings.md`.
 - Patch agents must read `code-review/findings.md`, apply valid fixes, and write the patch

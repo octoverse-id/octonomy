@@ -8,13 +8,16 @@ persisted counters, and external JWT or API gateway auth remain future phases.
 
 ## Versioning
 
-- Python package metadata uses PEP 440 format: `1.0.0`.
-- OpenAPI and user-facing docs use SemVer format: `1.0.0`.
+Octonomy follows Semantic Versioning. Bug fixes are a patch, backward-compatible additions are a
+minor (additive on `/api/v1`), and breaking changes ship a new `/api/v2` plus a major bump. See
+[`versioning.md`](versioning.md) for the full policy and what counts as breaking.
+
+- Package metadata uses PEP 440 (`1.0.0`); OpenAPI and user-facing docs use SemVer (`1.0.0`).
 - Set `OCTONOMY_API_VERSION` when a deployment should expose a different schema version string.
 
 ## Release Checklist
 
-Before cutting a release candidate:
+Before cutting a release, run the pre-release gate:
 
 ```bash
 make install
@@ -45,6 +48,40 @@ one from the repository:
 make openapi
 ```
 
+## Cutting a Release
+
+Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) per
+[`versioning.md`](versioning.md), then:
+
+1. Branch `release/<version>` (e.g. `release/1.1.0`).
+2. Bump the version everywhere it is stamped:
+   - `pyproject.toml` `version`
+   - `config/settings.py` `API_VERSION` default
+   - `.env.example` and the production checklist below (`OCTONOMY_API_VERSION`)
+   - regenerate the schema with `make openapi` (updates `docs/openapi.yaml` `info.version`)
+   - refresh the lock with `uv lock`
+3. Update `CHANGELOG.md`: move the `[Unreleased]` entries under `## [<version>] - <date>`, add the
+   `[<version>]` compare link, and reset `[Unreleased]` to `compare/v<version>...HEAD`.
+4. Run the gates, then open the PR with `Closes #<issue>`:
+
+   ```bash
+   make release-check   # lint, checks, migrations, tests, openapi drift, audit, version-check
+   ```
+
+5. After merge and green CI, tag the merge commit and publish the release:
+
+   ```bash
+   git tag -a v<version> -m "Octonomy <version>" <merge-commit>
+   git push origin v<version>
+   gh release create v<version> --title "v<version>" --notes-file <notes>
+   ```
+
+6. Close the tracking issue and delete the merged branch.
+
+> `gh` caveats (observed on `gh 2.4.0`): `release create` has no `--latest` / `--verify-tag` — a
+> published, non-prerelease release is "Latest" by default. `gh issue close` has no `--comment`;
+> post the comment separately with `gh issue comment` before closing.
+
 ## Dependency Audit
 
 CI scans the locked runtime dependencies for known vulnerabilities (the `security` job; run
@@ -57,9 +94,9 @@ CI step):
 pip-audit --no-deps -r /dev/stdin --ignore-vuln GHSA-xxxx-xxxx-xxxx
 ```
 
-## Contract Freeze Criteria
+## Release Compatibility Criteria
 
-A v1 release candidate should satisfy these checks:
+Every release should satisfy these checks:
 
 - All public REST endpoints are documented by generated OpenAPI schema.
 - Existing request and response shapes remain backwards compatible unless the change fixes a

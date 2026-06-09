@@ -23,11 +23,15 @@ make test
 make openapi-check
 ```
 
-Before opening a release-readiness PR, run the combined gate:
+Before opening a PR, run the combined gate (lint, checks, migrations, tests, OpenAPI drift,
+dependency audit, and version-check):
 
 ```bash
 make release-check
 ```
+
+For the SemVer bump rules and the full release process, see the
+[versioning policy](versioning.md) and the [release runbook](release.md).
 
 For local SQLite coverage that mirrors the CI SQLite job:
 

@@ -1,4 +1,4 @@
-.PHONY: install run test test-sqlite lint format check migrate migration-check makemigrations openapi openapi-check audit release-check seed db-up db-down
+.PHONY: install run test test-sqlite lint format check migrate migration-check makemigrations openapi openapi-check audit version-check release-check seed db-up db-down
 
 install:
 	uv sync --extra dev
@@ -40,7 +40,21 @@ openapi-check:
 audit:
 	uv export --format requirements-txt --no-emit-project --frozen | uv run pip-audit --no-deps -r /dev/stdin
 
-release-check: lint check migration-check test openapi-check audit
+version-check:
+	@pyproject_version=$$(grep -E '^version = ' pyproject.toml | sed -E 's/version = "([^"]+)"/\1/'); \
+	semver=$$(echo "$$pyproject_version" | sed -E 's/(a|b|rc)([0-9]+)$$/-\1.\2/'); \
+	settings_version=$$(grep -E 'OCTONOMY_API_VERSION' config/settings.py | sed -E 's/.*"OCTONOMY_API_VERSION", "([^"]+)".*/\1/'); \
+	openapi_version=$$(grep -E '^  version: ' docs/openapi.yaml | head -n1 | sed -E 's/^  version: //'); \
+	echo "pyproject=$$pyproject_version (semver $$semver) settings=$$settings_version openapi=$$openapi_version"; \
+	if [ "$$semver" != "$$settings_version" ] || [ "$$semver" != "$$openapi_version" ]; then \
+		echo "version-check FAILED: version strings disagree"; exit 1; \
+	fi; \
+	if ! grep -q "## \[$$semver\]" CHANGELOG.md; then \
+		echo "version-check FAILED: CHANGELOG.md has no '## [$$semver]' section"; exit 1; \
+	fi; \
+	echo "version-check OK: $$semver"
+
+release-check: lint check migration-check test openapi-check audit version-check
 
 seed:
 	uv run python manage.py seed_demo

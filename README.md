@@ -201,7 +201,8 @@ curl "http://localhost:8000/api/v1/audit-logs?action=assignment.created" \
 - [API reference](docs/api.md) — endpoints, scopes, errors, and pagination.
 - [Development](docs/development.md) — local setup, environment variables, and service tokens.
 - [Operations](docs/operations.md) — deployment, health, logging, and outbox runbook.
-- [Release process](docs/release.md) — release checklist and `1.0.0` readiness gates.
+- [Versioning](docs/versioning.md) — SemVer policy, bump rules, and the `/api/v1` → `/api/v2` path.
+- [Release process](docs/release.md) — pre-release gates and the "Cutting a Release" runbook.
 - [Changelog](CHANGELOG.md) — notable changes by release.
 
 ## Contributing
