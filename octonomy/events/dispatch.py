@@ -20,8 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class EventTransport(Protocol):
-    def publish(self, event: OutboxEvent) -> None:
-        ...
+    def publish(self, event: OutboxEvent) -> None: ...
 
 
 def serialize_outbox_event(event: OutboxEvent) -> dict:
