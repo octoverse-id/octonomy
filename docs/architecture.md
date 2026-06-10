@@ -11,7 +11,7 @@ systems retain ownership of resources.
 - `octonomy.tags`: vocabulary and tag models, validation, CRUD APIs, taxonomy filtering.
 - `octonomy.assignments`: assignment model, idempotent writes, resource/tag query APIs.
 - `octonomy.audit`: append-only audit logs for tag, vocabulary, and assignment mutations.
-- `octonomy.events`: transactional outbox events and local dispatch support.
+- `octonomy.events`: transactional outbox events, dispatch state, and delivery transports.
 - `octonomy.openapi`: OpenAPI metadata and future schema customizations.
 
 ## Tenant, Application, and Vocabulary Boundaries
@@ -66,6 +66,8 @@ The following extension points have moved from future design into the implemente
 - Computed usage counts: `usage_count` on tag responses derived from current assignments.
 - Service API key auth: Octonomy-managed service clients with tenant/application grants and
   scoped access checks.
+- Broker-free event delivery: a transactional outbox dispatcher with logging and webhook
+  transports, retry backoff, expired-claim recovery, and dead-letter handling.
 
 ## Transactional Event Outbox
 
@@ -96,15 +98,21 @@ When tag deactivation cascades to active aliases, Octonomy emits the parent `tag
 with `cascaded_alias_ids` and one `tag_alias.deactivated` outbox event per alias using the same
 `operation_id`.
 
-The first dispatcher is intentionally local and broker-free:
+The dispatcher is intentionally broker-free for v1. It claims rows quickly in the database,
+publishes outside the row-locking transaction, and then marks each event as published, retryable
+failed, or dead-lettered. Expired processing claims are recovered by later dispatcher runs without
+counting as delivery attempts.
+
+Default local logging transport:
 
 ```bash
 python manage.py dispatch_outbox_events --limit 100
 python manage.py dispatch_outbox_events --limit 100 --retry-failed
 ```
 
-The default transport logs structured event JSON and marks events as `published`. Failed dispatch
-attempts increment `attempts`, store `last_error`, and mark events as `failed`.
+The default transport logs structured event JSON. The optional webhook transport posts the same
+event JSON to an absolute `http` or `https` `OCTONOMY_WEBHOOK_URL`, does not follow redirects, and
+signs the request with `OCTONOMY_WEBHOOK_SIGNING_SECRET`.
 
 ## Release And Operations Readiness
 
@@ -124,5 +132,5 @@ are documented in `docs/operations.md` and `docs/release.md`.
 - Audit log retention, export, and compliance filtering.
 - Persisted or cached usage counters for high-volume tenants.
 - External auth integration with JWT or API gateway identity.
-- External broker integrations such as Kafka, SNS/SQS, RabbitMQ, or webhooks backed by the
-  transactional outbox.
+- External broker integrations such as Kafka, SNS/SQS, or RabbitMQ using the outbox transport
+  abstraction.

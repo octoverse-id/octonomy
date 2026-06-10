@@ -4,7 +4,7 @@
 
 Octonomy is a Django REST service backed by PostgreSQL. It does not require an external message
 broker for v1. Transactional outbox rows are stored in PostgreSQL and dispatched by a management
-command using the built-in logging transport.
+command using the built-in logging transport or the optional webhook transport.
 
 ## Health Checks
 
@@ -80,34 +80,104 @@ Retry failed events:
 python manage.py dispatch_outbox_events --limit 100 --retry-failed
 ```
 
+The command prints:
+
+```text
+published=<count> failed=<count> dead_lettered=<count> recovered=<count>
+```
+
+Dispatcher state:
+
+- `pending`: ready for first delivery when `available_at <= now()`.
+- `processing`: claimed by a dispatcher worker until `claim_expires_at`.
+- `published`: delivered successfully.
+- `failed`: retryable after backoff when `available_at <= now()` and `--retry-failed` is used.
+- `dead_letter`: terminal failure after `OCTONOMY_OUTBOX_MAX_ATTEMPTS` delivery attempts.
+
 Recommended scheduling for production-like environments:
 
 - Run one dispatcher worker on a short interval, such as every minute.
 - Keep `--limit` small enough that one run finishes comfortably before the next starts.
 - Use the same application image and environment as the API service.
+- Include `--retry-failed` in the scheduled command when automatic retry of failed events is
+  desired.
 
 The dispatcher uses row locking with `skip_locked` where supported, so multiple workers can safely
-split pending rows on PostgreSQL.
+split eligible rows on PostgreSQL. Rows are claimed inside a short transaction, published outside
+that transaction, and then marked with the result. A later run recovers expired `processing` claims
+and schedules them for retry without incrementing delivery `attempts`; expired-claim recoveries are
+tracked in `recoveries`.
+
+Configuration:
+
+```text
+OCTONOMY_OUTBOX_TRANSPORT=logging
+OCTONOMY_OUTBOX_MAX_ATTEMPTS=5
+OCTONOMY_OUTBOX_RETRY_BASE_SECONDS=30
+OCTONOMY_OUTBOX_RETRY_MAX_SECONDS=3600
+OCTONOMY_OUTBOX_CLAIM_TIMEOUT_SECONDS=60
+```
+
+`OCTONOMY_OUTBOX_RETRY_BASE_SECONDS` has a minimum effective value of 1 second.
+
+Webhook transport:
+
+```text
+OCTONOMY_OUTBOX_TRANSPORT=webhook
+OCTONOMY_WEBHOOK_URL=https://example.internal/octonomy-events
+OCTONOMY_WEBHOOK_SIGNING_SECRET=<secret>
+OCTONOMY_WEBHOOK_TIMEOUT_SECONDS=10
+```
+
+Webhook requests use `POST` with `Content-Type: application/json` and the same event JSON fields
+as the logging transport. Requests include `X-Octonomy-Event-ID`, `X-Octonomy-Event-Type`,
+`X-Octonomy-Tenant-ID`, optional `X-Octonomy-Request-ID`, and `X-Octonomy-Signature`.
+The signature value is `sha256=<hex digest>` where the digest is HMAC SHA-256 over the request
+body using `OCTONOMY_WEBHOOK_SIGNING_SECRET`. `OCTONOMY_WEBHOOK_URL` must be an absolute `http`
+or `https` URL, webhook dispatch does not follow redirects, and
+`OCTONOMY_OUTBOX_CLAIM_TIMEOUT_SECONDS` must be greater than
+`OCTONOMY_WEBHOOK_TIMEOUT_SECONDS`.
 
 ## Outbox Inspection
 
-Pending events:
+Pending or retryable events:
 
 ```sql
-select id, tenant_id, event_type, aggregate_type, aggregate_id, attempts, available_at
+select id, tenant_id, event_type, aggregate_type, aggregate_id,
+       status, attempts, recoveries, available_at
 from outbox_events
-where status = 'pending'
+where status in ('pending', 'failed')
 order by available_at asc
 limit 50;
 ```
 
-Failed events:
+Expired claims:
 
 ```sql
-select id, tenant_id, event_type, attempts, last_error, available_at
+select id, tenant_id, event_type, attempts, recoveries, claimed_at, claim_expires_at
+from outbox_events
+where status = 'processing' and claim_expires_at <= now()
+order by claim_expires_at asc
+limit 50;
+```
+
+Retryable failed events:
+
+```sql
+select id, tenant_id, event_type, attempts, recoveries, last_error, available_at
 from outbox_events
 where status = 'failed'
 order by available_at asc
+limit 50;
+```
+
+Dead-lettered events:
+
+```sql
+select id, tenant_id, event_type, attempts, recoveries, last_error, updated_at
+from outbox_events
+where status = 'dead_letter'
+order by updated_at desc
 limit 50;
 ```
 

@@ -14,8 +14,10 @@ class OutboxEventQuerySet(models.QuerySet):
 class OutboxEvent(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
         PUBLISHED = "published", "Published"
         FAILED = "failed", "Failed"
+        DEAD_LETTER = "dead_letter", "Dead letter"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant_id = models.CharField(max_length=100)
@@ -34,8 +36,15 @@ class OutboxEvent(models.Model):
         default=0,
         help_text="Total dispatch attempts, including the one that published it.",
     )
+    recoveries = models.PositiveIntegerField(
+        default=0,
+        help_text="Expired claim recoveries that did not reach the delivery transport.",
+    )
     last_error = models.TextField(blank=True, default="")
     available_at = models.DateTimeField(default=timezone.now)
+    claim_id = models.UUIDField(null=True, blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    claim_expires_at = models.DateTimeField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
     operation_id = models.UUIDField(null=True, blank=True)
     request_id = models.CharField(max_length=100, null=True, blank=True)
@@ -55,6 +64,10 @@ class OutboxEvent(models.Model):
             models.Index(
                 fields=["status", "available_at", "created_at"],
                 name="outbox_pending_idx",
+            ),
+            models.Index(
+                fields=["status", "claim_expires_at"],
+                name="outbox_claim_exp_idx",
             ),
             models.Index(
                 fields=["tenant_id", "-created_at"],
