@@ -19,6 +19,16 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ImproperlyConfigured(f"{name} must be an integer.") from exc
+
+
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "local-dev-secret")
 DEBUG = env_bool("DJANGO_DEBUG", True)
 API_VERSION = os.getenv("OCTONOMY_API_VERSION", "1.0.0")
@@ -116,6 +126,15 @@ if DEBUG and not SERVICE_TOKEN_PEPPER:
     )
 MAX_BULK_TAGS = int(os.getenv("MAX_BULK_TAGS", "200"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+OUTBOX_TRANSPORT = os.getenv("OCTONOMY_OUTBOX_TRANSPORT", "logging")
+OUTBOX_WEBHOOK_URL = os.getenv("OCTONOMY_WEBHOOK_URL", "")
+OUTBOX_WEBHOOK_SIGNING_SECRET = os.getenv("OCTONOMY_WEBHOOK_SIGNING_SECRET", "")
+OUTBOX_WEBHOOK_TIMEOUT_SECONDS = env_int("OCTONOMY_WEBHOOK_TIMEOUT_SECONDS", 10)
+OUTBOX_MAX_ATTEMPTS = env_int("OCTONOMY_OUTBOX_MAX_ATTEMPTS", 5)
+OUTBOX_RETRY_BASE_SECONDS = env_int("OCTONOMY_OUTBOX_RETRY_BASE_SECONDS", 30)
+OUTBOX_RETRY_MAX_SECONDS = env_int("OCTONOMY_OUTBOX_RETRY_MAX_SECONDS", 3600)
+OUTBOX_CLAIM_TIMEOUT_SECONDS = env_int("OCTONOMY_OUTBOX_CLAIM_TIMEOUT_SECONDS", 60)
 
 LOGGING = {
     "version": 1,

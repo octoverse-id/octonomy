@@ -81,15 +81,26 @@ APIs fall back to `assigned_by` only when no service client identity is availabl
 
 ## Outbox Development
 
-Dispatch pending outbox events with the local logging transport:
+Dispatch pending outbox events with the default local logging transport:
 
 ```bash
 python manage.py dispatch_outbox_events --limit 100
 python manage.py dispatch_outbox_events --limit 100 --retry-failed
 ```
 
+For local webhook testing, set:
+
+```text
+OCTONOMY_OUTBOX_TRANSPORT=webhook
+OCTONOMY_WEBHOOK_URL=http://localhost:9000/octonomy-events
+OCTONOMY_WEBHOOK_SIGNING_SECRET=local-webhook-secret
+OCTONOMY_WEBHOOK_TIMEOUT_SECONDS=10
+OCTONOMY_OUTBOX_CLAIM_TIMEOUT_SECONDS=60
+```
+
 The default transport logs the event payload and marks successful rows as `published`. Failed rows
-are marked `failed` with `attempts` and `last_error` populated for inspection.
+are marked `failed` with delivery `attempts` and `last_error` populated for inspection. Expired
+claims are tracked separately in `recoveries`.
 
 ## Seed Data
 

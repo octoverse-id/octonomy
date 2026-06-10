@@ -17,4 +17,7 @@ class Command(BaseCommand):
             limit=options["limit"],
             retry_failed=options["retry_failed"],
         )
-        self.stdout.write("published={published} failed={failed}".format(**summary))
+        self.stdout.write(
+            "published={published} failed={failed} dead_lettered={dead_lettered} "
+            "recovered={recovered}".format(**summary)
+        )

@@ -19,8 +19,12 @@ def test_outbox_event_defaults():
 
     assert event.status == OutboxEvent.Status.PENDING
     assert event.attempts == 0
+    assert event.recoveries == 0
     assert event.metadata == {}
     assert event.available_at is not None
+    assert event.claim_id is None
+    assert event.claimed_at is None
+    assert event.claim_expires_at is None
 
 
 def test_outbox_event_payload_and_metadata_must_be_objects():

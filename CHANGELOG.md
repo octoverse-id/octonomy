@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Outbox webhook transport with HMAC-signed delivery, configurable timeout, and event
+  correlation headers.
+- Outbox retry backoff, expired-claim recovery tracking, and dead-letter handling for failed
+  deliveries.
+
+### Changed
+- Outbox dispatch now claims rows before publishing so network delivery happens outside the
+  row-locking transaction.
+
 ## [1.0.0] - 2026-06-08
 
 First stable release. The Octonomy REST v1 API contract is now stable and follows Semantic
