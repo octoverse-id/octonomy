@@ -3,6 +3,9 @@ from __future__ import annotations
 import uuid
 
 from django.db import models
+from django.db.models import Q
+
+from octonomy.core.models import NamespaceScopedModel, namespace_scope_constraint
 
 
 class TagAssignmentQuerySet(models.QuerySet):
@@ -17,7 +20,7 @@ class TagAssignmentQuerySet(models.QuerySet):
         )
 
 
-class TagAssignment(models.Model):
+class TagAssignment(NamespaceScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant_id = models.CharField(max_length=100)
     application_id = models.CharField(max_length=100)
@@ -37,6 +40,7 @@ class TagAssignment(models.Model):
         db_table = "tag_assignments"
         ordering = ["-assigned_at", "id"]
         constraints = [
+            namespace_scope_constraint(),
             models.CheckConstraint(
                 condition=models.Q(resource_type__regex=r"^[a-z][a-z0-9_-]*$"),
                 name="assignment_resource_type_slug",
@@ -50,7 +54,21 @@ class TagAssignment(models.Model):
             # requests idempotent for the same tenant/application/resource/tag.
             models.UniqueConstraint(
                 fields=["tenant_id", "application_id", "resource_type", "resource_id", "tag"],
-                name="uniq_assignment_per_resource_tag",
+                condition=Q(namespace_type__isnull=True, namespace_id__isnull=True),
+                name="uniq_global_assignment_tag",
+            ),
+            models.UniqueConstraint(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "resource_type",
+                    "resource_id",
+                    "tag",
+                ],
+                condition=Q(namespace_type__isnull=False, namespace_id__isnull=False),
+                name="uniq_ns_assignment_tag",
             ),
         ]
         indexes = [
@@ -66,6 +84,21 @@ class TagAssignment(models.Model):
             models.Index(
                 fields=["tenant_id", "resource_type", "resource_id"],
                 name="tag_assignm_tenant__32ebe4_idx",
+            ),
+            models.Index(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "resource_type",
+                    "resource_id",
+                ],
+                name="assign_scope_resource_idx",
+            ),
+            models.Index(
+                fields=["tenant_id", "tag", "namespace_type", "namespace_id"],
+                name="assign_tenant_tag_ns_idx",
             ),
             models.Index(
                 fields=["tenant_id", "-assigned_at"],

@@ -6,6 +6,8 @@ from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.db.models import Q
 
+from octonomy.core.models import NamespaceScopedModel, namespace_scope_constraint
+
 
 class TagQuerySet(models.QuerySet):
     def for_tenant(self, tenant_id: str):
@@ -23,7 +25,7 @@ class VocabularyQuerySet(models.QuerySet):
         return self.filter(is_active=True)
 
 
-class Vocabulary(models.Model):
+class Vocabulary(NamespaceScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant_id = models.CharField(max_length=100)
     application_id = models.CharField(max_length=100, null=True, blank=True)
@@ -41,19 +43,40 @@ class Vocabulary(models.Model):
         db_table = "vocabularies"
         ordering = ["name", "slug"]
         constraints = [
+            namespace_scope_constraint(),
             # Shared records store application_id as NULL, so they need a separate
             # active-only uniqueness rule from app-scoped records. Relying on a
             # single nullable column in a unique constraint would permit duplicate
             # shared slugs under PostgreSQL NULL semantics.
             models.UniqueConstraint(
                 fields=["tenant_id", "slug"],
-                condition=Q(application_id__isnull=True, is_active=True),
-                name="uniq_active_shared_vocab_slug",
+                condition=Q(
+                    application_id__isnull=True,
+                    namespace_type__isnull=True,
+                    namespace_id__isnull=True,
+                    is_active=True,
+                ),
+                name="uniq_shared_global_vocab_slug",
             ),
             models.UniqueConstraint(
                 fields=["tenant_id", "application_id", "slug"],
-                condition=Q(application_id__isnull=False, is_active=True),
-                name="uniq_active_app_vocab_slug",
+                condition=Q(
+                    application_id__isnull=False,
+                    namespace_type__isnull=True,
+                    namespace_id__isnull=True,
+                    is_active=True,
+                ),
+                name="uniq_app_global_vocab_slug",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant_id", "application_id", "namespace_type", "namespace_id", "slug"],
+                condition=Q(
+                    application_id__isnull=False,
+                    namespace_type__isnull=False,
+                    namespace_id__isnull=False,
+                    is_active=True,
+                ),
+                name="uniq_app_ns_vocab_slug",
             ),
         ]
         indexes = [
@@ -65,6 +88,20 @@ class Vocabulary(models.Model):
                 fields=["tenant_id", "application_id", "is_active"],
                 name="vocab_tenant_app_active_idx",
             ),
+            models.Index(
+                fields=["tenant_id", "application_id", "namespace_type", "namespace_id", "slug"],
+                name="vocab_scope_slug_idx",
+            ),
+            models.Index(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "is_active",
+                ],
+                name="vocab_scope_active_idx",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -72,7 +109,7 @@ class Vocabulary(models.Model):
         return f"{self.tenant_id}/{scope}/{self.slug}"
 
 
-class Tag(models.Model):
+class Tag(NamespaceScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant_id = models.CharField(max_length=100)
     application_id = models.CharField(max_length=100, null=True, blank=True)
@@ -105,6 +142,7 @@ class Tag(models.Model):
         db_table = "tags"
         ordering = ["name", "slug"]
         constraints = [
+            namespace_scope_constraint(),
             models.CheckConstraint(
                 condition=~Q(parent_id=models.F("id")),
                 name="tag_parent_cannot_be_self",
@@ -114,13 +152,40 @@ class Tag(models.Model):
             # without weakening the one-canonical-shared-tag invariant.
             models.UniqueConstraint(
                 fields=["tenant_id", "type", "slug"],
-                condition=Q(application_id__isnull=True, is_active=True),
-                name="uniq_active_shared_tag_slug",
+                condition=Q(
+                    application_id__isnull=True,
+                    namespace_type__isnull=True,
+                    namespace_id__isnull=True,
+                    is_active=True,
+                ),
+                name="uniq_shared_global_tag_slug",
             ),
             models.UniqueConstraint(
                 fields=["tenant_id", "application_id", "type", "slug"],
-                condition=Q(application_id__isnull=False, is_active=True),
-                name="uniq_active_app_tag_slug",
+                condition=Q(
+                    application_id__isnull=False,
+                    namespace_type__isnull=True,
+                    namespace_id__isnull=True,
+                    is_active=True,
+                ),
+                name="uniq_app_global_tag_slug",
+            ),
+            models.UniqueConstraint(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "type",
+                    "slug",
+                ],
+                condition=Q(
+                    application_id__isnull=False,
+                    namespace_type__isnull=False,
+                    namespace_id__isnull=False,
+                    is_active=True,
+                ),
+                name="uniq_app_ns_tag_slug",
             ),
         ]
         indexes = [
@@ -139,6 +204,27 @@ class Tag(models.Model):
             ),
             models.Index(fields=["tenant_id", "parent"], name="tags_tenant__5fdd65_idx"),
             models.Index(fields=["tenant_id", "vocabulary"], name="tags_tenant_vocab_idx"),
+            models.Index(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "type",
+                    "slug",
+                ],
+                name="tag_scope_slug_idx",
+            ),
+            models.Index(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "is_active",
+                ],
+                name="tag_scope_active_idx",
+            ),
             GinIndex(fields=["metadata"], name="tag_metadata_gin_idx"),
         ]
 
@@ -155,7 +241,7 @@ class TagAliasQuerySet(models.QuerySet):
         return self.filter(is_active=True)
 
 
-class TagAlias(models.Model):
+class TagAlias(NamespaceScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant_id = models.CharField(max_length=100)
     application_id = models.CharField(max_length=100, null=True, blank=True)
@@ -177,19 +263,40 @@ class TagAlias(models.Model):
         db_table = "tag_aliases"
         ordering = ["name", "slug"]
         constraints = [
+            namespace_scope_constraint(),
             # Aliases are alternate identifiers for canonical tags, and their
             # uniqueness follows the same shared-vs-application scope model as
             # tags. The constraints are active-only so deactivated aliases do not
             # permanently reserve a slug.
             models.UniqueConstraint(
                 fields=["tenant_id", "slug"],
-                condition=Q(application_id__isnull=True, is_active=True),
-                name="uniq_active_shared_alias_slug",
+                condition=Q(
+                    application_id__isnull=True,
+                    namespace_type__isnull=True,
+                    namespace_id__isnull=True,
+                    is_active=True,
+                ),
+                name="uniq_shared_global_alias_slug",
             ),
             models.UniqueConstraint(
                 fields=["tenant_id", "application_id", "slug"],
-                condition=Q(application_id__isnull=False, is_active=True),
-                name="uniq_active_app_alias_slug",
+                condition=Q(
+                    application_id__isnull=False,
+                    namespace_type__isnull=True,
+                    namespace_id__isnull=True,
+                    is_active=True,
+                ),
+                name="uniq_app_global_alias_slug",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant_id", "application_id", "namespace_type", "namespace_id", "slug"],
+                condition=Q(
+                    application_id__isnull=False,
+                    namespace_type__isnull=False,
+                    namespace_id__isnull=False,
+                    is_active=True,
+                ),
+                name="uniq_app_ns_alias_slug",
             ),
         ]
         indexes = [
@@ -202,6 +309,20 @@ class TagAlias(models.Model):
                 name="alias_tenant_tag_active_idx",
             ),
             models.Index(fields=["tenant_id", "is_active"], name="alias_tenant_active_idx"),
+            models.Index(
+                fields=["tenant_id", "application_id", "namespace_type", "namespace_id", "slug"],
+                name="alias_scope_slug_idx",
+            ),
+            models.Index(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "is_active",
+                ],
+                name="alias_scope_active_idx",
+            ),
             GinIndex(fields=["metadata"], name="alias_metadata_gin_idx"),
         ]
 

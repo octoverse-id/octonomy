@@ -5,13 +5,15 @@ import uuid
 from django.db import models
 from django.utils import timezone
 
+from octonomy.core.models import NamespaceScopedModel, namespace_scope_constraint
+
 
 class OutboxEventQuerySet(models.QuerySet):
     def for_tenant(self, tenant_id: str):
         return self.filter(tenant_id=tenant_id)
 
 
-class OutboxEvent(models.Model):
+class OutboxEvent(NamespaceScopedModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         PROCESSING = "processing", "Processing"
@@ -60,6 +62,9 @@ class OutboxEvent(models.Model):
     class Meta:
         db_table = "outbox_events"
         ordering = ["created_at", "id"]
+        constraints = [
+            namespace_scope_constraint(),
+        ]
         indexes = [
             models.Index(
                 fields=["status", "available_at", "created_at"],
@@ -74,6 +79,16 @@ class OutboxEvent(models.Model):
                 name="outbox_tenant_created_idx",
             ),
             models.Index(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "-created_at",
+                ],
+                name="outbox_scope_created_idx",
+            ),
+            models.Index(
                 fields=["aggregate_type", "aggregate_id", "-created_at"],
                 name="outbox_aggregate_idx",
             ),
@@ -84,6 +99,17 @@ class OutboxEvent(models.Model):
             models.Index(
                 fields=["tenant_id", "resource_type", "resource_id", "-created_at"],
                 name="outbox_resource_idx",
+            ),
+            models.Index(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "resource_type",
+                    "resource_id",
+                ],
+                name="outbox_scope_resource_idx",
             ),
         ]
 

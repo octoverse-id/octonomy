@@ -72,6 +72,9 @@ def create_service_client_token(
                     service_client=client,
                     tenant_id=grant["tenant_id"],
                     application_id=grant.get("application_id"),
+                    namespace_type=grant.get("namespace_type"),
+                    namespace_id=grant.get("namespace_id"),
+                    namespace_wildcard=grant.get("namespace_wildcard", False),
                     scopes=grant.get("scopes", []),
                 )
                 for grant in grants
