@@ -35,6 +35,24 @@ Cascade alias deactivation is covered by the parent tag's audit log and does not
 `tag_alias.deactivated` audit row per alias. It does emit per-alias outbox events for downstream
 consumers. Tag and alias deactivation are currently one-way through the public API.
 
+## Namespace Schema
+
+Namespace fields are present on tags, vocabularies, aliases, assignments, audit logs, outbox
+events, and service client grants. Global rows use `namespace_type = null` and
+`namespace_id = null`; Octonomy does not store a `"global"` string sentinel. Any non-global
+namespace row must also have `application_id` because merchant/sub-tenant isolation sits below an
+application.
+
+`namespace_type` and `namespace_id` are caller-canonical external identifiers. Octonomy stores them
+case-sensitively, does not trim or normalize them, and limits each to 100 characters. The literal
+`global` is reserved as a namespace type so callers cannot create ambiguous global-looking rows.
+If a client deletes and recreates a merchant, preserving namespace identifier stability is the
+client's responsibility.
+
+Service grants keep legacy `null/null` namespace rows global-only for the namespace axis. Broad
+namespace access is an explicit `namespace_wildcard` boolean on grants rather than a special
+namespace string, so wildcard authorization cannot collide with caller-owned namespace values.
+
 ## Audit and Usage Counts
 
 Mutation APIs write tenant-scoped audit logs for actual changes only. Idempotent no-op writes,

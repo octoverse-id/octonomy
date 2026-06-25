@@ -4,13 +4,15 @@ import uuid
 
 from django.db import models
 
+from octonomy.core.models import NamespaceScopedModel, namespace_scope_constraint
+
 
 class AuditLogQuerySet(models.QuerySet):
     def for_tenant(self, tenant_id: str):
         return self.filter(tenant_id=tenant_id)
 
 
-class AuditLog(models.Model):
+class AuditLog(NamespaceScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant_id = models.CharField(max_length=100)
     application_id = models.CharField(max_length=100, null=True, blank=True)
@@ -32,6 +34,9 @@ class AuditLog(models.Model):
     class Meta:
         db_table = "audit_logs"
         ordering = ["-created_at", "id"]
+        constraints = [
+            namespace_scope_constraint(),
+        ]
         indexes = [
             models.Index(fields=["tenant_id", "-created_at"], name="audit_tenant_created_idx"),
             models.Index(
@@ -49,6 +54,27 @@ class AuditLog(models.Model):
             models.Index(
                 fields=["tenant_id", "application_id", "-created_at"],
                 name="audit_app_created_idx",
+            ),
+            models.Index(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "-created_at",
+                ],
+                name="audit_scope_created_idx",
+            ),
+            models.Index(
+                fields=[
+                    "tenant_id",
+                    "application_id",
+                    "namespace_type",
+                    "namespace_id",
+                    "entity_type",
+                    "entity_id",
+                ],
+                name="audit_scope_entity_idx",
             ),
             models.Index(
                 fields=["tenant_id", "resource_type", "resource_id", "-created_at"],

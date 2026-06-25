@@ -7,7 +7,11 @@ from rest_framework import exceptions
 from rest_framework.permissions import BasePermission
 
 from octonomy.service_auth.models import ServiceClient
-from octonomy.service_auth.services import hash_service_token, parse_service_token
+from octonomy.service_auth.services import (
+    hash_service_token,
+    is_global_namespace_grant,
+    parse_service_token,
+)
 
 LAST_USED_UPDATE_INTERVAL = timedelta(seconds=60)
 
@@ -58,7 +62,9 @@ def matching_grants(client: ServiceClient, tenant_id: str, scope: str):
     return [
         grant
         for grant in client.grants.all()
-        if grant.tenant_id == tenant_id and grant.has_scope(scope)
+        if grant.tenant_id == tenant_id
+        and is_global_namespace_grant(grant)
+        and grant.has_scope(scope)
     ]
 
 

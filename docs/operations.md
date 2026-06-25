@@ -66,6 +66,26 @@ Rotation pattern:
 Changing `SERVICE_TOKEN_PEPPER` invalidates existing tokens because token hashes can no longer be
 verified. Rotate all service tokens when changing the pepper.
 
+## Namespace Schema Migrations
+
+The namespace S1 migrations use Django-native nullable columns, check constraints, conditional
+unique constraints, and ordinary indexes so the SQLite and PostgreSQL migration gates stay aligned.
+They intentionally do not use raw PostgreSQL DDL or `CREATE INDEX CONCURRENTLY`.
+No data backfill is required for existing rows because `namespace_type = null` and
+`namespace_id = null` is the global scope.
+
+Verify row counts and scope-invariant violations after migration:
+
+```bash
+python manage.py verify_namespace_scope
+```
+
+The uniqueness constraint swap is atomic and non-concurrent. Schedule a brief maintenance window
+for production-sized tables, and measure row counts on `tag_assignments`, `audit_logs`, and
+`outbox_events` before deployment. The down migration is cleanly reversible only while no
+merchant-namespace rows exist; after merchant writes, rollback should use the namespace feature
+flags rather than restoring the old global-only uniqueness constraints.
+
 ## Outbox Dispatcher
 
 Dispatch pending events:
