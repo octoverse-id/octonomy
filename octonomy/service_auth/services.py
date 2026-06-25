@@ -107,6 +107,17 @@ def authenticate_service_token(token: str) -> ServiceClient | None:
     return client
 
 
+def is_global_namespace_grant(grant: ServiceClientGrant) -> bool:
+    # Namespace-aware authorization lands in #40. Until then, legacy endpoints
+    # must fail closed instead of treating exact or wildcard namespace grants as
+    # application-wide grants.
+    return (
+        grant.namespace_type is None
+        and grant.namespace_id is None
+        and not grant.namespace_wildcard
+    )
+
+
 def grant_allows(
     client: ServiceClient,
     *,
@@ -121,7 +132,10 @@ def grant_allows(
     tenant_wide = [
         grant
         for grant in grants
-        if grant.tenant_id == tenant_id and grant.application_id is None and grant.has_scope(scope)
+        if grant.tenant_id == tenant_id
+        and grant.application_id is None
+        and is_global_namespace_grant(grant)
+        and grant.has_scope(scope)
     ]
     if tenant_wide:
         return True
@@ -132,6 +146,7 @@ def grant_allows(
     return any(
         grant.tenant_id == tenant_id
         and grant.application_id == application_id
+        and is_global_namespace_grant(grant)
         and grant.has_scope(scope)
         for grant in grants
     )

@@ -14,7 +14,7 @@ from rest_framework.test import APIClient
 
 from octonomy.audit.models import AuditLog
 from octonomy.service_auth.models import ServiceClient
-from octonomy.service_auth.services import create_service_client_token
+from octonomy.service_auth.services import create_service_client_token, grant_allows
 from tests.factories import make_tag
 
 pytestmark = pytest.mark.django_db
@@ -184,6 +184,41 @@ def test_tenant_wide_grant_can_access_multiple_applications():
 
     assert commerce.status_code == 200
     assert cms.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "namespace_grant",
+    [
+        {"namespace_type": "merchant", "namespace_id": "merchant_a"},
+        {"namespace_wildcard": True},
+    ],
+)
+def test_namespace_grants_do_not_authorize_legacy_application_requests(namespace_grant):
+    token, service_client = create_service_client_token(
+        name="svc-namespace-only",
+        grants=[
+            {
+                "tenant_id": "tenant_a",
+                "application_id": "commerce",
+                "scopes": ["tags:read"],
+                **namespace_grant,
+            }
+        ],
+    )
+
+    response = authenticated_client(token).get("/api/v1/tags?application_id=commerce")
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "forbidden"
+    assert (
+        grant_allows(
+            service_client,
+            tenant_id="tenant_a",
+            application_id="commerce",
+            scope="tags:read",
+        )
+        is False
+    )
 
 
 def test_read_only_scope_cannot_mutate_tags():

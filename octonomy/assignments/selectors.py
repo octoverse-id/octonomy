@@ -6,7 +6,7 @@ from octonomy.assignments.models import TagAssignment
 
 
 def assignments_for_tenant(tenant_id: str) -> QuerySet[TagAssignment]:
-    return TagAssignment.objects.for_tenant(tenant_id).select_related("tag")
+    return TagAssignment.objects.for_tenant(tenant_id).global_scope().select_related("tag")
 
 
 def filter_tag_resources(queryset: QuerySet[TagAssignment], params) -> QuerySet[TagAssignment]:

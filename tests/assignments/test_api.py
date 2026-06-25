@@ -148,3 +148,26 @@ def test_list_resources_for_tag(api_client):
 
     assert response.status_code == 200
     assert response.json()["data"][0]["resource_id"] == "prod_123"
+
+
+def test_legacy_assignment_lists_hide_namespaced_rows(api_client):
+    tag = make_tag(application_id="commerce", slug="featured")
+    TagAssignment.objects.create(
+        tenant_id="tenant_a",
+        application_id="commerce",
+        namespace_type="merchant",
+        namespace_id="merchant_a",
+        tag=tag,
+        resource_type="product",
+        resource_id="prod_123",
+    )
+
+    resource_response = api_client.get(
+        "/api/v1/resources/product/prod_123/tags?application_id=commerce"
+    )
+    tag_response = api_client.get(f"/api/v1/tags/{tag.id}/resources?application_id=commerce")
+
+    assert resource_response.status_code == 200
+    assert resource_response.json()["data"] == []
+    assert tag_response.status_code == 200
+    assert tag_response.json()["data"] == []

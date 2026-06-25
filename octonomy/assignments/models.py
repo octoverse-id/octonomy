@@ -12,6 +12,11 @@ class TagAssignmentQuerySet(models.QuerySet):
     def for_tenant(self, tenant_id: str):
         return self.filter(tenant_id=tenant_id)
 
+    def global_scope(self):
+        # v1 assignment APIs remain global-only until namespace-aware selectors
+        # and authorization land in the later epic stages.
+        return self.filter(namespace_type__isnull=True, namespace_id__isnull=True)
+
     def for_resource(self, application_id: str, resource_type: str, resource_id: str):
         return self.filter(
             application_id=application_id,

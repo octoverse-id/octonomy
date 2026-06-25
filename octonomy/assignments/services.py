@@ -75,6 +75,8 @@ def assign_tag(
             assignment, created = TagAssignment.objects.get_or_create(
                 tenant_id=tenant_id,
                 application_id=application_id,
+                namespace_type=None,
+                namespace_id=None,
                 resource_type=resource_type,
                 resource_id=resource_id,
                 tag=tag,
@@ -112,6 +114,8 @@ def assign_tag(
         assignment = TagAssignment.objects.get(
             tenant_id=tenant_id,
             application_id=application_id,
+            namespace_type__isnull=True,
+            namespace_id__isnull=True,
             resource_type=resource_type,
             resource_id=resource_id,
             tag=tag,
@@ -128,7 +132,7 @@ def remove_tag_assignment(
     resource_id: str,
     audit_context: AuditContext | None = None,
 ) -> int:
-    queryset = TagAssignment.objects.filter(
+    queryset = TagAssignment.objects.global_scope().filter(
         tenant_id=tenant_id,
         application_id=application_id,
         tag_id=tag_id,
@@ -196,6 +200,8 @@ def bulk_assign_tags(
             assignment, was_created = TagAssignment.objects.get_or_create(
                 tenant_id=tenant_id,
                 application_id=application_id,
+                namespace_type=None,
+                namespace_id=None,
                 resource_type=resource_type,
                 resource_id=resource_id,
                 tag=tag,
@@ -252,7 +258,7 @@ def bulk_remove_tags(
     max_bulk = getattr(settings, "MAX_BULK_TAGS", 200)
     if len(tag_ids) > max_bulk:
         raise serializers.ValidationError({"tag_ids": [f"Maximum bulk size is {max_bulk}."]})
-    queryset = TagAssignment.objects.filter(
+    queryset = TagAssignment.objects.global_scope().filter(
         tenant_id=tenant_id,
         application_id=application_id,
         resource_type=resource_type,
@@ -319,7 +325,7 @@ def replace_resource_tags(
         # Replacement is scoped to one application/resource tuple so Octonomy
         # never removes assignments for the same external resource id in another
         # tenant or application.
-        existing = TagAssignment.objects.filter(
+        existing = TagAssignment.objects.global_scope().filter(
             tenant_id=tenant_id,
             application_id=application_id,
             resource_type=resource_type,
@@ -379,7 +385,7 @@ def replace_resource_tags(
             created += 1
 
         final_assignments = list(
-            TagAssignment.objects.filter(
+            TagAssignment.objects.global_scope().filter(
                 tenant_id=tenant_id,
                 application_id=application_id,
                 resource_type=resource_type,
