@@ -325,12 +325,16 @@ def replace_resource_tags(
         # Replacement is scoped to one application/resource tuple so Octonomy
         # never removes assignments for the same external resource id in another
         # tenant or application.
-        existing = TagAssignment.objects.global_scope().filter(
-            tenant_id=tenant_id,
-            application_id=application_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
-        ).select_for_update()
+        existing = (
+            TagAssignment.objects.global_scope()
+            .filter(
+                tenant_id=tenant_id,
+                application_id=application_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+            )
+            .select_for_update()
+        )
         removed_assignments = list(existing.exclude(tag_id__in=requested_ids))
         removed_ids = [assignment.id for assignment in removed_assignments]
         audit_logs = []
@@ -385,12 +389,14 @@ def replace_resource_tags(
             created += 1
 
         final_assignments = list(
-            TagAssignment.objects.global_scope().filter(
+            TagAssignment.objects.global_scope()
+            .filter(
                 tenant_id=tenant_id,
                 application_id=application_id,
                 resource_type=resource_type,
                 resource_id=resource_id,
-            ).select_related("tag")
+            )
+            .select_related("tag")
         )
 
     return {"created": created, "removed": removed, "assignments": final_assignments}

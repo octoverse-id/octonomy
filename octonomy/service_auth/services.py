@@ -112,9 +112,7 @@ def is_global_namespace_grant(grant: ServiceClientGrant) -> bool:
     # must fail closed instead of treating exact or wildcard namespace grants as
     # application-wide grants.
     return (
-        grant.namespace_type is None
-        and grant.namespace_id is None
-        and not grant.namespace_wildcard
+        grant.namespace_type is None and grant.namespace_id is None and not grant.namespace_wildcard
     )
 
 
