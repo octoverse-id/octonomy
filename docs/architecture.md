@@ -53,6 +53,21 @@ Service grants keep legacy `null/null` namespace rows global-only for the namesp
 namespace access is an explicit `namespace_wildcard` boolean on grants rather than a special
 namespace string, so wildcard authorization cannot collide with caller-owned namespace values.
 
+Grant authorization evaluates tenant, application, namespace, and API scope together. A
+tenant-wide application grant does not bypass namespace enforcement: global-only grants cannot
+reach namespaced requests. Exact namespace grants match only their `(namespace_type,
+namespace_id)` pair, while explicit wildcard grants cover global and namespaced requests within
+their tenant and optional application boundary.
+
+## Namespace Trust Boundary
+
+Exact namespace grants make Octonomy the enforcement point for merchant isolation. Broad wildcard
+grants intentionally use a different trust model: the caller selects the namespace, and Octonomy
+only enforces the surrounding tenant/application boundary. The client's backend-for-frontend must
+authenticate the merchant and derive namespace headers from that trusted identity. Service tokens
+must never be exposed to merchant-facing browsers or mobile applications. Exact per-merchant
+tokens are recommended whenever the calling tier is not fully trusted.
+
 ## Audit and Usage Counts
 
 Mutation APIs write tenant-scoped audit logs for actual changes only. Idempotent no-op writes,
@@ -70,8 +85,9 @@ the tag row.
 ## Service Authentication
 
 Tenant-owned APIs require an Octonomy service token. Tokens are stored as keyed hashes and grant
-access by tenant, optional application, and scope. Health endpoints remain unauthenticated.
-Production deployments must provide a non-default `SERVICE_TOKEN_PEPPER`.
+access by tenant, optional application, optional namespace restriction, and API scope. Health
+endpoints remain unauthenticated. Production deployments must provide a non-default
+`SERVICE_TOKEN_PEPPER`.
 
 ## Delivered Extension Points
 

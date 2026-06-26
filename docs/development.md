@@ -67,6 +67,11 @@ python manage.py create_service_token \
   --metadata '{"owner":"platform"}'
 ```
 
+Omitting namespace arguments creates a global-only grant. Add `--namespace-type` and
+`--namespace-id` together for an exact merchant/sub-tenant grant, or use `--namespace-wildcard`
+only for a trusted backend that is authorized to select namespaces inside the grant's
+tenant/application boundary.
+
 The raw token is printed once. Revoke a token by prefix:
 
 ```bash

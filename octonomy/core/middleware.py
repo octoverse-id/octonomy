@@ -19,11 +19,14 @@ class RequestContextMiddleware:
         response = self.get_response(request)
         response["X-Request-ID"] = request.request_id
 
+        scope_context = getattr(request, "scope_context", None)
         logger.info(
             "request_completed",
             extra={
                 "request_id": request.request_id,
                 "tenant_id": request.tenant_id,
+                "namespace_type": getattr(scope_context, "namespace_type", None),
+                "namespace_id": getattr(scope_context, "namespace_id", None),
                 "method": request.method,
                 "path": request.path,
                 "status_code": response.status_code,
