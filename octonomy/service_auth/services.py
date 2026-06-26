@@ -66,20 +66,24 @@ def create_service_client_token(
             expires_at=expires_at,
             metadata=metadata or {},
         )
-        ServiceClientGrant.objects.bulk_create(
-            [
-                ServiceClientGrant(
-                    service_client=client,
-                    tenant_id=grant["tenant_id"],
-                    application_id=grant.get("application_id"),
-                    namespace_type=grant.get("namespace_type"),
-                    namespace_id=grant.get("namespace_id"),
-                    namespace_wildcard=grant.get("namespace_wildcard", False),
-                    scopes=grant.get("scopes", []),
-                )
-                for grant in grants
-            ]
-        )
+        grant_records = [
+            ServiceClientGrant(
+                service_client=client,
+                tenant_id=grant["tenant_id"],
+                application_id=grant.get("application_id"),
+                namespace_type=grant.get("namespace_type"),
+                namespace_id=grant.get("namespace_id"),
+                namespace_wildcard=grant.get("namespace_wildcard", False),
+                scopes=grant.get("scopes", []),
+            )
+            for grant in grants
+        ]
+        for grant_record in grant_records:
+            # bulk_create bypasses model validation. Validate grant shape first
+            # so whitespace-only namespace values and missing parent application
+            # ids fail consistently on SQLite and PostgreSQL.
+            grant_record.full_clean()
+        ServiceClientGrant.objects.bulk_create(grant_records)
     return token, client
 
 
@@ -107,44 +111,30 @@ def authenticate_service_token(token: str) -> ServiceClient | None:
     return client
 
 
-def is_global_namespace_grant(grant: ServiceClientGrant) -> bool:
-    # Namespace-aware authorization lands in #40. Until then, legacy endpoints
-    # must fail closed instead of treating exact or wildcard namespace grants as
-    # application-wide grants.
-    return (
-        grant.namespace_type is None and grant.namespace_id is None and not grant.namespace_wildcard
-    )
-
-
 def grant_allows(
     client: ServiceClient,
     *,
     tenant_id: str,
     application_id: str | None,
     scope: str,
+    namespace_type: str | None = None,
+    namespace_id: str | None = None,
 ) -> bool:
-    grants = client.grants.all()
-    # A tenant-wide grant authorizes any application in that tenant for the
-    # requested scope. Application grants are narrower and only match when the
-    # caller supplies the same application_id.
-    tenant_wide = [
-        grant
-        for grant in grants
-        if grant.tenant_id == tenant_id
-        and grant.application_id is None
-        and is_global_namespace_grant(grant)
-        and grant.has_scope(scope)
-    ]
-    if tenant_wide:
-        return True
+    # Keep the service helper as a compatibility entry point while all
+    # authorization decisions flow through the one canonical predicate.
+    from octonomy.core.auth import ScopeContext, grant_authorizes
 
-    if application_id is None:
-        return False
-
+    scope_context = ScopeContext(
+        namespace_type=namespace_type,
+        namespace_id=namespace_id,
+    )
     return any(
-        grant.tenant_id == tenant_id
-        and grant.application_id == application_id
-        and is_global_namespace_grant(grant)
-        and grant.has_scope(scope)
-        for grant in grants
+        grant_authorizes(
+            grant,
+            tenant_id=tenant_id,
+            application_id=application_id,
+            scope_context=scope_context,
+            required_scope=scope,
+        )
+        for grant in client.grants.all()
     )

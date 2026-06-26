@@ -10,8 +10,8 @@ X-Tenant-ID: tenant_demo
 ```
 
 Service tokens are created by operators with `python manage.py create_service_token`. The command
-accepts optional `--metadata '<json-object>'` for operator-owned client metadata. Tokens are scoped
-by tenant, optional application, and scopes:
+accepts optional application, namespace, and `--metadata '<json-object>'` arguments. Tokens are
+scoped by tenant, optional application, optional namespace restriction, and API scopes:
 
 - `tags:read`: read tag, vocabulary, assignment, and resource tag endpoints.
 - `tags:write`: mutate tags, vocabularies, and assignments.
@@ -19,6 +19,40 @@ by tenant, optional application, and scopes:
 
 A grant with `application_id = null` allows all applications in that tenant. A grant with a
 specific `application_id` only allows requests that supply the same application scope.
+
+Namespace grants are fail-closed:
+
+- Omitting namespace arguments creates a global-only grant.
+- `--namespace-type <type> --namespace-id <id>` creates an exact namespace grant and requires
+  `--application`.
+- `--namespace-wildcard` is an explicit broad grant across global and namespaced requests. It may
+  be tenant-wide or application-specific.
+
+Example exact merchant grant:
+
+```bash
+python manage.py create_service_token \
+  --name svc-merchant-a \
+  --tenant tenant_demo \
+  --application commerce \
+  --namespace-type merchant \
+  --namespace-id merchant_a \
+  --scope tags:read \
+  --scope tags:write
+```
+
+## Namespace Trust Model
+
+Octonomy enforces exact namespace grants against the request namespace. A token restricted to
+`merchant/merchant_a` cannot access global data or another merchant namespace. Legacy grants with
+null namespace fields remain global-only; null is not a namespace wildcard.
+
+An explicit namespace-wildcard grant authorizes the client to assert any namespace inside the
+grant's tenant and optional application boundary. Under that broad grant, namespace selection is
+caller-asserted partitioning: the client backend is responsible for authenticating the merchant
+and sending the correct namespace. Do not expose service tokens to browsers or mobile clients.
+Use exact per-merchant grants for untrusted tiers and reserve wildcard grants for trusted backend
+services.
 
 Optional mutation audit actor header:
 
