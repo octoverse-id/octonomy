@@ -6,7 +6,7 @@ from rest_framework.exceptions import ValidationError
 
 from octonomy.audit.selectors import audit_logs_for_tenant, filter_audit_logs
 from octonomy.audit.serializers import AuditLogSerializer
-from octonomy.core.auth import require_scopes
+from octonomy.core.auth import GLOBAL_SCOPE, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 
 
@@ -14,6 +14,10 @@ def require_tenant(request) -> str:
     if not request.tenant_id:
         raise ValidationError({"X-Tenant-ID": ["This header is required."]})
     return request.tenant_id
+
+
+def scope_context_for_request(request):
+    return getattr(request, "scope_context", GLOBAL_SCOPE)
 
 
 def paginate(request, queryset):
@@ -43,7 +47,10 @@ AUDIT_FILTER_PARAMETERS = [
 @api_view(["GET"])
 def audit_logs_collection(request):
     tenant_id = require_tenant(request)
-    queryset = filter_audit_logs(audit_logs_for_tenant(tenant_id), request.query_params)
+    queryset = filter_audit_logs(
+        audit_logs_for_tenant(tenant_id, scope_context_for_request(request)),
+        request.query_params,
+    )
     return paginate(request, queryset)
 
 
@@ -62,7 +69,8 @@ def audit_logs_collection(request):
 def tag_audit_logs(request, tag_id):
     tenant_id = require_tenant(request)
     queryset = filter_audit_logs(
-        audit_logs_for_tenant(tenant_id).filter(tag_id=tag_id), request.query_params
+        audit_logs_for_tenant(tenant_id, scope_context_for_request(request)).filter(tag_id=tag_id),
+        request.query_params,
     )
     return paginate(request, queryset)
 
@@ -83,7 +91,7 @@ def tag_audit_logs(request, tag_id):
 def resource_audit_logs(request, resource_type, resource_id):
     tenant_id = require_tenant(request)
     queryset = filter_audit_logs(
-        audit_logs_for_tenant(tenant_id).filter(
+        audit_logs_for_tenant(tenant_id, scope_context_for_request(request)).filter(
             resource_type=resource_type,
             resource_id=resource_id,
         ),

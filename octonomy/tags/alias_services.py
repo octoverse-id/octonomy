@@ -5,7 +5,9 @@ from rest_framework import serializers
 
 from octonomy.audit.services import create_audit_log, tag_alias_snapshot
 from octonomy.core.audit import AuditContext
+from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
 from octonomy.core.errors import ApplicationMismatchError, ConflictError, DomainError
+from octonomy.core.selectors import row_matches_scope, scope_context_from_values
 from octonomy.events.services import create_outbox_event
 from octonomy.tags.alias_selectors import (
     active_aliases_for_resolution,
@@ -15,7 +17,12 @@ from octonomy.tags.models import Tag, TagAlias
 from octonomy.tags.services import validate_metadata
 
 
-def validate_alias_tag(tenant_id: str, application_id: str | None, tag: Tag) -> None:
+def validate_alias_tag(
+    tenant_id: str,
+    application_id: str | None,
+    tag: Tag,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
+) -> None:
     if tag.tenant_id != tenant_id:
         raise DomainError(
             "Alias tag must belong to the same tenant.",
@@ -37,6 +44,38 @@ def validate_alias_tag(tenant_id: str, application_id: str | None, tag: Tag) -> 
             {"application_id": ["Alias application is incompatible with tag."]},
         )
 
+    if not row_matches_scope(tag, scope_context, include_global=True):
+        if scope_context.is_global:
+            raise DomainError(
+                "Global aliases can only target global tags.",
+                {"tag_id": ["Tag namespace is incompatible with alias."]},
+            )
+        raise DomainError(
+            "Namespaced aliases can only target global or same-namespace tags.",
+            {"tag_id": ["Tag namespace is incompatible with alias."]},
+        )
+
+
+def alias_scope_context(data: dict) -> ScopeContext:
+    return scope_context_from_values(data.get("namespace_type"), data.get("namespace_id"))
+
+
+def effective_resolution_scope(
+    scope_context: ScopeContext,
+    scope_qualifier: str | None,
+) -> tuple[ScopeContext, bool]:
+    if scope_qualifier is None:
+        return scope_context, True
+    if scope_qualifier == "global":
+        return GLOBAL_SCOPE, False
+    if scope_qualifier == "merchant":
+        if scope_context.is_global:
+            raise serializers.ValidationError(
+                {"scope": ["Merchant scope requires a namespaced request."]}
+            )
+        return scope_context, False
+    raise serializers.ValidationError({"scope": ["Use 'global' or 'merchant'."]})
+
 
 def create_tag_alias(
     tenant_id: str,
@@ -48,7 +87,12 @@ def create_tag_alias(
     try:
         with transaction.atomic():
             data["tag"] = Tag.objects.select_for_update().get(id=data["tag"].id)
-            validate_alias_tag(tenant_id, data.get("application_id"), data["tag"])
+            validate_alias_tag(
+                tenant_id,
+                data.get("application_id"),
+                data["tag"],
+                alias_scope_context(data),
+            )
             alias = TagAlias.objects.create(**data)
             create_audit_log(
                 tenant_id=tenant_id,
@@ -85,7 +129,11 @@ def update_tag_alias(
 ) -> TagAlias:
     application_id = data.get("application_id", alias.application_id)
     tag = data.get("tag", alias.tag)
-    validate_alias_tag(alias.tenant_id, application_id, tag)
+    scope_context = ScopeContext(
+        namespace_type=data.get("namespace_type", alias.namespace_type),
+        namespace_id=data.get("namespace_id", alias.namespace_id),
+    )
+    validate_alias_tag(alias.tenant_id, application_id, tag, scope_context)
     if "metadata" in data:
         validate_metadata(data["metadata"])
 
@@ -106,7 +154,7 @@ def update_tag_alias(
     try:
         with transaction.atomic():
             locked_tag = Tag.objects.select_for_update().get(id=tag.id)
-            validate_alias_tag(alias.tenant_id, application_id, locked_tag)
+            validate_alias_tag(alias.tenant_id, application_id, locked_tag, scope_context)
             alias.tag = locked_tag
             alias.save()
             create_audit_log(
@@ -167,32 +215,55 @@ def deactivate_tag_alias(alias: TagAlias, audit_context: AuditContext | None = N
     return True
 
 
+def most_specific_matches(rows: list) -> list:
+    first_priority = getattr(rows[0], "resolution_priority", None)
+    if first_priority is None:
+        return rows
+    return [row for row in rows if getattr(row, "resolution_priority", None) == first_priority]
+
+
 def resolve_tag_reference(
     tenant_id: str,
     slug: str,
     application_id: str | None,
     tag_type: str | None = None,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
+    scope_qualifier: str | None = None,
 ) -> dict:
-    tags = list(active_tags_for_resolution(tenant_id, slug, application_id, tag_type))
+    resolved_scope, include_global = effective_resolution_scope(scope_context, scope_qualifier)
+    tags = list(
+        active_tags_for_resolution(
+            tenant_id,
+            slug,
+            application_id,
+            tag_type,
+            resolved_scope,
+            include_global=include_global,
+        )
+    )
     if tags:
         # Canonical tags win over aliases for the same slug. Within an
         # application, prefer the app-specific canonical tag before falling back
         # to a shared tag so local vocabulary can override tenant-wide defaults.
+        candidate_tags = tags
         if application_id:
             app_tags = [tag for tag in tags if tag.application_id == application_id]
             if app_tags:
-                if len(app_tags) > 1:
-                    raise serializers.ValidationError(
-                        {"type": ["Multiple canonical tags match this slug; provide type."]}
-                    )
-                return {"matched_type": "tag", "matched_alias": None, "tag": app_tags[0]}
-        if len(tags) > 1:
+                candidate_tags = app_tags
+        candidate_tags = most_specific_matches(candidate_tags)
+        if len(candidate_tags) > 1:
             raise serializers.ValidationError(
                 {"type": ["Multiple canonical tags match this slug; provide type."]}
             )
-        return {"matched_type": "tag", "matched_alias": None, "tag": tags[0]}
+        return {"matched_type": "tag", "matched_alias": None, "tag": candidate_tags[0]}
 
-    alias = active_aliases_for_resolution(tenant_id, slug, application_id).first()
+    alias = active_aliases_for_resolution(
+        tenant_id,
+        slug,
+        application_id,
+        resolved_scope,
+        include_global=include_global,
+    ).first()
     if alias is None:
         raise serializers.ValidationError({"slug": ["No active tag or alias matched this slug."]})
 
@@ -203,17 +274,33 @@ def resolve_assignable_alias(
     *,
     tenant_id: str,
     application_id: str,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
     alias_id=None,
     alias_slug: str | None = None,
 ) -> Tag:
     field = "alias_id" if alias_id else "alias_slug"
     if alias_id:
         try:
-            alias = TagAlias.objects.for_tenant(tenant_id).select_related("tag").get(id=alias_id)
+            alias = (
+                TagAlias.objects.for_tenant(tenant_id)
+                .select_related("tag")
+                .filter(id=alias_id)
+                .get()
+            )
         except TagAlias.DoesNotExist:
             raise serializers.ValidationError({"alias_id": ["Alias was not found."]})
+        if not row_matches_scope(alias, scope_context, include_global=True):
+            raise serializers.ValidationError({"alias_id": ["Alias was not found."]})
+        if not row_matches_scope(alias.tag, scope_context, include_global=True):
+            raise serializers.ValidationError({"alias_id": ["Alias was not found."]})
     else:
-        alias = active_aliases_for_resolution(tenant_id, alias_slug, application_id).first()
+        alias = active_aliases_for_resolution(
+            tenant_id,
+            alias_slug,
+            application_id,
+            scope_context,
+            include_global=True,
+        ).first()
         if alias is None:
             raise serializers.ValidationError({"alias_slug": ["Alias was not found."]})
 

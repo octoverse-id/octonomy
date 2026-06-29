@@ -14,7 +14,9 @@ from octonomy.audit.services import (
     create_audit_logs,
 )
 from octonomy.core.audit import AuditContext
+from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
 from octonomy.core.errors import ApplicationMismatchError, InactiveTagError
+from octonomy.core.selectors import namespace_kwargs, row_matches_scope
 from octonomy.events.services import build_outbox_event, create_outbox_event, create_outbox_events
 from octonomy.tags.models import Tag
 
@@ -25,7 +27,12 @@ class AssignmentResult:
     created: bool
 
 
-def validate_tag_for_assignment(tag: Tag, tenant_id: str, application_id: str) -> None:
+def validate_tag_for_assignment(
+    tag: Tag,
+    tenant_id: str,
+    application_id: str,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
+) -> None:
     if tag.tenant_id != tenant_id:
         raise serializers.ValidationError({"tag_id": ["Tag was not found."]})
     if not tag.is_active:
@@ -36,9 +43,16 @@ def validate_tag_for_assignment(tag: Tag, tenant_id: str, application_id: str) -
         raise ApplicationMismatchError(
             details={"application_id": ["Tag belongs to another application."]}
         )
+    if not row_matches_scope(tag, scope_context, include_global=True):
+        raise serializers.ValidationError({"tag_id": ["Tag was not found."]})
 
 
-def get_assignable_tags(tenant_id: str, application_id: str, tag_ids: list) -> list[Tag]:
+def get_assignable_tags(
+    tenant_id: str,
+    application_id: str,
+    tag_ids: list,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
+) -> list[Tag]:
     max_bulk = getattr(settings, "MAX_BULK_TAGS", 200)
     if len(tag_ids) > max_bulk:
         raise serializers.ValidationError({"tag_ids": [f"Maximum bulk size is {max_bulk}."]})
@@ -53,8 +67,58 @@ def get_assignable_tags(tenant_id: str, application_id: str, tag_ids: list) -> l
         raise serializers.ValidationError({"tag_ids": [f"Unknown tag ids: {', '.join(missing)}"]})
 
     for tag in tags:
-        validate_tag_for_assignment(tag, tenant_id, application_id)
+        validate_tag_for_assignment(tag, tenant_id, application_id, scope_context)
     return tags
+
+
+def assignment_lookup(
+    *,
+    tenant_id: str,
+    application_id: str,
+    scope_context: ScopeContext,
+    resource_type: str,
+    resource_id: str,
+    tag: Tag,
+) -> dict:
+    return {
+        "tenant_id": tenant_id,
+        "application_id": application_id,
+        **namespace_kwargs(scope_context),
+        "resource_type": resource_type,
+        "resource_id": resource_id,
+        "tag": tag,
+    }
+
+
+def get_or_create_assignment(
+    *,
+    tenant_id: str,
+    application_id: str,
+    scope_context: ScopeContext,
+    resource_type: str,
+    resource_id: str,
+    tag: Tag,
+    assigned_by: str | None = None,
+) -> tuple[TagAssignment, bool]:
+    lookup = assignment_lookup(
+        tenant_id=tenant_id,
+        application_id=application_id,
+        scope_context=scope_context,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        tag=tag,
+    )
+    try:
+        with transaction.atomic():
+            return TagAssignment.objects.get_or_create(
+                **lookup,
+                defaults={"assigned_by": assigned_by},
+            )
+    except IntegrityError:
+        # The retry lookup must be exactly as scoped as the insert lookup.
+        # Otherwise a race in one merchant namespace could return a sibling
+        # namespace assignment for the same external resource and tag.
+        return TagAssignment.objects.get(**lookup), False
 
 
 def assign_tag(
@@ -65,21 +129,21 @@ def assign_tag(
     resource_id: str,
     assigned_by: str | None = None,
     audit_context: AuditContext | None = None,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
 ) -> AssignmentResult:
-    validate_tag_for_assignment(tag, tenant_id, application_id)
+    validate_tag_for_assignment(tag, tenant_id, application_id, scope_context)
+    lookup = assignment_lookup(
+        tenant_id=tenant_id,
+        application_id=application_id,
+        scope_context=scope_context,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        tag=tag,
+    )
     try:
         with transaction.atomic():
-            # get_or_create plus the database unique constraint makes assignment
-            # creation idempotent. Retrying the same request should return the
-            # existing assignment instead of creating duplicate Octonomy state.
             assignment, created = TagAssignment.objects.get_or_create(
-                tenant_id=tenant_id,
-                application_id=application_id,
-                namespace_type=None,
-                namespace_id=None,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                tag=tag,
+                **lookup,
                 defaults={"assigned_by": assigned_by},
             )
             if created:
@@ -109,17 +173,8 @@ def assign_tag(
                 )
     except IntegrityError:
         # Concurrent writers can race between the lookup and insert. Treat the
-        # unique-constraint winner as the canonical assignment and report this
-        # request as idempotently existing.
-        assignment = TagAssignment.objects.get(
-            tenant_id=tenant_id,
-            application_id=application_id,
-            namespace_type__isnull=True,
-            namespace_id__isnull=True,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            tag=tag,
-        )
+        # exact-scope unique-constraint winner as the canonical assignment.
+        assignment = TagAssignment.objects.get(**lookup)
         created = False
     return AssignmentResult(assignment=assignment, created=created)
 
@@ -131,8 +186,9 @@ def remove_tag_assignment(
     resource_type: str,
     resource_id: str,
     audit_context: AuditContext | None = None,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
 ) -> int:
-    queryset = TagAssignment.objects.global_scope().filter(
+    queryset = TagAssignment.objects.for_exact_scope(scope_context).filter(
         tenant_id=tenant_id,
         application_id=application_id,
         tag_id=tag_id,
@@ -185,8 +241,9 @@ def bulk_assign_tags(
     tag_ids: list,
     assigned_by: str | None = None,
     audit_context: AuditContext | None = None,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
 ) -> dict:
-    tags = get_assignable_tags(tenant_id, application_id, tag_ids)
+    tags = get_assignable_tags(tenant_id, application_id, tag_ids, scope_context)
     created = 0
     existing = 0
     assignments = []
@@ -197,15 +254,14 @@ def bulk_assign_tags(
         for tag in tags:
             # Bulk assignment preserves the same idempotency contract as the
             # single-write endpoint: tags already present count as existing.
-            assignment, was_created = TagAssignment.objects.get_or_create(
+            assignment, was_created = get_or_create_assignment(
                 tenant_id=tenant_id,
                 application_id=application_id,
-                namespace_type=None,
-                namespace_id=None,
+                scope_context=scope_context,
                 resource_type=resource_type,
                 resource_id=resource_id,
                 tag=tag,
-                defaults={"assigned_by": assigned_by},
+                assigned_by=assigned_by,
             )
             created += int(was_created)
             existing += int(not was_created)
@@ -254,11 +310,12 @@ def bulk_remove_tags(
     resource_id: str,
     tag_ids: list,
     audit_context: AuditContext | None = None,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
 ) -> int:
     max_bulk = getattr(settings, "MAX_BULK_TAGS", 200)
     if len(tag_ids) > max_bulk:
         raise serializers.ValidationError({"tag_ids": [f"Maximum bulk size is {max_bulk}."]})
-    queryset = TagAssignment.objects.global_scope().filter(
+    queryset = TagAssignment.objects.for_exact_scope(scope_context).filter(
         tenant_id=tenant_id,
         application_id=application_id,
         resource_type=resource_type,
@@ -317,8 +374,9 @@ def replace_resource_tags(
     tag_ids: list,
     assigned_by: str | None = None,
     audit_context: AuditContext | None = None,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
 ) -> dict:
-    tags = get_assignable_tags(tenant_id, application_id, tag_ids)
+    tags = get_assignable_tags(tenant_id, application_id, tag_ids, scope_context)
     requested_ids = {tag.id for tag in tags}
 
     with transaction.atomic():
@@ -326,7 +384,7 @@ def replace_resource_tags(
         # never removes assignments for the same external resource id in another
         # tenant or application.
         existing = (
-            TagAssignment.objects.global_scope()
+            TagAssignment.objects.for_exact_scope(scope_context)
             .filter(
                 tenant_id=tenant_id,
                 application_id=application_id,
@@ -377,7 +435,7 @@ def replace_resource_tags(
         for tag in tags:
             if tag.id in remaining_ids:
                 continue
-            assign_tag(
+            result = assign_tag(
                 tenant_id,
                 application_id,
                 tag,
@@ -385,11 +443,12 @@ def replace_resource_tags(
                 resource_id,
                 assigned_by,
                 audit_context=audit_context,
+                scope_context=scope_context,
             )
-            created += 1
+            created += int(result.created)
 
         final_assignments = list(
-            TagAssignment.objects.global_scope()
+            TagAssignment.objects.for_exact_scope(scope_context)
             .filter(
                 tenant_id=tenant_id,
                 application_id=application_id,

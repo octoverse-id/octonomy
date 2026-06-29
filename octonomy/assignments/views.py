@@ -29,9 +29,10 @@ from octonomy.assignments.services import (
     replace_resource_tags,
 )
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import require_scopes
+from octonomy.core.auth import GLOBAL_SCOPE, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
+from octonomy.core.selectors import apply_namespace_filter
 from octonomy.tags.models import Tag
 from octonomy.tags.selectors import apply_usage_counts
 from octonomy.tags.serializers import TagSerializer
@@ -41,6 +42,10 @@ def require_tenant(request) -> str:
     if not request.tenant_id:
         raise ValidationError({"X-Tenant-ID": ["This header is required."]})
     return request.tenant_id
+
+
+def scope_context_for_request(request):
+    return getattr(request, "scope_context", GLOBAL_SCOPE)
 
 
 def paginate(request, queryset, serializer_class):
@@ -62,6 +67,7 @@ def paginate(request, queryset, serializer_class):
 @api_view(["POST", "DELETE"])
 def assignment_collection(request):
     tenant_id = require_tenant(request)
+    scope_context = scope_context_for_request(request)
 
     if request.method == "DELETE":
         serializer = AssignmentDeleteSerializer(data=request.data)
@@ -74,10 +80,14 @@ def assignment_collection(request):
             resource_type=data["resource_type"],
             resource_id=data["resource_id"],
             audit_context=build_audit_context(request),
+            scope_context=scope_context,
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    serializer = AssignmentWriteSerializer(data=request.data, context={"tenant_id": tenant_id})
+    serializer = AssignmentWriteSerializer(
+        data=request.data,
+        context={"tenant_id": tenant_id, "scope_context": scope_context},
+    )
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
     result = assign_tag(
@@ -88,6 +98,7 @@ def assignment_collection(request):
         resource_id=data["resource_id"],
         assigned_by=data.get("assigned_by"),
         audit_context=build_audit_context(request, data.get("assigned_by")),
+        scope_context=scope_context,
     )
     response_status = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
     return data_response(AssignmentSerializer(result.assignment).data, status=response_status)
@@ -102,12 +113,17 @@ def assignment_collection(request):
 @api_view(["POST"])
 def bulk_assign(request):
     tenant_id = require_tenant(request)
-    serializer = BulkAssignSerializer(data=request.data, context={"tenant_id": tenant_id})
+    scope_context = scope_context_for_request(request)
+    serializer = BulkAssignSerializer(
+        data=request.data,
+        context={"tenant_id": tenant_id, "scope_context": scope_context},
+    )
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
     result = bulk_assign_tags(
         tenant_id=tenant_id,
         audit_context=build_audit_context(request, data.get("assigned_by")),
+        scope_context=scope_context,
         **data,
     )
     return data_response(
@@ -129,11 +145,13 @@ def bulk_assign(request):
 @api_view(["POST"])
 def bulk_remove(request):
     tenant_id = require_tenant(request)
+    scope_context = scope_context_for_request(request)
     serializer = BulkRemoveSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     removed = bulk_remove_tags(
         tenant_id=tenant_id,
         audit_context=build_audit_context(request),
+        scope_context=scope_context,
         **serializer.validated_data,
     )
     return data_response({"removed": removed})
@@ -159,28 +177,36 @@ def bulk_remove(request):
 @api_view(["GET", "POST"])
 def resource_tags(request, resource_type, resource_id):
     tenant_id = require_tenant(request)
+    scope_context = scope_context_for_request(request)
 
     if request.method == "GET":
         application_id = request.query_params.get("application_id")
         if not application_id:
             raise ValidationError({"application_id": ["This query parameter is required."]})
-        queryset = assignments_for_tenant(tenant_id).for_resource(
+        queryset = assignments_for_tenant(
+            tenant_id,
+            scope_context,
+            include_global=True,
+        ).for_resource(
             application_id=application_id,
             resource_type=resource_type,
             resource_id=resource_id,
+            scope_context=scope_context,
+            include_global=True,
         )
         queryset = filter_resource_tags(queryset, request.query_params)
         return paginate(request, queryset, ResourceTagSerializer)
 
     serializer = ResourceReplaceSerializer(
         data={**request.data, "resource_type": resource_type, "resource_id": resource_id},
-        context={"tenant_id": tenant_id},
+        context={"tenant_id": tenant_id, "scope_context": scope_context},
     )
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
     result = replace_resource_tags(
         tenant_id=tenant_id,
         audit_context=build_audit_context(request, data.get("assigned_by")),
+        scope_context=scope_context,
         **data,
     )
     tags = [assignment.tag for assignment in result["assignments"]]
@@ -207,12 +233,18 @@ def resource_tags(request, resource_type, resource_id):
 @api_view(["GET"])
 def tag_resources(request, tag_id):
     tenant_id = require_tenant(request)
+    scope_context = scope_context_for_request(request)
     try:
-        tag = Tag.objects.for_tenant(tenant_id).get(id=tag_id)
+        tag = apply_namespace_filter(
+            Tag.objects.for_tenant(tenant_id),
+            scope_context,
+            include_global=True,
+        ).get(id=tag_id)
     except Tag.DoesNotExist:
         raise NotFound("Tag was not found.")
 
     queryset = filter_tag_resources(
-        assignments_for_tenant(tenant_id).filter(tag=tag), request.query_params
+        assignments_for_tenant(tenant_id, scope_context, include_global=True).filter(tag=tag),
+        request.query_params,
     )
     return paginate(request, queryset, TagResourceSerializer)

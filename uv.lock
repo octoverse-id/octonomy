@@ -597,7 +597,7 @@ requires-dist = [
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.7,<3.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<3.4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<10.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0,<7.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0,<8.0" },
     { name = "pytest-django", marker = "extra == 'dev'", specifier = ">=4.9,<5.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8,<0.16" },
 ]

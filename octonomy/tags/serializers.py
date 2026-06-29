@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from octonomy.core.auth import GLOBAL_SCOPE
+from octonomy.core.selectors import apply_namespace_filter
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.tags.models import Tag, Vocabulary
 from octonomy.tags.services import validate_metadata
@@ -68,8 +70,13 @@ class TagWriteSerializer(serializers.Serializer):
         if value is None:
             return None
         tenant_id = self.context["tenant_id"]
+        scope_context = self.context.get("scope_context", GLOBAL_SCOPE)
         try:
-            return Tag.objects.for_tenant(tenant_id).get(id=value)
+            return apply_namespace_filter(
+                Tag.objects.for_tenant(tenant_id),
+                scope_context,
+                include_global=True,
+            ).get(id=value)
         except Tag.DoesNotExist:
             raise serializers.ValidationError("Parent tag was not found.")
 
@@ -77,8 +84,13 @@ class TagWriteSerializer(serializers.Serializer):
         if value is None:
             return None
         tenant_id = self.context["tenant_id"]
+        scope_context = self.context.get("scope_context", GLOBAL_SCOPE)
         try:
-            return Vocabulary.objects.for_tenant(tenant_id).get(id=value)
+            return apply_namespace_filter(
+                Vocabulary.objects.for_tenant(tenant_id),
+                scope_context,
+                include_global=True,
+            ).get(id=value)
         except Vocabulary.DoesNotExist:
             raise serializers.ValidationError("Vocabulary was not found.")
 

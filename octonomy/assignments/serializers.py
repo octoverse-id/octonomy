@@ -4,6 +4,8 @@ from django.conf import settings
 from rest_framework import serializers
 
 from octonomy.assignments.models import TagAssignment
+from octonomy.core.auth import GLOBAL_SCOPE
+from octonomy.core.selectors import apply_namespace_filter
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.tags.alias_selectors import active_aliases_for_resolution_bulk
 from octonomy.tags.alias_services import resolve_assignable_alias
@@ -62,15 +64,21 @@ class AssignmentWriteSerializer(serializers.Serializer):
 
         tenant_id = self.context["tenant_id"]
         application_id = attrs["application_id"]
+        scope_context = self.context.get("scope_context", GLOBAL_SCOPE)
         if attrs.get("tag_id"):
             try:
-                attrs["tag"] = Tag.objects.for_tenant(tenant_id).get(id=attrs.pop("tag_id"))
+                attrs["tag"] = apply_namespace_filter(
+                    Tag.objects.for_tenant(tenant_id),
+                    scope_context,
+                    include_global=True,
+                ).get(id=attrs.pop("tag_id"))
             except Tag.DoesNotExist:
                 raise serializers.ValidationError({"tag_id": ["Tag was not found."]})
         else:
             attrs["tag"] = resolve_assignable_alias(
                 tenant_id=tenant_id,
                 application_id=application_id,
+                scope_context=scope_context,
                 alias_id=attrs.pop("alias_id", None),
                 alias_slug=attrs.pop("alias_slug", None),
             )
@@ -136,6 +144,7 @@ class BulkAssignSerializer(serializers.Serializer):
 
         tenant_id = self.context["tenant_id"]
         application_id = attrs["application_id"]
+        scope_context = self.context.get("scope_context", GLOBAL_SCOPE)
 
         max_bulk = getattr(settings, "MAX_BULK_TAGS", 200)
         if len(tag_ids) + len(alias_slugs) > max_bulk:
@@ -147,10 +156,13 @@ class BulkAssignSerializer(serializers.Serializer):
             tenant_id,
             alias_slugs,
             application_id,
+            scope_context,
+            include_global=True,
         ).select_related("tag")
         resolved = {}
         for alias in aliases:
-            resolved.setdefault(alias.slug, alias.tag)
+            if alias.slug not in resolved:
+                resolved[alias.slug] = alias.tag
 
         missing = [slug for slug in alias_slugs if slug not in resolved]
         if missing:

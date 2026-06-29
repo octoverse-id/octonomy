@@ -5,6 +5,7 @@ from django.db import IntegrityError, transaction
 from octonomy.audit.services import create_audit_log, vocabulary_snapshot
 from octonomy.core.audit import AuditContext
 from octonomy.core.errors import ConflictError
+from octonomy.core.selectors import namespace_changed
 from octonomy.events.services import create_outbox_event
 from octonomy.tags.models import Vocabulary
 from octonomy.tags.services import validate_metadata
@@ -54,11 +55,20 @@ def update_vocabulary(
     if "metadata" in data:
         validate_metadata(data["metadata"])
 
-    if "application_id" in data and data["application_id"] != vocabulary.application_id:
+    application_changed = (
+        "application_id" in data and data["application_id"] != vocabulary.application_id
+    )
+    scope_changed = namespace_changed(vocabulary, data)
+    if application_changed or scope_changed:
         if vocabulary.tags.exists():
+            if application_changed and not scope_changed:
+                raise ConflictError(
+                    "Cannot change application_id for a vocabulary with tags.",
+                    {"application_id": ["Remove tags before changing application scope."]},
+                )
             raise ConflictError(
-                "Cannot change application_id for a vocabulary with tags.",
-                {"application_id": ["Remove tags before changing application scope."]},
+                "Cannot change scope for a vocabulary with tags.",
+                {"application_id": ["Remove tags before changing vocabulary scope."]},
             )
 
     changed_before = {}
