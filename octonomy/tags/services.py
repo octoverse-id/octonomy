@@ -121,9 +121,8 @@ def scope_context_from_create_data(data: dict) -> ScopeContext:
 
 def namespace_or_application_changed(tag: Tag, data: dict) -> bool:
     return (
-        ("application_id" in data and data["application_id"] != tag.application_id)
-        or namespace_changed(tag, data)
-    )
+        "application_id" in data and data["application_id"] != tag.application_id
+    ) or namespace_changed(tag, data)
 
 
 def block_tag_scope_move_if_attached(tag: Tag) -> None:
