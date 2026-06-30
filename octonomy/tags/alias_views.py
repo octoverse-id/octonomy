@@ -7,9 +7,10 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import require_scopes
+from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
+from octonomy.core.selectors import apply_namespace_filter
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.tags.alias_selectors import aliases_for_tenant, filter_aliases
 from octonomy.tags.alias_serializers import (
@@ -34,9 +35,17 @@ def require_tenant(request) -> str:
     return request.tenant_id
 
 
-def get_alias_or_404(tenant_id: str, alias_id):
+def scope_context_for_request(request):
+    return getattr(request, "scope_context", GLOBAL_SCOPE)
+
+
+def get_alias_or_404(
+    tenant_id: str, alias_id, scope_context=GLOBAL_SCOPE, *, include_global: bool = True
+):
     try:
-        return aliases_for_tenant(tenant_id).get(id=alias_id)
+        return aliases_for_tenant(tenant_id, scope_context, include_global=include_global).get(
+            id=alias_id
+        )
     except TagAlias.DoesNotExist:
         raise NotFound("Tag alias was not found.")
 
@@ -71,16 +80,25 @@ def maybe_validate_application_id(request) -> str | None:
 @api_view(["GET", "POST"])
 def aliases_collection(request):
     tenant_id = require_tenant(request)
+    scope_context = scope_context_for_request(request)
 
     if request.method == "GET":
         maybe_validate_application_id(request)
-        queryset = filter_aliases(aliases_for_tenant(tenant_id), request.query_params)
+        queryset = filter_aliases(
+            aliases_for_tenant(
+                tenant_id, scope_context, include_global=request_include_global(request)
+            ),
+            request.query_params,
+        )
         paginator = OctonomyLimitOffsetPagination()
         page = paginator.paginate_queryset(queryset, request)
         serializer = TagAliasSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    serializer = TagAliasWriteSerializer(data=request.data, context={"tenant_id": tenant_id})
+    serializer = TagAliasWriteSerializer(
+        data=request.data,
+        context={"tenant_id": tenant_id, "scope_context": scope_context},
+    )
     serializer.is_valid(raise_exception=True)
     alias = create_tag_alias(tenant_id, serializer.validated_data, build_audit_context(request))
     return data_response(TagAliasSerializer(alias).data, status=status.HTTP_201_CREATED)
@@ -93,7 +111,11 @@ def aliases_collection(request):
 @api_view(["GET", "PATCH", "DELETE"])
 def alias_detail(request, alias_id):
     tenant_id = require_tenant(request)
-    alias = get_alias_or_404(tenant_id, alias_id)
+    scope_context = scope_context_for_request(request)
+    # Writes (PATCH/DELETE) target the exact request scope; reads may fall back
+    # to global rows only when the caller is authorized for the global namespace.
+    include_global = request_include_global(request) if request.method == "GET" else False
+    alias = get_alias_or_404(tenant_id, alias_id, scope_context, include_global=include_global)
 
     if request.method == "GET":
         return data_response(TagAliasSerializer(alias).data)
@@ -103,7 +125,9 @@ def alias_detail(request, alias_id):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     serializer = TagAliasPatchSerializer(
-        data=request.data, partial=True, context={"tenant_id": tenant_id}
+        data=request.data,
+        partial=True,
+        context={"tenant_id": tenant_id, "scope_context": scope_context},
     )
     serializer.is_valid(raise_exception=True)
     alias = update_tag_alias(alias, serializer.validated_data, build_audit_context(request))
@@ -124,13 +148,22 @@ def alias_detail(request, alias_id):
 @api_view(["GET"])
 def tag_aliases(request, tag_id):
     tenant_id = require_tenant(request)
+    scope_context = scope_context_for_request(request)
+    include_global = request_include_global(request)
     maybe_validate_application_id(request)
     try:
-        tag = Tag.objects.for_tenant(tenant_id).get(id=tag_id)
+        tag = apply_namespace_filter(
+            Tag.objects.for_tenant(tenant_id),
+            scope_context,
+            include_global=include_global,
+        ).get(id=tag_id)
     except Tag.DoesNotExist:
         raise NotFound("Tag was not found.")
 
-    queryset = filter_aliases(aliases_for_tenant(tenant_id).filter(tag=tag), request.query_params)
+    queryset = filter_aliases(
+        aliases_for_tenant(tenant_id, scope_context, include_global=include_global).filter(tag=tag),
+        request.query_params,
+    )
     paginator = OctonomyLimitOffsetPagination()
     page = paginator.paginate_queryset(queryset, request)
     serializer = TagAliasSerializer(page, many=True)
@@ -142,6 +175,7 @@ def tag_aliases(request, tag_id):
         OpenApiParameter("slug", str, required=True),
         OpenApiParameter("application_id", str, required=False),
         OpenApiParameter("type", str, required=False),
+        OpenApiParameter("scope", str, required=False),
     ],
     responses=TagResolutionSerializer,
 )
@@ -163,6 +197,8 @@ def tag_resolution(request):
         slug=slug,
         application_id=application_id,
         tag_type=tag_type,
+        scope_context=scope_context_for_request(request),
+        scope_qualifier=request.query_params.get("scope"),
     )
     apply_usage_counts([result["tag"]])
     return data_response(TagResolutionSerializer(result).data)

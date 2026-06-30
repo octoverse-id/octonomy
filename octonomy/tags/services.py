@@ -6,7 +6,14 @@ from rest_framework import serializers
 
 from octonomy.audit.services import create_audit_log, tag_snapshot
 from octonomy.core.audit import AuditContext
+from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
 from octonomy.core.errors import ConflictError, DomainError
+from octonomy.core.selectors import (
+    namespace_changed,
+    row_matches_scope,
+    scope_context_from_instance_data,
+    scope_context_from_values,
+)
 from octonomy.events.services import build_outbox_event, create_outbox_event, create_outbox_events
 from octonomy.tags.models import Tag, TagAlias
 
@@ -17,7 +24,12 @@ def validate_metadata(value) -> dict:
     return value
 
 
-def validate_tag_parent(tenant_id: str, application_id: str | None, parent: Tag | None) -> None:
+def validate_tag_parent(
+    tenant_id: str,
+    application_id: str | None,
+    parent: Tag | None,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
+) -> None:
     if parent is None:
         return
 
@@ -41,11 +53,23 @@ def validate_tag_parent(tenant_id: str, application_id: str | None, parent: Tag 
             {"parent_id": ["Parent application is incompatible."]},
         )
 
+    if not row_matches_scope(parent, scope_context, include_global=True):
+        if scope_context.is_global:
+            raise DomainError(
+                "Global tags can only use global parent tags.",
+                {"parent_id": ["Parent namespace is incompatible."]},
+            )
+        raise DomainError(
+            "Namespaced tags can only use global or same-namespace parent tags.",
+            {"parent_id": ["Parent namespace is incompatible."]},
+        )
+
 
 def validate_tag_vocabulary(
     tenant_id: str,
     application_id: str | None,
     vocabulary,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
     *,
     require_active: bool = True,
 ) -> None:
@@ -79,6 +103,45 @@ def validate_tag_vocabulary(
             {"vocabulary_id": ["Vocabulary application is incompatible."]},
         )
 
+    if not row_matches_scope(vocabulary, scope_context, include_global=True):
+        if scope_context.is_global:
+            raise DomainError(
+                "Global tags can only use global vocabularies.",
+                {"vocabulary_id": ["Vocabulary namespace is incompatible."]},
+            )
+        raise DomainError(
+            "Namespaced tags can only use global or same-namespace vocabularies.",
+            {"vocabulary_id": ["Vocabulary namespace is incompatible."]},
+        )
+
+
+def scope_context_from_create_data(data: dict) -> ScopeContext:
+    return scope_context_from_values(data.get("namespace_type"), data.get("namespace_id"))
+
+
+def namespace_or_application_changed(tag: Tag, data: dict) -> bool:
+    return (
+        "application_id" in data and data["application_id"] != tag.application_id
+    ) or namespace_changed(tag, data)
+
+
+def block_tag_scope_move_if_attached(tag: Tag) -> None:
+    if tag.assignments.exists():
+        raise ConflictError(
+            "Cannot change scope for a tag with assignments.",
+            {"application_id": ["Remove assignments before changing tag scope."]},
+        )
+    if tag.aliases.exists():
+        raise ConflictError(
+            "Cannot change scope for a tag with aliases.",
+            {"application_id": ["Remove aliases before changing tag scope."]},
+        )
+    if tag.children.exists():
+        raise ConflictError(
+            "Cannot change scope for a tag with child tags.",
+            {"application_id": ["Remove child tags before changing tag scope."]},
+        )
+
 
 def serialize_related_audit_value(field: str, value):
     if field in {"parent", "vocabulary"} and value:
@@ -92,8 +155,14 @@ def create_tag(
     audit_context: AuditContext | None = None,
 ) -> Tag:
     data["tenant_id"] = tenant_id
-    validate_tag_parent(tenant_id, data.get("application_id"), data.get("parent"))
-    validate_tag_vocabulary(tenant_id, data.get("application_id"), data.get("vocabulary"))
+    scope_context = scope_context_from_create_data(data)
+    validate_tag_parent(tenant_id, data.get("application_id"), data.get("parent"), scope_context)
+    validate_tag_vocabulary(
+        tenant_id,
+        data.get("application_id"),
+        data.get("vocabulary"),
+        scope_context,
+    )
     try:
         with transaction.atomic():
             tag = Tag.objects.create(**data)
@@ -131,26 +200,24 @@ def update_tag(
     audit_context: AuditContext | None = None,
 ) -> Tag:
     application_id = data.get("application_id", tag.application_id)
+    scope_context = scope_context_from_instance_data(tag, data)
     parent = data.get("parent", tag.parent)
     vocabulary = data.get("vocabulary", tag.vocabulary)
     vocabulary_changed = "vocabulary" in data and data["vocabulary"] != tag.vocabulary
-    validate_tag_parent(tag.tenant_id, application_id, parent)
+    validate_tag_parent(tag.tenant_id, application_id, parent, scope_context)
     validate_tag_vocabulary(
         tag.tenant_id,
         application_id,
         vocabulary,
+        scope_context,
         require_active=vocabulary_changed,
     )
 
-    if "application_id" in data and data["application_id"] != tag.application_id:
-        # Assignments are scoped to an application independently from the tag
-        # row. Moving a tagged record across application scopes would leave
-        # existing assignments pointing at a tag they could no longer legally use.
-        if tag.assignments.exists():
-            raise ConflictError(
-                "Cannot change application_id for a tag with assignments.",
-                {"application_id": ["Remove assignments before changing application scope."]},
-            )
+    if namespace_or_application_changed(tag, data):
+        # Assignments, aliases, and child links all encode the current tag
+        # scope. Moving the tag would leave attached rows legal in the old scope
+        # but illegal for the new one, so callers must detach them first.
+        block_tag_scope_move_if_attached(tag)
 
     changed_before = {}
     changed_after = {}

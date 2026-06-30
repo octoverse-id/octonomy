@@ -80,7 +80,14 @@ for operators but mutable, so future audit hardening should add a stable service
 alongside the display actor.
 
 Tag responses expose `usage_count`, computed from current tag assignments rather than persisted on
-the tag row.
+the tag row. v1/global responses keep the legacy tenant-wide count. Namespace-aware v2 selector
+paths count assignments visible to the requesting scope: global views count global assignments only,
+while merchant views count same-merchant plus global assignments. Operators should expect global and
+merchant counts to differ.
+
+Global namespace tag deactivation has tenant-wide blast radius because alias cascades and visible
+usage can affect every merchant that relies on the global tag. Deactivating a global namespace row
+requires global or explicitly unrestricted namespace authority; exact merchant grants are not enough.
 
 ## Service Authentication
 

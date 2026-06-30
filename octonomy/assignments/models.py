@@ -5,7 +5,9 @@ import uuid
 from django.db import models
 from django.db.models import Q
 
+from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
 from octonomy.core.models import NamespaceScopedModel, namespace_scope_constraint
+from octonomy.core.selectors import apply_namespace_filter
 
 
 class TagAssignmentQuerySet(models.QuerySet):
@@ -17,11 +19,37 @@ class TagAssignmentQuerySet(models.QuerySet):
         # and authorization land in the later epic stages.
         return self.filter(namespace_type__isnull=True, namespace_id__isnull=True)
 
-    def for_resource(self, application_id: str, resource_type: str, resource_id: str):
-        return self.filter(
-            application_id=application_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
+    def for_resource(
+        self,
+        application_id: str,
+        resource_type: str,
+        resource_id: str,
+        scope_context: ScopeContext = GLOBAL_SCOPE,
+        *,
+        include_global: bool = False,
+    ):
+        return apply_namespace_filter(
+            self.filter(
+                application_id=application_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+            ),
+            scope_context,
+            include_global=include_global,
+        )
+
+    def for_exact_scope(self, scope_context: ScopeContext = GLOBAL_SCOPE):
+        return apply_namespace_filter(
+            self,
+            scope_context,
+            include_global=False,
+        )
+
+    def visible_to_scope(self, scope_context: ScopeContext = GLOBAL_SCOPE):
+        return apply_namespace_filter(
+            self,
+            scope_context,
+            include_global=True,
         )
 
 

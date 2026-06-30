@@ -2,11 +2,22 @@ from __future__ import annotations
 
 from django.db.models import Q, QuerySet
 
+from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
+from octonomy.core.selectors import apply_namespace_filter
 from octonomy.tags.models import Vocabulary
 
 
-def vocabularies_for_tenant(tenant_id: str) -> QuerySet[Vocabulary]:
-    return Vocabulary.objects.for_tenant(tenant_id)
+def vocabularies_for_tenant(
+    tenant_id: str,
+    scope_context: ScopeContext = GLOBAL_SCOPE,
+    *,
+    include_global: bool = True,
+) -> QuerySet[Vocabulary]:
+    return apply_namespace_filter(
+        Vocabulary.objects.for_tenant(tenant_id),
+        scope_context,
+        include_global=include_global,
+    )
 
 
 def filter_vocabularies(queryset: QuerySet[Vocabulary], params) -> QuerySet[Vocabulary]:

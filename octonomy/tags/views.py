@@ -7,7 +7,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import require_scopes
+from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.tags.selectors import apply_usage_counts, filter_tags, tags_for_tenant
@@ -21,9 +21,17 @@ def require_tenant(request) -> str:
     return request.tenant_id
 
 
-def get_tag_or_404(tenant_id: str, tag_id) -> object:
+def scope_context_for_request(request):
+    return getattr(request, "scope_context", GLOBAL_SCOPE)
+
+
+def get_tag_or_404(
+    tenant_id: str, tag_id, scope_context=GLOBAL_SCOPE, *, include_global: bool = True
+) -> object:
     try:
-        return tags_for_tenant(tenant_id).get(id=tag_id)
+        return tags_for_tenant(tenant_id, scope_context, include_global=include_global).get(
+            id=tag_id
+        )
     except Exception:
         raise NotFound("Tag was not found.")
 
@@ -51,13 +59,23 @@ def tags_collection(request):
     tenant_id = require_tenant(request)
 
     if request.method == "GET":
-        queryset = filter_tags(tags_for_tenant(tenant_id), request.query_params)
+        scope_context = scope_context_for_request(request)
+        queryset = filter_tags(
+            tags_for_tenant(
+                tenant_id, scope_context, include_global=request_include_global(request)
+            ),
+            request.query_params,
+        )
         paginator = OctonomyLimitOffsetPagination()
         page = paginator.paginate_queryset(queryset, request)
         serializer = TagSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    serializer = TagWriteSerializer(data=request.data, context={"tenant_id": tenant_id})
+    scope_context = scope_context_for_request(request)
+    serializer = TagWriteSerializer(
+        data=request.data,
+        context={"tenant_id": tenant_id, "scope_context": scope_context},
+    )
     serializer.is_valid(raise_exception=True)
     tag = create_tag(tenant_id, serializer.validated_data, build_audit_context(request))
     apply_usage_counts([tag])
@@ -71,7 +89,12 @@ def tags_collection(request):
 @api_view(["GET", "PATCH", "DELETE"])
 def tag_detail(request, tag_id):
     tenant_id = require_tenant(request)
-    tag = get_tag_or_404(tenant_id, tag_id)
+    scope_context = scope_context_for_request(request)
+    # Reads may fall back to global rows when authorized; writes (PATCH/DELETE)
+    # must target the request's exact scope so a namespaced caller can never
+    # mutate or deactivate a tenant-wide row.
+    include_global = request_include_global(request) if request.method == "GET" else False
+    tag = get_tag_or_404(tenant_id, tag_id, scope_context, include_global=include_global)
 
     if request.method == "GET":
         apply_usage_counts([tag])
@@ -82,7 +105,9 @@ def tag_detail(request, tag_id):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     serializer = TagPatchSerializer(
-        data=request.data, partial=True, context={"tenant_id": tenant_id}
+        data=request.data,
+        partial=True,
+        context={"tenant_id": tenant_id, "scope_context": scope_context},
     )
     serializer.is_valid(raise_exception=True)
     tag = update_tag(tag, serializer.validated_data, build_audit_context(request))
