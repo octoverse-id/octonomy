@@ -29,7 +29,7 @@ from octonomy.assignments.services import (
     replace_resource_tags,
 )
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import GLOBAL_SCOPE, require_scopes
+from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.core.selectors import apply_namespace_filter
@@ -183,16 +183,17 @@ def resource_tags(request, resource_type, resource_id):
         application_id = request.query_params.get("application_id")
         if not application_id:
             raise ValidationError({"application_id": ["This query parameter is required."]})
+        include_global = request_include_global(request)
         queryset = assignments_for_tenant(
             tenant_id,
             scope_context,
-            include_global=True,
+            include_global=include_global,
         ).for_resource(
             application_id=application_id,
             resource_type=resource_type,
             resource_id=resource_id,
             scope_context=scope_context,
-            include_global=True,
+            include_global=include_global,
         )
         queryset = filter_resource_tags(queryset, request.query_params)
         return paginate(request, queryset, ResourceTagSerializer)
@@ -234,17 +235,20 @@ def resource_tags(request, resource_type, resource_id):
 def tag_resources(request, tag_id):
     tenant_id = require_tenant(request)
     scope_context = scope_context_for_request(request)
+    include_global = request_include_global(request)
     try:
         tag = apply_namespace_filter(
             Tag.objects.for_tenant(tenant_id),
             scope_context,
-            include_global=True,
+            include_global=include_global,
         ).get(id=tag_id)
     except Tag.DoesNotExist:
         raise NotFound("Tag was not found.")
 
     queryset = filter_tag_resources(
-        assignments_for_tenant(tenant_id, scope_context, include_global=True).filter(tag=tag),
+        assignments_for_tenant(tenant_id, scope_context, include_global=include_global).filter(
+            tag=tag
+        ),
         request.query_params,
     )
     return paginate(request, queryset, TagResourceSerializer)

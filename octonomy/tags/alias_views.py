@@ -7,7 +7,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import GLOBAL_SCOPE, require_scopes
+from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.core.selectors import apply_namespace_filter
@@ -39,11 +39,13 @@ def scope_context_for_request(request):
     return getattr(request, "scope_context", GLOBAL_SCOPE)
 
 
-def get_alias_or_404(tenant_id: str, alias_id, scope_context=GLOBAL_SCOPE):
+def get_alias_or_404(
+    tenant_id: str, alias_id, scope_context=GLOBAL_SCOPE, *, include_global: bool = True
+):
     try:
-        if scope_context.is_global:
-            return aliases_for_tenant(tenant_id).get(id=alias_id)
-        return aliases_for_tenant(tenant_id, scope_context).get(id=alias_id)
+        return aliases_for_tenant(tenant_id, scope_context, include_global=include_global).get(
+            id=alias_id
+        )
     except TagAlias.DoesNotExist:
         raise NotFound("Tag alias was not found.")
 
@@ -83,7 +85,9 @@ def aliases_collection(request):
     if request.method == "GET":
         maybe_validate_application_id(request)
         queryset = filter_aliases(
-            aliases_for_tenant(tenant_id, scope_context),
+            aliases_for_tenant(
+                tenant_id, scope_context, include_global=request_include_global(request)
+            ),
             request.query_params,
         )
         paginator = OctonomyLimitOffsetPagination()
@@ -108,7 +112,10 @@ def aliases_collection(request):
 def alias_detail(request, alias_id):
     tenant_id = require_tenant(request)
     scope_context = scope_context_for_request(request)
-    alias = get_alias_or_404(tenant_id, alias_id, scope_context)
+    # Writes (PATCH/DELETE) target the exact request scope; reads may fall back
+    # to global rows only when the caller is authorized for the global namespace.
+    include_global = request_include_global(request) if request.method == "GET" else False
+    alias = get_alias_or_404(tenant_id, alias_id, scope_context, include_global=include_global)
 
     if request.method == "GET":
         return data_response(TagAliasSerializer(alias).data)
@@ -142,18 +149,19 @@ def alias_detail(request, alias_id):
 def tag_aliases(request, tag_id):
     tenant_id = require_tenant(request)
     scope_context = scope_context_for_request(request)
+    include_global = request_include_global(request)
     maybe_validate_application_id(request)
     try:
         tag = apply_namespace_filter(
             Tag.objects.for_tenant(tenant_id),
             scope_context,
-            include_global=True,
+            include_global=include_global,
         ).get(id=tag_id)
     except Tag.DoesNotExist:
         raise NotFound("Tag was not found.")
 
     queryset = filter_aliases(
-        aliases_for_tenant(tenant_id, scope_context).filter(tag=tag),
+        aliases_for_tenant(tenant_id, scope_context, include_global=include_global).filter(tag=tag),
         request.query_params,
     )
     paginator = OctonomyLimitOffsetPagination()

@@ -7,7 +7,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import GLOBAL_SCOPE, require_scopes
+from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.tags.vocabulary_selectors import filter_vocabularies, vocabularies_for_tenant
@@ -33,9 +33,13 @@ def scope_context_for_request(request):
     return getattr(request, "scope_context", GLOBAL_SCOPE)
 
 
-def get_vocabulary_or_404(tenant_id: str, vocabulary_id, scope_context=GLOBAL_SCOPE):
+def get_vocabulary_or_404(
+    tenant_id: str, vocabulary_id, scope_context=GLOBAL_SCOPE, *, include_global: bool = True
+):
     try:
-        return vocabularies_for_tenant(tenant_id, scope_context).get(id=vocabulary_id)
+        return vocabularies_for_tenant(tenant_id, scope_context, include_global=include_global).get(
+            id=vocabulary_id
+        )
     except Exception:
         raise NotFound("Vocabulary was not found.")
 
@@ -66,7 +70,9 @@ def vocabularies_collection(request):
 
     if request.method == "GET":
         queryset = filter_vocabularies(
-            vocabularies_for_tenant(tenant_id, scope_context),
+            vocabularies_for_tenant(
+                tenant_id, scope_context, include_global=request_include_global(request)
+            ),
             request.query_params,
         )
         paginator = OctonomyLimitOffsetPagination()
@@ -91,10 +97,14 @@ def vocabularies_collection(request):
 @api_view(["GET", "PATCH", "DELETE"])
 def vocabulary_detail(request, vocabulary_id):
     tenant_id = require_tenant(request)
+    # Writes (PATCH/DELETE) target the exact request scope; reads may fall back
+    # to global rows only when the caller is authorized for the global namespace.
+    include_global = request_include_global(request) if request.method == "GET" else False
     vocabulary = get_vocabulary_or_404(
         tenant_id,
         vocabulary_id,
         scope_context_for_request(request),
+        include_global=include_global,
     )
 
     if request.method == "GET":

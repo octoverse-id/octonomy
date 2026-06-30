@@ -45,6 +45,23 @@ class ScopeContext:
 GLOBAL_SCOPE = ScopeContext()
 
 
+def request_include_global(request) -> bool:
+    """Whether a request may see global (tenant-shared) rows as a fallback.
+
+    Global visibility is only granted when the request's authorized scope set
+    actually includes the global namespace. A merchant request authenticated by
+    an exact merchant grant deliberately excludes ``GLOBAL_SCOPE``, so it must
+    not fall back to global rows for list/detail reads. The set is unset on
+    legacy/global-only requests (and direct service calls), where defaulting to
+    ``True`` preserves v1 behaviour.
+    """
+
+    authorized = getattr(request, "authorized_scope_contexts", None)
+    if authorized is None:
+        return True
+    return GLOBAL_SCOPE in authorized
+
+
 def require_scopes(**method_scopes: str):
     """Attach service-token scopes to a function-based DRF view."""
 

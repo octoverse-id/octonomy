@@ -160,7 +160,7 @@ def test_alias_endpoints_enforce_tenant_isolation(api_client, other_tenant_clien
 def test_alias_detail_does_not_mask_database_errors(api_client, monkeypatch):
     alias = make_alias(slug="promoted")
 
-    def broken_aliases_for_tenant(_tenant_id):
+    def broken_aliases_for_tenant(*_args, **_kwargs):
         raise OperationalError("database is unavailable")
 
     monkeypatch.setattr(
