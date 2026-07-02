@@ -37,6 +37,40 @@ def apply_namespace_filter(
     return queryset.filter(namespace_q(scope_context, include_global=include_global))
 
 
+def apply_application_filter(
+    queryset: QuerySet,
+    application_id: str | None,
+    *,
+    include_shared: bool = True,
+) -> QuerySet:
+    """Constrain rows to a requested application, mirroring the list filter.
+
+    Object-by-id lookups authorize the request's ``application_id`` but must also
+    bound the fetched row to it: a ``(commerce, merchant_a)`` grant must not reach
+    a ``(cms, merchant_a)`` row that merely shares the namespace. ``include_shared``
+    keeps application-shared rows (``application_id IS NULL``) visible, matching
+    the collection endpoints.
+    """
+
+    if not application_id:
+        return queryset
+    if include_shared:
+        return queryset.filter(Q(application_id=application_id) | Q(application_id__isnull=True))
+    return queryset.filter(application_id=application_id)
+
+
+def application_filter_params(params) -> tuple[str | None, bool]:
+    """Read ``application_id`` and ``include_shared`` from query params.
+
+    Mirrors ``filter_tags`` so object-by-id lookups share the collection's
+    application semantics (``include_shared`` defaults on).
+    """
+
+    application_id = params.get("application_id")
+    include_shared = params.get("include_shared", "true").lower() != "false"
+    return application_id, include_shared
+
+
 def namespace_kwargs(scope_context: ScopeContext = GLOBAL_SCOPE) -> dict[str, str | None]:
     return {
         "namespace_type": scope_context.namespace_type,

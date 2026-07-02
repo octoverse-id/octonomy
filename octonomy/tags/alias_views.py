@@ -10,7 +10,12 @@ from octonomy.core.audit import build_audit_context
 from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
-from octonomy.core.selectors import apply_namespace_filter, namespace_kwargs
+from octonomy.core.selectors import (
+    application_filter_params,
+    apply_application_filter,
+    apply_namespace_filter,
+    namespace_kwargs,
+)
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.core.versioning import usage_count_mode_for_request
 from octonomy.tags.alias_selectors import aliases_for_tenant, filter_aliases
@@ -41,12 +46,21 @@ def scope_context_for_request(request):
 
 
 def get_alias_or_404(
-    tenant_id: str, alias_id, scope_context=GLOBAL_SCOPE, *, include_global: bool = True
+    tenant_id: str,
+    alias_id,
+    scope_context=GLOBAL_SCOPE,
+    *,
+    include_global: bool = True,
+    application_id: str | None = None,
+    include_shared: bool = True,
 ):
     try:
-        return aliases_for_tenant(tenant_id, scope_context, include_global=include_global).get(
-            id=alias_id
+        queryset = apply_application_filter(
+            aliases_for_tenant(tenant_id, scope_context, include_global=include_global),
+            application_id,
+            include_shared=include_shared,
         )
+        return queryset.get(id=alias_id)
     except TagAlias.DoesNotExist:
         raise NotFound("Tag alias was not found.")
 
@@ -120,7 +134,15 @@ def alias_detail(request, alias_id):
     # Writes (PATCH/DELETE) target the exact request scope; reads may fall back
     # to global rows only when the caller is authorized for the global namespace.
     include_global = request_include_global(request) if request.method == "GET" else False
-    alias = get_alias_or_404(tenant_id, alias_id, scope_context, include_global=include_global)
+    application_id, include_shared = application_filter_params(request.query_params)
+    alias = get_alias_or_404(
+        tenant_id,
+        alias_id,
+        scope_context,
+        include_global=include_global,
+        application_id=application_id,
+        include_shared=include_shared,
+    )
 
     if request.method == "GET":
         return data_response(TagAliasSerializer(alias).data)
@@ -156,11 +178,16 @@ def tag_aliases(request, tag_id):
     scope_context = scope_context_for_request(request)
     include_global = request_include_global(request)
     maybe_validate_application_id(request)
+    application_id, include_shared = application_filter_params(request.query_params)
     try:
-        tag = apply_namespace_filter(
-            Tag.objects.for_tenant(tenant_id),
-            scope_context,
-            include_global=include_global,
+        tag = apply_application_filter(
+            apply_namespace_filter(
+                Tag.objects.for_tenant(tenant_id),
+                scope_context,
+                include_global=include_global,
+            ),
+            application_id,
+            include_shared=include_shared,
         ).get(id=tag_id)
     except Tag.DoesNotExist:
         raise NotFound("Tag was not found.")

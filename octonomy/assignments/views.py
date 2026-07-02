@@ -32,7 +32,11 @@ from octonomy.core.audit import build_audit_context
 from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
-from octonomy.core.selectors import apply_namespace_filter
+from octonomy.core.selectors import (
+    application_filter_params,
+    apply_application_filter,
+    apply_namespace_filter,
+)
 from octonomy.core.versioning import usage_count_mode_for_request
 from octonomy.tags.models import Tag
 from octonomy.tags.selectors import apply_usage_counts
@@ -241,11 +245,16 @@ def tag_resources(request, tag_id):
     tenant_id = require_tenant(request)
     scope_context = scope_context_for_request(request)
     include_global = request_include_global(request)
+    application_id, include_shared = application_filter_params(request.query_params)
     try:
-        tag = apply_namespace_filter(
-            Tag.objects.for_tenant(tenant_id),
-            scope_context,
-            include_global=include_global,
+        tag = apply_application_filter(
+            apply_namespace_filter(
+                Tag.objects.for_tenant(tenant_id),
+                scope_context,
+                include_global=include_global,
+            ),
+            application_id,
+            include_shared=include_shared,
         ).get(id=tag_id)
     except Tag.DoesNotExist:
         raise NotFound("Tag was not found.")

@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 
 from octonomy.assignments.models import TagAssignment
 from octonomy.tags.models import Tag
-from tests.factories import make_tag
+from tests.factories import make_alias, make_tag, make_vocabulary
 
 pytestmark = pytest.mark.django_db
 
@@ -258,3 +258,67 @@ def test_resolution_global_visible_with_authorized_opt_in(wildcard_token, resolu
     response = resolve(client, "globaldeal", "&include_global=true")
     assert response.status_code == 200
     assert response.json()["data"]["tag"]["id"] == str(resolution_tags["global"].id)
+
+
+# --- detail lookups stay within the authorized application -------------------
+
+
+@pytest.fixture
+def cross_app_rows(db):
+    # Same namespace_id (merchant_a) but a different application (cms) than the
+    # commerce/merchant_a grant. Namespace sits below application, so these are a
+    # distinct scope and must be unreachable by that grant.
+    cms_tag = make_tag(
+        application_id="cms", namespace_type="merchant", namespace_id="merchant_a", slug="cmsonly"
+    )
+    return {
+        "cms_tag": cms_tag,
+        "own_tag": make_tag(
+            application_id=APP,
+            namespace_type="merchant",
+            namespace_id="merchant_a",
+            slug="ownonly",
+        ),
+        "cms_alias": make_alias(
+            tag=cms_tag,
+            application_id="cms",
+            namespace_type="merchant",
+            namespace_id="merchant_a",
+            slug="cmsalias",
+        ),
+        "cms_vocab": make_vocabulary(
+            application_id="cms",
+            namespace_type="merchant",
+            namespace_id="merchant_a",
+            slug="cmsvocab",
+        ),
+    }
+
+
+def test_detail_lookups_do_not_cross_application_within_namespace(merchant_token, cross_app_rows):
+    # Regression: a commerce/merchant_a grant must not reach a cms/merchant_a row
+    # that merely shares the namespace id.
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    for path in (
+        f"/api/v2/tags/{cross_app_rows['cms_tag'].id}",
+        f"/api/v2/tag-aliases/{cross_app_rows['cms_alias'].id}",
+        f"/api/v2/vocabularies/{cross_app_rows['cms_vocab'].id}",
+        f"/api/v2/tags/{cross_app_rows['cms_tag'].id}/aliases",
+        f"/api/v2/tags/{cross_app_rows['cms_tag'].id}/resources",
+    ):
+        assert client.get(f"{path}?application_id={APP}").status_code == 404, path
+
+
+def test_detail_lookup_resolves_own_application_row(merchant_token, cross_app_rows):
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = client.get(f"/api/v2/tags/{cross_app_rows['own_tag'].id}?application_id={APP}")
+    assert response.status_code == 200
+    assert response.json()["data"]["id"] == str(cross_app_rows["own_tag"].id)
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_write_cannot_reach_cross_application_row(merchant_token, cross_app_rows):
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = client.delete(f"/api/v2/tags/{cross_app_rows['cms_tag'].id}?application_id={APP}")
+    assert response.status_code == 404
+    assert Tag.objects.get(id=cross_app_rows["cms_tag"].id).is_active

@@ -10,7 +10,11 @@ from octonomy.core.audit import build_audit_context
 from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
-from octonomy.core.selectors import namespace_kwargs
+from octonomy.core.selectors import (
+    application_filter_params,
+    apply_application_filter,
+    namespace_kwargs,
+)
 from octonomy.core.versioning import usage_count_mode_for_request
 from octonomy.tags.selectors import apply_usage_counts, filter_tags, tags_for_tenant
 from octonomy.tags.serializers import TagPatchSerializer, TagSerializer, TagWriteSerializer
@@ -28,12 +32,21 @@ def scope_context_for_request(request):
 
 
 def get_tag_or_404(
-    tenant_id: str, tag_id, scope_context=GLOBAL_SCOPE, *, include_global: bool = True
+    tenant_id: str,
+    tag_id,
+    scope_context=GLOBAL_SCOPE,
+    *,
+    include_global: bool = True,
+    application_id: str | None = None,
+    include_shared: bool = True,
 ) -> object:
     try:
-        return tags_for_tenant(tenant_id, scope_context, include_global=include_global).get(
-            id=tag_id
+        queryset = apply_application_filter(
+            tags_for_tenant(tenant_id, scope_context, include_global=include_global),
+            application_id,
+            include_shared=include_shared,
         )
+        return queryset.get(id=tag_id)
     except Exception:
         raise NotFound("Tag was not found.")
 
@@ -107,7 +120,15 @@ def tag_detail(request, tag_id):
     # mutate or deactivate a tenant-wide row.
     include_global = request_include_global(request) if request.method == "GET" else False
     usage_count_mode = usage_count_mode_for_request(request)
-    tag = get_tag_or_404(tenant_id, tag_id, scope_context, include_global=include_global)
+    application_id, include_shared = application_filter_params(request.query_params)
+    tag = get_tag_or_404(
+        tenant_id,
+        tag_id,
+        scope_context,
+        include_global=include_global,
+        application_id=application_id,
+        include_shared=include_shared,
+    )
 
     if request.method == "GET":
         apply_usage_counts([tag], scope_context, mode=usage_count_mode)
