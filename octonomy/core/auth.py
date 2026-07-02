@@ -152,16 +152,51 @@ def grant_authorizes(
     if not scope_context.is_global and application_id is None:
         return False
 
+    return grant_matches_namespace(grant, scope_context)
+
+
+def grant_matches_namespace(grant: ServiceClientGrant, scope_context: ScopeContext) -> bool:
+    """Whether a grant reaches the namespace partition, ignoring application."""
+
     if grant.namespace_wildcard:
         return True
-
     if scope_context.is_global:
         return grant.namespace_type is None and grant.namespace_id is None
-
     return (
         grant.namespace_type == scope_context.namespace_type
         and grant.namespace_id == scope_context.namespace_id
     )
+
+
+def authorized_application_ids(request) -> set[str] | None:
+    """Applications the caller may access in the request's namespace partition.
+
+    Returns ``None`` when access is unrestricted (a tenant-wide grant reaches the
+    namespace with no application bound), otherwise the set of application ids the
+    caller is granted for. Object-by-id lookups bound the fetched row to this so a
+    grant cannot reach a row in an application it is not authorized for — while an
+    unrestricted caller can still fetch a row it is moving to another application
+    (the request body names the destination, not the source).
+    """
+
+    client = getattr(request, "service_client", None)
+    tenant_id = getattr(request, "tenant_id", None)
+    if client is None or not tenant_id:
+        return None
+
+    scope_context = getattr(request, "scope_context", GLOBAL_SCOPE)
+    required_scope = getattr(request, "required_scope", None)
+
+    application_ids: set[str] = set()
+    for grant in tenant_grants(client, tenant_id):
+        if required_scope and not grant.has_scope(required_scope):
+            continue
+        if not grant_matches_namespace(grant, scope_context):
+            continue
+        if grant.application_id is None:
+            return None
+        application_ids.add(grant.application_id)
+    return application_ids
 
 
 def authorized_scope_contexts(
@@ -226,6 +261,9 @@ class BearerTokenPermission(BasePermission):
             raise exceptions.ValidationError({"X-Tenant-ID": ["This header is required."]})
 
         scope = required_scope_for_request(request, view)
+        # Stash the resolved scope so object-by-id lookups can bound the fetched
+        # row to the applications this caller is granted for the same scope.
+        request.required_scope = scope
         tenant_grant_list = tenant_grants(client, tenant_id)
         if not tenant_grant_list:
             raise TenantMismatchError(

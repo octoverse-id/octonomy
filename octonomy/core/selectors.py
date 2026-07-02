@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.db.models import Q, QuerySet
 
-from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, application_ids_from_request
+from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, authorized_application_ids
 
 
 def namespace_q(
@@ -43,44 +43,37 @@ def apply_application_filter(
     *,
     include_shared: bool = True,
 ) -> QuerySet:
-    """Constrain rows to the request's authorized application(s).
+    """Bound rows to the applications a caller is authorized for.
 
-    Object-by-id lookups authorize the request's ``application_id`` but must also
-    bound the fetched row to it: a ``(commerce, merchant_a)`` grant must not reach
-    a ``(cms, merchant_a)`` row that merely shares the namespace. Accepts the set
-    of application ids the request named (query and body, as authorization sees
-    them). ``include_shared`` keeps application-shared rows (``application_id IS
-    NULL``) visible, matching the collection endpoints.
+    Object-by-id lookups must not return a row in an application the caller is not
+    authorized for — a ``(commerce, merchant_a)`` grant must not reach a
+    ``(cms, merchant_a)`` row that merely shares the namespace. ``application_ids``
+    is that authorized set; ``None`` means unrestricted (a tenant-wide grant), so a
+    PATCH may still fetch the row it is moving to another application.
+    ``include_shared`` keeps application-shared rows (``application_id IS NULL``)
+    visible, matching the collection endpoints.
     """
 
-    ids = _application_id_list(application_ids)
-    if not ids:
+    if application_ids is None:
         return queryset
+    ids = [application_id for application_id in application_ids if application_id]
     application_q = Q(application_id__in=ids)
     if include_shared:
         application_q |= Q(application_id__isnull=True)
     return queryset.filter(application_q)
 
 
-def _application_id_list(application_ids) -> list[str]:
-    if application_ids is None:
-        return []
-    if isinstance(application_ids, str):
-        application_ids = [application_ids]
-    return [application_id for application_id in application_ids if application_id]
+def application_filter_params(request) -> tuple[set[str] | None, bool]:
+    """Authorized application scope + ``include_shared`` for an object-by-id lookup.
 
-
-def application_filter_params(request) -> tuple[set[str], bool]:
-    """Application scope + ``include_shared`` for an object-by-id lookup.
-
-    Reads the same query+body ``application_id`` that authorization consumes
-    (``application_ids_from_request``), so a body-only ``application_id`` on a
-    PATCH/DELETE still bounds the fetched row rather than slipping past the query
-    param the filter used to read.
+    The scope is the applications the caller is granted for the request's namespace
+    (``authorized_application_ids``), not the request-named ``application_id``: on a
+    PATCH move the body names the destination, so filtering by it would 404 the
+    source row before ``update_tag`` can validate the move.
     """
 
     include_shared = request.query_params.get("include_shared", "true").lower() != "false"
-    return application_ids_from_request(request), include_shared
+    return authorized_application_ids(request), include_shared
 
 
 def namespace_kwargs(scope_context: ScopeContext = GLOBAL_SCOPE) -> dict[str, str | None]:
