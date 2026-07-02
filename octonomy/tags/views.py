@@ -37,13 +37,13 @@ def get_tag_or_404(
     scope_context=GLOBAL_SCOPE,
     *,
     include_global: bool = True,
-    application_id: str | None = None,
+    application_ids=None,
     include_shared: bool = True,
 ) -> object:
     try:
         queryset = apply_application_filter(
             tags_for_tenant(tenant_id, scope_context, include_global=include_global),
-            application_id,
+            application_ids,
             include_shared=include_shared,
         )
         return queryset.get(id=tag_id)
@@ -120,13 +120,13 @@ def tag_detail(request, tag_id):
     # mutate or deactivate a tenant-wide row.
     include_global = request_include_global(request) if request.method == "GET" else False
     usage_count_mode = usage_count_mode_for_request(request)
-    application_id, include_shared = application_filter_params(request.query_params)
+    application_ids, include_shared = application_filter_params(request)
     tag = get_tag_or_404(
         tenant_id,
         tag_id,
         scope_context,
         include_global=include_global,
-        application_id=application_id,
+        application_ids=application_ids,
         include_shared=include_shared,
     )
 

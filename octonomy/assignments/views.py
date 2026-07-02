@@ -245,7 +245,7 @@ def tag_resources(request, tag_id):
     tenant_id = require_tenant(request)
     scope_context = scope_context_for_request(request)
     include_global = request_include_global(request)
-    application_id, include_shared = application_filter_params(request.query_params)
+    application_ids, include_shared = application_filter_params(request)
     try:
         tag = apply_application_filter(
             apply_namespace_filter(
@@ -253,7 +253,7 @@ def tag_resources(request, tag_id):
                 scope_context,
                 include_global=include_global,
             ),
-            application_id,
+            application_ids,
             include_shared=include_shared,
         ).get(id=tag_id)
     except Tag.DoesNotExist:

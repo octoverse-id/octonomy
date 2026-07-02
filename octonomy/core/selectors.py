@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.db.models import Q, QuerySet
 
-from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
+from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, application_ids_from_request
 
 
 def namespace_q(
@@ -39,36 +39,48 @@ def apply_namespace_filter(
 
 def apply_application_filter(
     queryset: QuerySet,
-    application_id: str | None,
+    application_ids,
     *,
     include_shared: bool = True,
 ) -> QuerySet:
-    """Constrain rows to a requested application, mirroring the list filter.
+    """Constrain rows to the request's authorized application(s).
 
     Object-by-id lookups authorize the request's ``application_id`` but must also
     bound the fetched row to it: a ``(commerce, merchant_a)`` grant must not reach
-    a ``(cms, merchant_a)`` row that merely shares the namespace. ``include_shared``
-    keeps application-shared rows (``application_id IS NULL``) visible, matching
-    the collection endpoints.
+    a ``(cms, merchant_a)`` row that merely shares the namespace. Accepts the set
+    of application ids the request named (query and body, as authorization sees
+    them). ``include_shared`` keeps application-shared rows (``application_id IS
+    NULL``) visible, matching the collection endpoints.
     """
 
-    if not application_id:
+    ids = _application_id_list(application_ids)
+    if not ids:
         return queryset
+    application_q = Q(application_id__in=ids)
     if include_shared:
-        return queryset.filter(Q(application_id=application_id) | Q(application_id__isnull=True))
-    return queryset.filter(application_id=application_id)
+        application_q |= Q(application_id__isnull=True)
+    return queryset.filter(application_q)
 
 
-def application_filter_params(params) -> tuple[str | None, bool]:
-    """Read ``application_id`` and ``include_shared`` from query params.
+def _application_id_list(application_ids) -> list[str]:
+    if application_ids is None:
+        return []
+    if isinstance(application_ids, str):
+        application_ids = [application_ids]
+    return [application_id for application_id in application_ids if application_id]
 
-    Mirrors ``filter_tags`` so object-by-id lookups share the collection's
-    application semantics (``include_shared`` defaults on).
+
+def application_filter_params(request) -> tuple[set[str], bool]:
+    """Application scope + ``include_shared`` for an object-by-id lookup.
+
+    Reads the same query+body ``application_id`` that authorization consumes
+    (``application_ids_from_request``), so a body-only ``application_id`` on a
+    PATCH/DELETE still bounds the fetched row rather than slipping past the query
+    param the filter used to read.
     """
 
-    application_id = params.get("application_id")
-    include_shared = params.get("include_shared", "true").lower() != "false"
-    return application_id, include_shared
+    include_shared = request.query_params.get("include_shared", "true").lower() != "false"
+    return application_ids_from_request(request), include_shared
 
 
 def namespace_kwargs(scope_context: ScopeContext = GLOBAL_SCOPE) -> dict[str, str | None]:

@@ -322,3 +322,20 @@ def test_write_cannot_reach_cross_application_row(merchant_token, cross_app_rows
     response = client.delete(f"/api/v2/tags/{cross_app_rows['cms_tag'].id}?application_id={APP}")
     assert response.status_code == 404
     assert Tag.objects.get(id=cross_app_rows["cms_tag"].id).is_active
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_patch_with_body_application_id_cannot_reach_cross_application_row(
+    merchant_token, cross_app_rows
+):
+    # Regression: application_id lives only in the JSON body, not the query
+    # string. Authorization reads the body, so the object lookup must too, or a
+    # commerce/merchant_a grant can PATCH a cms/merchant_a row by id.
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = client.patch(
+        f"/api/v2/tags/{cross_app_rows['cms_tag'].id}",
+        {"application_id": APP, "name": "Hijacked"},
+        format="json",
+    )
+    assert response.status_code == 404
+    assert Tag.objects.get(id=cross_app_rows["cms_tag"].id).name != "Hijacked"

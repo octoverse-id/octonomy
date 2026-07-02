@@ -51,13 +51,13 @@ def get_alias_or_404(
     scope_context=GLOBAL_SCOPE,
     *,
     include_global: bool = True,
-    application_id: str | None = None,
+    application_ids=None,
     include_shared: bool = True,
 ):
     try:
         queryset = apply_application_filter(
             aliases_for_tenant(tenant_id, scope_context, include_global=include_global),
-            application_id,
+            application_ids,
             include_shared=include_shared,
         )
         return queryset.get(id=alias_id)
@@ -134,13 +134,13 @@ def alias_detail(request, alias_id):
     # Writes (PATCH/DELETE) target the exact request scope; reads may fall back
     # to global rows only when the caller is authorized for the global namespace.
     include_global = request_include_global(request) if request.method == "GET" else False
-    application_id, include_shared = application_filter_params(request.query_params)
+    application_ids, include_shared = application_filter_params(request)
     alias = get_alias_or_404(
         tenant_id,
         alias_id,
         scope_context,
         include_global=include_global,
-        application_id=application_id,
+        application_ids=application_ids,
         include_shared=include_shared,
     )
 
@@ -178,7 +178,7 @@ def tag_aliases(request, tag_id):
     scope_context = scope_context_for_request(request)
     include_global = request_include_global(request)
     maybe_validate_application_id(request)
-    application_id, include_shared = application_filter_params(request.query_params)
+    application_ids, include_shared = application_filter_params(request)
     try:
         tag = apply_application_filter(
             apply_namespace_filter(
@@ -186,7 +186,7 @@ def tag_aliases(request, tag_id):
                 scope_context,
                 include_global=include_global,
             ),
-            application_id,
+            application_ids,
             include_shared=include_shared,
         ).get(id=tag_id)
     except Tag.DoesNotExist:

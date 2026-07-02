@@ -44,13 +44,13 @@ def get_vocabulary_or_404(
     scope_context=GLOBAL_SCOPE,
     *,
     include_global: bool = True,
-    application_id: str | None = None,
+    application_ids=None,
     include_shared: bool = True,
 ):
     try:
         queryset = apply_application_filter(
             vocabularies_for_tenant(tenant_id, scope_context, include_global=include_global),
-            application_id,
+            application_ids,
             include_shared=include_shared,
         )
         return queryset.get(id=vocabulary_id)
@@ -114,13 +114,13 @@ def vocabulary_detail(request, vocabulary_id):
     # Writes (PATCH/DELETE) target the exact request scope; reads may fall back
     # to global rows only when the caller is authorized for the global namespace.
     include_global = request_include_global(request) if request.method == "GET" else False
-    application_id, include_shared = application_filter_params(request.query_params)
+    application_ids, include_shared = application_filter_params(request)
     vocabulary = get_vocabulary_or_404(
         tenant_id,
         vocabulary_id,
         scope_context_for_request(request),
         include_global=include_global,
-        application_id=application_id,
+        application_ids=application_ids,
         include_shared=include_shared,
     )
 
