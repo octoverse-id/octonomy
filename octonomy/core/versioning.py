@@ -82,13 +82,17 @@ def _scope_from_headers(namespace_type: str | None, namespace_id: str | None):
             {NAMESPACE_ID_HEADER: ["This header is required when a namespace type is sent."]},
         )
 
-    # Format hygiene only (no allowlist/registry): reject blank/whitespace, and a
-    # comma that would indicate a folded/repeated header. Types/ids are opaque,
+    # Format hygiene only (no allowlist/registry): reject blank/whitespace, a
+    # comma that would indicate a folded/repeated header, and values wider than
+    # the namespace column (so a namespaced write returns a structured 400 rather
+    # than a DataError/500 when the row is persisted). Types/ids are opaque,
     # caller-canonical strings and are not case-folded.
     validate_external_id(namespace_type, NAMESPACE_TYPE_HEADER)
     validate_external_id(namespace_id, NAMESPACE_ID_HEADER)
     _reject_folded(namespace_type, NAMESPACE_TYPE_HEADER)
     _reject_folded(namespace_id, NAMESPACE_ID_HEADER)
+    _reject_overlong(namespace_type, NAMESPACE_TYPE_HEADER)
+    _reject_overlong(namespace_id, NAMESPACE_ID_HEADER)
 
     try:
         # ScopeContext.__post_init__ rejects the reserved 'global' type and blanks,
@@ -105,6 +109,17 @@ def _reject_folded(value: str, header: str) -> None:
         raise NamespaceHeaderError(
             f"{header} must be sent exactly once.",
             {header: ["Send this header exactly once; commas are not allowed."]},
+        )
+
+
+def _reject_overlong(value: str, header: str) -> None:
+    from octonomy.core.errors import NamespaceHeaderError
+    from octonomy.core.models import NAMESPACE_FIELD_MAX_LENGTH
+
+    if len(value) > NAMESPACE_FIELD_MAX_LENGTH:
+        raise NamespaceHeaderError(
+            f"{header} must be at most {NAMESPACE_FIELD_MAX_LENGTH} characters.",
+            {header: [f"Ensure this value has at most {NAMESPACE_FIELD_MAX_LENGTH} characters."]},
         )
 
 

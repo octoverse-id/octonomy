@@ -94,6 +94,24 @@ def test_namespace_values_are_not_case_folded():
     assert request.scope_context == ScopeContext("Merchant", "Merchant_A")
 
 
+def test_v2_overlong_type_is_rejected():
+    request = make_request(HTTP_X_NAMESPACE_TYPE="m" * 101, HTTP_X_NAMESPACE_ID="merchant_a")
+    with pytest.raises(NamespaceHeaderError):
+        resolve_scope_context(request, "v2")
+
+
+def test_v2_overlong_id_is_rejected():
+    request = make_request(HTTP_X_NAMESPACE_TYPE="merchant", HTTP_X_NAMESPACE_ID="m" * 101)
+    with pytest.raises(NamespaceHeaderError):
+        resolve_scope_context(request, "v2")
+
+
+def test_v2_max_length_namespace_values_are_accepted():
+    request = make_request(HTTP_X_NAMESPACE_TYPE="m" * 100, HTTP_X_NAMESPACE_ID="a" * 100)
+    resolve_scope_context(request, "v2")
+    assert request.scope_context == ScopeContext("m" * 100, "a" * 100)
+
+
 def test_v1_without_headers_pins_global():
     request = make_request(path="/api/v1/tags")
     resolve_scope_context(request, "v1")

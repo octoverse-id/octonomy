@@ -325,6 +325,22 @@ def test_write_cannot_reach_cross_application_row(merchant_token, cross_app_rows
 
 
 @override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_overlong_namespace_header_returns_structured_400_not_500(wildcard_token):
+    # A 101-char namespace id would overflow the varchar(100) column on write;
+    # it must be rejected as a structured 400 before persistence, never a 500.
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="m" * 101)
+    response = client.post(
+        "/api/v2/tags",
+        {"application_id": APP, "name": "X", "slug": "x", "type": "label"},
+        format="json",
+    )
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "namespace_invalid"
+    assert {"code", "message", "details", "request_id"} <= set(error)
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
 def test_patch_with_body_application_id_cannot_reach_cross_application_row(
     merchant_token, cross_app_rows
 ):
