@@ -63,10 +63,22 @@ def alias_scope_context(data: dict) -> ScopeContext:
 def effective_resolution_scope(
     scope_context: ScopeContext,
     scope_qualifier: str | None,
+    authorized_global: bool = True,
 ) -> tuple[ScopeContext, bool]:
+    # ``authorized_global`` is the caller's fail-closed opt-in for global rows
+    # (``request_include_global`` at the view). A merchant request that is not
+    # authorized for global must not reach global tags/aliases here, whether via
+    # the default global fallback or an explicit ``scope=global`` pin — otherwise
+    # tag-resolution becomes a discovery side channel around the exclude-default
+    # contract.
     if scope_qualifier is None:
-        return scope_context, True
+        return scope_context, authorized_global
     if scope_qualifier == "global":
+        if not authorized_global:
+            # Indistinguishable from a genuine no-match: no existence disclosure.
+            raise serializers.ValidationError(
+                {"slug": ["No active tag or alias matched this slug."]}
+            )
         return GLOBAL_SCOPE, False
     if scope_qualifier == "merchant":
         if scope_context.is_global:
@@ -229,8 +241,11 @@ def resolve_tag_reference(
     tag_type: str | None = None,
     scope_context: ScopeContext = GLOBAL_SCOPE,
     scope_qualifier: str | None = None,
+    authorized_global: bool = True,
 ) -> dict:
-    resolved_scope, include_global = effective_resolution_scope(scope_context, scope_qualifier)
+    resolved_scope, include_global = effective_resolution_scope(
+        scope_context, scope_qualifier, authorized_global
+    )
     tags = list(
         active_tags_for_resolution(
             tenant_id,

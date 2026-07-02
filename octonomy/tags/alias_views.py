@@ -205,6 +205,9 @@ def tag_resolution(request):
         tag_type=tag_type,
         scope_context=scope_context,
         scope_qualifier=request.query_params.get("scope"),
+        # Fail-closed: global rows are reachable only when the caller is
+        # authorized for global (include_global opt-in), same as list/detail.
+        authorized_global=request_include_global(request),
     )
     apply_usage_counts([result["tag"]], scope_context, mode=usage_count_mode_for_request(request))
     return data_response(TagResolutionSerializer(result).data)

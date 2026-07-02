@@ -208,3 +208,53 @@ def test_namespaced_write_cannot_mutate_global_row(wildcard_token, scoped_tags):
     response = client.delete(f"/api/v2/tags/{scoped_tags['global'].id}?application_id={APP}")
     assert response.status_code == 404
     assert Tag.objects.get(id=scoped_tags["global"].id).is_active
+
+
+# --- tag-resolution honours the fail-closed global contract -------------------
+
+
+@pytest.fixture
+def resolution_tags(db):
+    return {
+        "global": make_tag(application_id=APP, slug="globaldeal", name="Global Deal"),
+        "merchant_a": make_tag(
+            application_id=APP,
+            namespace_type="merchant",
+            namespace_id="merchant_a",
+            slug="merchantdeal",
+            name="Merchant Deal",
+        ),
+    }
+
+
+def resolve(client, slug, query=""):
+    return client.get(f"/api/v2/tag-resolution?slug={slug}&application_id={APP}{query}")
+
+
+def test_resolution_exact_merchant_cannot_discover_global_by_default(
+    merchant_token, resolution_tags
+):
+    # Regression: an exact merchant grant must not reach global tags through
+    # tag-resolution's default global fallback.
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    assert resolve(client, "globaldeal").status_code == 400
+
+
+def test_resolution_exact_merchant_scope_global_is_fail_closed(merchant_token, resolution_tags):
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    # scope=global must not force global visibility for an unauthorized grant.
+    assert resolve(client, "globaldeal", "&scope=global").status_code == 400
+
+
+def test_resolution_exact_merchant_resolves_own_scope(merchant_token, resolution_tags):
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = resolve(client, "merchantdeal")
+    assert response.status_code == 200
+    assert response.json()["data"]["tag"]["id"] == str(resolution_tags["merchant_a"].id)
+
+
+def test_resolution_global_visible_with_authorized_opt_in(wildcard_token, resolution_tags):
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = resolve(client, "globaldeal", "&include_global=true")
+    assert response.status_code == 200
+    assert response.json()["data"]["tag"]["id"] == str(resolution_tags["global"].id)
