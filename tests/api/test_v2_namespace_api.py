@@ -210,6 +210,47 @@ def test_namespaced_write_cannot_mutate_global_row(wildcard_token, scoped_tags):
     assert Tag.objects.get(id=scoped_tags["global"].id).is_active
 
 
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_namespaced_create_uses_query_application_id_when_body_omits_it(merchant_token):
+    # application_id only in the query string (authorization accepts it there). The
+    # create must persist it so the namespaced row is valid, instead of writing a
+    # NULL application and failing the namespace check as a misleading 409.
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = client.post(
+        f"/api/v2/tags?application_id={APP}",
+        {"name": "Private", "slug": "private", "type": "label"},
+        format="json",
+    )
+    assert response.status_code == 201, response.data
+    assert response.json()["data"]["application_id"] == APP
+    created = Tag.objects.get(id=response.json()["data"]["id"])
+    assert (created.namespace_type, created.namespace_id) == ("merchant", "merchant_a")
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_namespaced_vocabulary_and_alias_creates_use_query_application_id(merchant_token):
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+
+    vocab = client.post(
+        f"/api/v2/vocabularies?application_id={APP}",
+        {"name": "Labels", "slug": "labels"},
+        format="json",
+    )
+    assert vocab.status_code == 201, vocab.data
+    assert vocab.json()["data"]["application_id"] == APP
+
+    canonical = make_tag(
+        application_id=APP, namespace_type="merchant", namespace_id="merchant_a", slug="canon"
+    )
+    alias = client.post(
+        f"/api/v2/tag-aliases?application_id={APP}",
+        {"tag_id": str(canonical.id), "name": "Alias", "slug": "aliasslug"},
+        format="json",
+    )
+    assert alias.status_code == 201, alias.data
+    assert alias.json()["data"]["application_id"] == APP
+
+
 # --- tag-resolution honours the fail-closed global contract -------------------
 
 

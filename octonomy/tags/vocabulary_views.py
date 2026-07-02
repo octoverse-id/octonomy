@@ -13,7 +13,7 @@ from octonomy.core.responses import data_response
 from octonomy.core.selectors import (
     application_filter_params,
     apply_application_filter,
-    namespace_kwargs,
+    scoped_create_data,
 )
 from octonomy.tags.vocabulary_selectors import filter_vocabularies, vocabularies_for_tenant
 from octonomy.tags.vocabulary_serializers import (
@@ -98,7 +98,7 @@ def vocabularies_collection(request):
     serializer.is_valid(raise_exception=True)
     vocabulary = create_vocabulary(
         tenant_id,
-        {**serializer.validated_data, **namespace_kwargs(scope_context)},
+        scoped_create_data(serializer, request, scope_context),
         build_audit_context(request),
     )
     return data_response(VocabularySerializer(vocabulary).data, status=status.HTTP_201_CREATED)

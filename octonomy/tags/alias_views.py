@@ -14,7 +14,7 @@ from octonomy.core.selectors import (
     application_filter_params,
     apply_application_filter,
     apply_namespace_filter,
-    namespace_kwargs,
+    scoped_create_data,
 )
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.core.versioning import usage_count_mode_for_request
@@ -117,7 +117,7 @@ def aliases_collection(request):
     serializer.is_valid(raise_exception=True)
     alias = create_tag_alias(
         tenant_id,
-        {**serializer.validated_data, **namespace_kwargs(scope_context)},
+        scoped_create_data(serializer, request, scope_context),
         build_audit_context(request),
     )
     return data_response(TagAliasSerializer(alias).data, status=status.HTTP_201_CREATED)

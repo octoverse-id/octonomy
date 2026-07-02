@@ -83,6 +83,24 @@ def namespace_kwargs(scope_context: ScopeContext = GLOBAL_SCOPE) -> dict[str, st
     }
 
 
+def scoped_create_data(serializer, request, scope_context: ScopeContext) -> dict:
+    """Build create data carrying the request's namespace and application scope.
+
+    A namespaced row requires a non-null ``application_id``. Authorization accepts
+    ``application_id`` from the query string as well as the body, so when the body
+    omits it, fall back to the query value rather than persisting ``NULL`` — which
+    the namespace check would otherwise reject as a misleading duplicate/conflict.
+    Global creates keep the body's value (``NULL`` = shared is valid there).
+    """
+
+    data = {**serializer.validated_data, **namespace_kwargs(scope_context)}
+    if not scope_context.is_global and not data.get("application_id"):
+        query_application_id = request.query_params.get("application_id")
+        if query_application_id:
+            data["application_id"] = query_application_id
+    return data
+
+
 def scope_context_from_values(
     namespace_type: str | None,
     namespace_id: str | None,

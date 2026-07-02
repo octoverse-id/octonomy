@@ -13,7 +13,7 @@ from octonomy.core.responses import data_response
 from octonomy.core.selectors import (
     application_filter_params,
     apply_application_filter,
-    namespace_kwargs,
+    scoped_create_data,
 )
 from octonomy.core.versioning import usage_count_mode_for_request
 from octonomy.tags.selectors import apply_usage_counts, filter_tags, tags_for_tenant
@@ -100,7 +100,7 @@ def tags_collection(request):
     # lands in the caller's scope; for global requests this injects nulls.
     tag = create_tag(
         tenant_id,
-        {**serializer.validated_data, **namespace_kwargs(scope_context)},
+        scoped_create_data(serializer, request, scope_context),
         build_audit_context(request),
     )
     apply_usage_counts([tag], scope_context, mode=usage_count_mode)
