@@ -50,3 +50,40 @@ def other_tenant_client(other_tenant_token):
         HTTP_AUTHORIZATION=f"Bearer {other_tenant_token}", HTTP_X_TENANT_ID="tenant_b"
     )
     return client
+
+
+@pytest.fixture
+def merchant_token(db):
+    """Exact merchant_a grant — fail-closed: authorized for merchant_a only, not global."""
+
+    token, _client = create_service_client_token(
+        name="svc-merchant-a",
+        grants=[
+            {
+                "tenant_id": "tenant_a",
+                "application_id": "commerce",
+                "namespace_type": "merchant",
+                "namespace_id": "merchant_a",
+                "scopes": ["tags:read", "tags:write", "audit:read"],
+            }
+        ],
+    )
+    return token
+
+
+@pytest.fixture
+def wildcard_token(db):
+    """Wildcard grant — authorized for global and any namespace inside commerce."""
+
+    token, _client = create_service_client_token(
+        name="svc-wildcard",
+        grants=[
+            {
+                "tenant_id": "tenant_a",
+                "application_id": "commerce",
+                "namespace_wildcard": True,
+                "scopes": ["tags:read", "tags:write", "audit:read"],
+            }
+        ],
+    )
+    return token

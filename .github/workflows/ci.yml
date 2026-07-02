@@ -49,8 +49,9 @@ jobs:
         run: uv run python manage.py makemigrations --check --dry-run
       - name: OpenAPI contract drift check
         run: |
-          uv run python manage.py spectacular --file docs/openapi.yaml --format openapi
-          git diff --exit-code docs/openapi.yaml
+          uv run python manage.py spectacular --api-version v1 --file docs/openapi.yaml --format openapi
+          uv run python manage.py spectacular --api-version v2 --file docs/openapi-v2.yaml --format openapi
+          git diff --exit-code docs/openapi.yaml docs/openapi-v2.yaml
 
   security:
     runs-on: ubuntu-latest

@@ -2,16 +2,17 @@ from __future__ import annotations
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
-from rest_framework.decorators import api_view
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
+from octonomy.core.api import api_view
 from octonomy.core.audit import build_audit_context
 from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
-from octonomy.core.selectors import apply_namespace_filter
+from octonomy.core.selectors import apply_namespace_filter, namespace_kwargs
 from octonomy.core.validators import validate_external_id, validate_slug_like
+from octonomy.core.versioning import usage_count_mode_for_request
 from octonomy.tags.alias_selectors import aliases_for_tenant, filter_aliases
 from octonomy.tags.alias_serializers import (
     TagAliasPatchSerializer,
@@ -100,7 +101,11 @@ def aliases_collection(request):
         context={"tenant_id": tenant_id, "scope_context": scope_context},
     )
     serializer.is_valid(raise_exception=True)
-    alias = create_tag_alias(tenant_id, serializer.validated_data, build_audit_context(request))
+    alias = create_tag_alias(
+        tenant_id,
+        {**serializer.validated_data, **namespace_kwargs(scope_context)},
+        build_audit_context(request),
+    )
     return data_response(TagAliasSerializer(alias).data, status=status.HTTP_201_CREATED)
 
 
@@ -192,13 +197,14 @@ def tag_resolution(request):
     if tag_type:
         validate_slug_like(tag_type, "type")
 
+    scope_context = scope_context_for_request(request)
     result = resolve_tag_reference(
         tenant_id=tenant_id,
         slug=slug,
         application_id=application_id,
         tag_type=tag_type,
-        scope_context=scope_context_for_request(request),
+        scope_context=scope_context,
         scope_qualifier=request.query_params.get("scope"),
     )
-    apply_usage_counts([result["tag"]])
+    apply_usage_counts([result["tag"]], scope_context, mode=usage_count_mode_for_request(request))
     return data_response(TagResolutionSerializer(result).data)

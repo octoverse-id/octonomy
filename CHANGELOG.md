@@ -8,12 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `/api/v2` API surface via a version shim (`NamespaceURLPathVersioning`), adding the
+  merchant/sub-tenant namespace axis. v2 callers select a namespace with `X-Namespace-Type` /
+  `X-Namespace-ID` headers (absent type = global); v1 stays global-only and rejects those headers
+  with a named `400 namespace_not_supported`.
+- v2 merchant reads exclude global rows by default with an `include_global=true` fail-closed opt-in;
+  merged merchant+global result sets order deterministically (existing ordering + `id` tiebreaker).
+- Namespace-scoped `usage_count` on v2 reads (v1/global keep the legacy tenant-wide count).
+- `Vary: Authorization, X-Tenant-ID, X-Namespace-Type, X-Namespace-ID` on cacheable reads.
+- Per-version OpenAPI contracts: `docs/openapi.yaml` (v1) and `docs/openapi-v2.yaml` (v2), both
+  held by the drift gate; namespace headers and `include_global` documented on v2 only.
 - Outbox webhook transport with HMAC-signed delivery, configurable timeout, and event
   correlation headers.
 - Outbox retry backoff, expired-claim recovery tracking, and dead-letter handling for failed
   deliveries.
 
 ### Changed
+- `NAMESPACE_WRITE_ENABLED` (env `OCTONOMY_NAMESPACE_WRITE_ENABLED`, default off) gates namespaced
+  writes: v2 reads are namespace-aware, but a write carrying a namespace scope returns
+  `403 namespaced_writes_disabled` until the flag is enabled. Global writes are unaffected.
 - Outbox dispatch now claims rows before publishing so network delivery happens outside the
   row-locking transaction.
 

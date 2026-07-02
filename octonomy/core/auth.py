@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import exceptions
 from rest_framework.permissions import BasePermission
@@ -16,6 +17,10 @@ from octonomy.service_auth.services import (
 )
 
 LAST_USED_UPDATE_INTERVAL = timedelta(seconds=60)
+
+# HTTP methods that only read. Any other method persists state and, when it also
+# carries a namespace scope, is gated by NAMESPACE_WRITE_ENABLED.
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,28 @@ def request_include_global(request) -> bool:
     if authorized is None:
         return True
     return GLOBAL_SCOPE in authorized
+
+
+def enforce_namespace_write_gate(request, scope_context: ScopeContext) -> None:
+    """Reject namespaced writes while the kill-switch is off.
+
+    v2 reads are namespace-aware, but persisting namespaced rows stays disabled
+    until audit/outbox carry namespace and rollout controls land. Global writes
+    (v1 and v2-global) are always allowed; only an authorized namespaced writer
+    reaches this gate, so the error is a precise capability signal.
+    """
+
+    if scope_context.is_global or request.method in SAFE_METHODS:
+        return
+    if getattr(settings, "NAMESPACE_WRITE_ENABLED", False):
+        return
+
+    from octonomy.core.errors import NamespacedWritesDisabledError
+
+    raise NamespacedWritesDisabledError(
+        "Namespaced writes are not enabled; this deployment accepts namespaced reads only.",
+        {"namespace": ["Namespaced writes are disabled."]},
+    )
 
 
 def require_scopes(**method_scopes: str):
@@ -236,6 +263,7 @@ class BearerTokenPermission(BasePermission):
         )
 
         if scope_context in request.authorized_scope_contexts:
+            enforce_namespace_write_gate(request, scope_context)
             self.mark_client_used(client)
             return True
 

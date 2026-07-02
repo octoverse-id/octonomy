@@ -11,10 +11,17 @@ There are three version strings, and they are kept in sync by design:
 | ------- | ----- | ------- |
 | **Package version** | `pyproject.toml` `version` (and `uv.lock`) | Canonical SemVer for the release and CHANGELOG. |
 | **API schema version** | OpenAPI `info.version` | Mirrors the package version. Generated from `API_VERSION` (`config/settings.py`), which defaults to the package version and is overridable via `OCTONOMY_API_VERSION`. |
-| **URL contract version** | the `/api/v1/` path prefix (`config/urls.py`) | The **contract major**. Decoupled from the package version — it only moves when a backward-incompatible contract is introduced (`/api/v2`). |
+| **URL contract version** | the `/api/<version>/` path prefix (`config/urls.py`) | The **contract major**. Decoupled from the package version — it only moves when a backward-incompatible contract is introduced. |
 
 The package version is the one you bump. The schema version follows it automatically; the URL
-contract version stays at `v1` for the entire `1.x` line.
+contract version is independent of it.
+
+Both `/api/v1` and `/api/v2` are live, served by one view tree via a version shim
+(`NamespaceURLPathVersioning`, `ALLOWED_VERSIONS=["v1","v2"]`). `/api/v2` adds the namespace
+surface (`X-Namespace-*` headers, `include_global`); `/api/v1` stays global-only and unchanged.
+The contract is generated per version — `docs/openapi.yaml` (v1) and `docs/openapi-v2.yaml` (v2) —
+and both are held by the drift gate. Both schemas mirror the package version in `info.version`; the
+`v1`/`v2` distinction lives in the path prefix, not the version string.
 
 ## Bump rules
 

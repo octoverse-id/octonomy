@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
-from rest_framework.decorators import api_view
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
+from octonomy.core.api import api_view
 from octonomy.core.audit import build_audit_context
 from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
+from octonomy.core.selectors import namespace_kwargs
 from octonomy.tags.vocabulary_selectors import filter_vocabularies, vocabularies_for_tenant
 from octonomy.tags.vocabulary_serializers import (
     VocabularyPatchSerializer,
@@ -84,7 +85,7 @@ def vocabularies_collection(request):
     serializer.is_valid(raise_exception=True)
     vocabulary = create_vocabulary(
         tenant_id,
-        serializer.validated_data,
+        {**serializer.validated_data, **namespace_kwargs(scope_context)},
         build_audit_context(request),
     )
     return data_response(VocabularySerializer(vocabulary).data, status=status.HTTP_201_CREATED)

@@ -1,0 +1,210 @@
+"""v2 namespace read/write behaviour and isolation (issue #42)."""
+
+from __future__ import annotations
+
+import pytest
+from django.test import override_settings
+from rest_framework.test import APIClient
+
+from octonomy.assignments.models import TagAssignment
+from octonomy.tags.models import Tag
+from tests.factories import make_tag
+
+pytestmark = pytest.mark.django_db
+
+APP = "commerce"
+
+
+def client_for(token, *, namespace_type=None, namespace_id=None):
+    client = APIClient()
+    creds = {"HTTP_AUTHORIZATION": f"Bearer {token}", "HTTP_X_TENANT_ID": "tenant_a"}
+    if namespace_type is not None:
+        creds["HTTP_X_NAMESPACE_TYPE"] = namespace_type
+    if namespace_id is not None:
+        creds["HTTP_X_NAMESPACE_ID"] = namespace_id
+    client.credentials(**creds)
+    return client
+
+
+@pytest.fixture
+def scoped_tags(db):
+    """One tag per scope, all sharing name+slug so ordering/dedup is exercised."""
+
+    return {
+        "global": make_tag(application_id=APP, slug="premium", name="Premium"),
+        "merchant_a": make_tag(
+            application_id=APP,
+            namespace_type="merchant",
+            namespace_id="merchant_a",
+            slug="premium",
+            name="Premium",
+        ),
+        "merchant_b": make_tag(
+            application_id=APP,
+            namespace_type="merchant",
+            namespace_id="merchant_b",
+            slug="premium",
+            name="Premium",
+        ),
+    }
+
+
+def list_ids(client, query=""):
+    response = client.get(f"/api/v2/tags?application_id={APP}{query}")
+    assert response.status_code == 200, response.data
+    return [item["id"] for item in response.json()["data"]], response.json()["pagination"]
+
+
+# --- reads: exclude-by-default, opt-in merge, isolation -----------------------
+
+
+def test_merchant_list_excludes_global_by_default(wildcard_token, scoped_tags):
+    # The wildcard grant *could* see global, but global is excluded unless asked.
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    ids, _ = list_ids(client)
+    assert ids == [str(scoped_tags["merchant_a"].id)]
+
+
+def test_merchant_list_include_global_merges(wildcard_token, scoped_tags):
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    ids, pagination = list_ids(client, "&include_global=true")
+    assert set(ids) == {str(scoped_tags["merchant_a"].id), str(scoped_tags["global"].id)}
+    assert str(scoped_tags["merchant_b"].id) not in ids
+    assert pagination["count"] == 2
+
+
+def test_include_global_is_fail_closed_for_exact_grant(merchant_token, scoped_tags):
+    # An exact merchant grant is not authorized for global, so include_global is
+    # a no-op rather than a leak.
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    ids, _ = list_ids(client, "&include_global=true")
+    assert ids == [str(scoped_tags["merchant_a"].id)]
+
+
+def test_merged_pagination_is_stable_and_has_no_dedup(wildcard_token, scoped_tags):
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+
+    def page_through():
+        seen, offset = [], 0
+        while True:
+            ids, pagination = list_ids(client, f"&include_global=true&limit=1&offset={offset}")
+            seen.extend(ids)
+            offset += 1
+            if offset >= pagination["count"]:
+                break
+        return seen
+
+    first, second = page_through(), page_through()
+    # Same-(name, slug) rows across scopes are distinct rows: two ids, no dedup,
+    # and the id tiebreaker keeps the merged order stable across paginations.
+    assert first == second
+    assert len(first) == len(set(first)) == 2
+
+
+def test_v2_detail_cannot_see_other_merchant(wildcard_token, scoped_tags):
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = client.get(f"/api/v2/tags/{scoped_tags['merchant_b'].id}?application_id={APP}")
+    assert response.status_code == 404
+
+
+def test_v2_detail_global_excluded_by_default_visible_with_opt_in(wildcard_token, scoped_tags):
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    path = f"/api/v2/tags/{scoped_tags['global'].id}?application_id={APP}"
+    assert client.get(path).status_code == 404
+    assert client.get(f"{path}&include_global=true").status_code == 200
+
+
+def test_v1_detail_cannot_see_merchant_row(api_client, scoped_tags):
+    response = api_client.get(f"/api/v1/tags/{scoped_tags['merchant_a'].id}")
+    assert response.status_code == 404
+
+
+def test_e2e_v1_global_only_v2_merchant_own_plus_opt_in_global(
+    api_client, wildcard_token, scoped_tags
+):
+    v1_ids = {item["id"] for item in api_client.get("/api/v1/tags").json()["data"]}
+    assert v1_ids == {str(scoped_tags["global"].id)}
+
+    merchant = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    own, _ = list_ids(merchant)
+    assert own == [str(scoped_tags["merchant_a"].id)]
+    merged, _ = list_ids(merchant, "&include_global=true")
+    assert set(merged) == {str(scoped_tags["merchant_a"].id), str(scoped_tags["global"].id)}
+
+
+# --- usage_count side-channel -------------------------------------------------
+
+
+def test_usage_count_is_namespace_scoped_in_v2(api_client, wildcard_token):
+    tag = make_tag(application_id=APP, slug="premium", name="Premium")
+    for scope, count in (
+        ((None, None), 1),
+        (("merchant", "merchant_a"), 2),
+        (("merchant", "merchant_b"), 3),
+    ):
+        for i in range(count):
+            TagAssignment.objects.create(
+                tenant_id="tenant_a",
+                application_id=APP,
+                tag=tag,
+                resource_type="product",
+                resource_id=f"{scope[1] or 'global'}-{i}",
+                namespace_type=scope[0],
+                namespace_id=scope[1],
+            )
+
+    v1 = api_client.get(f"/api/v1/tags/{tag.id}").json()["data"]
+    assert v1["usage_count"] == 6  # legacy tenant-wide count
+
+    merchant = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    v2 = merchant.get(f"/api/v2/tags/{tag.id}?application_id={APP}&include_global=true").json()[
+        "data"
+    ]
+    assert v2["usage_count"] == 3  # merchant_a (2) + global (1), excludes merchant_b
+
+
+# --- writes: gated off by default, scoped when enabled ------------------------
+
+
+def test_namespaced_write_is_gated_off_by_default(merchant_token):
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = client.post(
+        "/api/v2/tags",
+        {"application_id": APP, "name": "Private", "slug": "private", "type": "label"},
+        format="json",
+    )
+    assert response.status_code == 403
+    assert response.data["error"]["code"] == "namespaced_writes_disabled"
+
+
+def test_global_write_is_allowed_while_namespaced_writes_are_off(api_client):
+    response = api_client.post(
+        "/api/v2/tags",
+        {"application_id": APP, "name": "Shared", "slug": "shared", "type": "label"},
+        format="json",
+    )
+    assert response.status_code == 201
+    created = Tag.objects.get(id=response.json()["data"]["id"])
+    assert created.namespace_type is None and created.namespace_id is None
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_namespaced_write_targets_request_scope_when_enabled(merchant_token):
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = client.post(
+        "/api/v2/tags",
+        {"application_id": APP, "name": "Private", "slug": "private", "type": "label"},
+        format="json",
+    )
+    assert response.status_code == 201
+    created = Tag.objects.get(id=response.json()["data"]["id"])
+    assert (created.namespace_type, created.namespace_id) == ("merchant", "merchant_a")
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_namespaced_write_cannot_mutate_global_row(wildcard_token, scoped_tags):
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    # Namespaced requests must name their application for authorization.
+    response = client.delete(f"/api/v2/tags/{scoped_tags['global'].id}?application_id={APP}")
+    assert response.status_code == 404
+    assert Tag.objects.get(id=scoped_tags["global"].id).is_active
