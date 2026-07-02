@@ -40,6 +40,28 @@ class InactiveTagError(DomainError):
     message = "Inactive tags cannot be assigned."
 
 
+class NamespaceNotSupportedError(DomainError):
+    # v1 is global-only. A namespaced client that misroutes to /api/v1 must fail
+    # loudly here rather than silently reading or writing the global namespace.
+    code = "namespace_not_supported"
+    message = "Namespace headers are not supported on this API version."
+
+
+class NamespaceHeaderError(DomainError):
+    # Structurally invalid X-Namespace-* headers on a version that supports them
+    # (reserved 'global', type without id, blank, or a folded/repeated header).
+    code = "namespace_invalid"
+    message = "Namespace headers are invalid."
+
+
+class NamespacedWritesDisabledError(DomainError):
+    # Kill-switch: persisting namespaced rows stays off until audit/outbox carry
+    # namespace (S5) and rollout controls land (S7). Reads are unaffected.
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "namespaced_writes_disabled"
+    message = "Namespaced writes are not enabled."
+
+
 def error_response(code: str, message: str, details: Any, request, http_status: int) -> Response:
     request_id = getattr(request, "request_id", None)
     # Keep every public API error in one envelope so clients can reliably inspect

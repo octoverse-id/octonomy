@@ -77,3 +77,19 @@ def test_missing_tenant_uses_error_envelope(client, service_token):
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_patch_can_move_tag_between_applications(api_client):
+    # The application filter on detail lookups is bound to the caller's authorized
+    # applications, not the request body, so a tenant-wide grant can still fetch a
+    # tag it is moving to another application (the body names the destination).
+    tag = make_tag(application_id="commerce", slug="movable")
+
+    response = api_client.patch(
+        f"/api/v1/tags/{tag.id}",
+        {"application_id": "cms"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["application_id"] == "cms"

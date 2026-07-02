@@ -103,6 +103,12 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "octonomy.core.errors.exception_handler",
     "DEFAULT_PAGINATION_CLASS": "octonomy.core.pagination.OctonomyLimitOffsetPagination",
     "PAGE_SIZE": 50,
+    # One view tree serves both versions (the v1/v2 shim). The custom class also
+    # resolves the request namespace scope from X-Namespace-* headers.
+    "DEFAULT_VERSIONING_CLASS": "octonomy.core.versioning.NamespaceURLPathVersioning",
+    "DEFAULT_VERSION": "v1",
+    "ALLOWED_VERSIONS": ["v1", "v2"],
+    "VERSION_PARAM": "version",
 }
 
 SPECTACULAR_SETTINGS = {
@@ -110,6 +116,12 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Multi-tenant tag management and taxonomy service.",
     "VERSION": API_VERSION,
     "SERVE_INCLUDE_SCHEMA": False,
+    # Namespace headers + include_global belong to the v2 contract only; the hook
+    # injects them when generating the v2 schema and leaves v1 untouched.
+    "POSTPROCESSING_HOOKS": [
+        "drf_spectacular.hooks.postprocess_schema_enums",
+        "octonomy.openapi.schema.add_namespace_parameters",
+    ],
 }
 
 SERVICE_TOKEN_PEPPER = os.getenv("SERVICE_TOKEN_PEPPER", "")
@@ -126,6 +138,13 @@ if DEBUG and not SERVICE_TOKEN_PEPPER:
     )
 MAX_BULK_TAGS = int(os.getenv("MAX_BULK_TAGS", "200"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Kill-switch for namespaced (merchant/sub-tenant) writes. Defaults off: v2 reads
+# are namespace-aware, but persisting namespaced rows is disabled until audit and
+# outbox propagate namespace (S5) and the rollout/system-check machinery lands
+# (S7). While off, v2 writes carrying a namespace scope are rejected; global
+# writes (v1 and v2-global) are unaffected.
+NAMESPACE_WRITE_ENABLED = os.getenv("OCTONOMY_NAMESPACE_WRITE_ENABLED", "false").lower() == "true"
 
 OUTBOX_TRANSPORT = os.getenv("OCTONOMY_OUTBOX_TRANSPORT", "logging")
 OUTBOX_WEBHOOK_URL = os.getenv("OCTONOMY_WEBHOOK_URL", "")

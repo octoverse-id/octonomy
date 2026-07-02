@@ -41,7 +41,7 @@ class Vocabulary(NamespaceScopedModel):
 
     class Meta:
         db_table = "vocabularies"
-        ordering = ["name", "slug"]
+        ordering = ["name", "slug", "id"]
         constraints = [
             namespace_scope_constraint(),
             # Shared records store application_id as NULL, so they need a separate
@@ -140,7 +140,7 @@ class Tag(NamespaceScopedModel):
 
     class Meta:
         db_table = "tags"
-        ordering = ["name", "slug"]
+        ordering = ["name", "slug", "id"]
         constraints = [
             namespace_scope_constraint(),
             models.CheckConstraint(
@@ -261,7 +261,7 @@ class TagAlias(NamespaceScopedModel):
 
     class Meta:
         db_table = "tag_aliases"
-        ordering = ["name", "slug"]
+        ordering = ["name", "slug", "id"]
         constraints = [
             namespace_scope_constraint(),
             # Aliases are alternate identifiers for canonical tags, and their

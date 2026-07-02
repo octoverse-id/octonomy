@@ -14,10 +14,28 @@ systems retain ownership of resources.
 - `octonomy.events`: transactional outbox events, dispatch state, and delivery transports.
 - `octonomy.openapi`: OpenAPI metadata and future schema customizations.
 
-## Tenant, Application, and Vocabulary Boundaries
+## Tenant, Application, Namespace, and Vocabulary Boundaries
+
+Isolation nests as `tenant_id` → `application_id` → `namespace_type`/`namespace_id`:
+
+```text
+tenant_id
+└── application_id            (null = shared across applications)
+    └── namespace_type + namespace_id   (null/null = global, i.e. tenant/app-shared)
+        └── tags, vocabularies, aliases, assignments
+```
 
 Every tag and assignment has a `tenant_id`. Assignments also require `application_id`.
 Tags may be shared across applications by leaving `application_id` null.
+
+The **namespace** layer sits below application for merchant/sub-tenant isolation (for example, a
+marketplace where each merchant needs a private tag space inside one application). Rows with
+`namespace_type`/`namespace_id` both null are **global** — visible tenant-wide (or application-wide)
+exactly as before the namespace layer existed; any non-global row also requires `application_id`.
+This axis is exposed through `/api/v2`: v1 stays global-only and rejects `X-Namespace-*` headers,
+while v2 callers select a namespace via those headers (see [`api.md`](api.md)). Merchant reads
+exclude global rows unless `include_global=true` is requested, so isolation is fail-closed. The
+persisted schema, grant model, and enforcement rules are detailed in **Namespace Schema** below.
 
 Application-specific tags may only be assigned within the same application. Shared tags may be
 assigned to any application in the same tenant.

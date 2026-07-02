@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from rest_framework.decorators import api_view
 from rest_framework.exceptions import ValidationError
 
 from octonomy.audit.selectors import audit_logs_for_tenant, filter_audit_logs
 from octonomy.audit.serializers import AuditLogSerializer
+from octonomy.core.api import api_view
 from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 
