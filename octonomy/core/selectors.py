@@ -83,22 +83,31 @@ def namespace_kwargs(scope_context: ScopeContext = GLOBAL_SCOPE) -> dict[str, st
     }
 
 
-def scoped_create_data(serializer, request, scope_context: ScopeContext) -> dict:
-    """Build create data carrying the request's namespace and application scope.
+def create_payload_with_scope(request, scope_context: ScopeContext) -> dict:
+    """Create-request body with the query ``application_id`` folded in.
 
     A namespaced row requires a non-null ``application_id``. Authorization accepts
     ``application_id`` from the query string as well as the body, so when the body
-    omits it, fall back to the query value rather than persisting ``NULL`` — which
-    the namespace check would otherwise reject as a misleading duplicate/conflict.
-    Global creates keep the body's value (``NULL`` = shared is valid there).
+    omits it, fold the query value into the serializer input — this way it passes
+    the serializer's ``application_id`` validation (blank/whitespace and length)
+    exactly like a body value, rather than being copied in unchecked. Global
+    creates are untouched (``NULL`` = shared is valid there).
     """
 
-    data = {**serializer.validated_data, **namespace_kwargs(scope_context)}
-    if not scope_context.is_global and not data.get("application_id"):
+    if not isinstance(request.data, dict):
+        return request.data
+    payload = {**request.data}
+    if not scope_context.is_global and not payload.get("application_id"):
         query_application_id = request.query_params.get("application_id")
         if query_application_id:
-            data["application_id"] = query_application_id
-    return data
+            payload["application_id"] = query_application_id
+    return payload
+
+
+def scoped_create_data(serializer, scope_context: ScopeContext) -> dict:
+    """Merge validated create data with the request's namespace scope."""
+
+    return {**serializer.validated_data, **namespace_kwargs(scope_context)}
 
 
 def scope_context_from_values(

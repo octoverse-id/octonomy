@@ -87,3 +87,22 @@ def wildcard_token(db):
         ],
     )
     return token
+
+
+@pytest.fixture
+def tenant_wildcard_token(db):
+    """Tenant-wide wildcard grant — no application bound, any namespace. Authorizes
+    any request application_id, so it is what exposes unvalidated query values."""
+
+    token, _client = create_service_client_token(
+        name="svc-tenant-wildcard",
+        grants=[
+            {
+                "tenant_id": "tenant_a",
+                "application_id": None,
+                "namespace_wildcard": True,
+                "scopes": ["tags:read", "tags:write", "audit:read"],
+            }
+        ],
+    )
+    return token

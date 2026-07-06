@@ -228,6 +228,37 @@ def test_namespaced_create_uses_query_application_id_when_body_omits_it(merchant
 
 
 @override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_blank_query_application_id_on_namespaced_create_is_rejected(tenant_wildcard_token):
+    # A tenant-wide wildcard grant authorizes any request application_id, so the
+    # query fallback must still pass the serializer's blank/whitespace validation
+    # rather than persisting a blank application id on the namespaced row.
+    client = client_for(tenant_wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = client.post(
+        "/api/v2/tags?application_id=%20%20%20",
+        {"name": "X", "slug": "x", "type": "label"},
+        format="json",
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_error"
+    assert not Tag.objects.filter(slug="x").exists()
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_overlong_query_application_id_on_namespaced_create_is_rejected(tenant_wildcard_token):
+    # An over-100-char query application_id must be rejected as a structured 400
+    # (serializer max_length) rather than reaching a varchar(100) insert as a 500.
+    client = client_for(tenant_wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = client.post(
+        f"/api/v2/tags?application_id={'c' * 101}",
+        {"name": "X", "slug": "x", "type": "label"},
+        format="json",
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation_error"
+    assert not Tag.objects.filter(slug="x").exists()
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
 def test_namespaced_vocabulary_and_alias_creates_use_query_application_id(merchant_token):
     client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
 
