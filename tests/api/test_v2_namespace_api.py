@@ -7,7 +7,7 @@ from django.test import override_settings
 from rest_framework.test import APIClient
 
 from octonomy.assignments.models import TagAssignment
-from octonomy.tags.models import Tag
+from octonomy.tags.models import Tag, TagAlias, Vocabulary
 from tests.factories import make_alias, make_tag, make_vocabulary
 
 pytestmark = pytest.mark.django_db
@@ -256,6 +256,42 @@ def test_overlong_query_application_id_on_namespaced_create_is_rejected(tenant_w
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation_error"
     assert not Tag.objects.filter(slug="x").exists()
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_blank_body_application_id_is_not_overwritten_by_query_fallback(tenant_wildcard_token):
+    # The query fallback applies only when the body omits application_id. An
+    # explicit blank body value must still be rejected by serializer validation,
+    # not silently replaced by the query value.
+    client = client_for(tenant_wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+
+    tag = client.post(
+        f"/api/v2/tags?application_id={APP}",
+        {"application_id": "", "name": "X", "slug": "x", "type": "label"},
+        format="json",
+    )
+    assert tag.status_code == 400, tag.data
+    assert tag.json()["error"]["code"] == "validation_error"
+    assert not Tag.objects.filter(slug="x").exists()
+
+    vocab = client.post(
+        f"/api/v2/vocabularies?application_id={APP}",
+        {"application_id": "", "name": "V", "slug": "v"},
+        format="json",
+    )
+    assert vocab.status_code == 400
+    assert not Vocabulary.objects.filter(slug="v").exists()
+
+    canonical = make_tag(
+        application_id=APP, namespace_type="merchant", namespace_id="merchant_a", slug="canon2"
+    )
+    alias = client.post(
+        f"/api/v2/tag-aliases?application_id={APP}",
+        {"application_id": "", "tag_id": str(canonical.id), "name": "A", "slug": "a2"},
+        format="json",
+    )
+    assert alias.status_code == 400
+    assert not TagAlias.objects.filter(slug="a2").exists()
 
 
 @override_settings(NAMESPACE_WRITE_ENABLED=True)

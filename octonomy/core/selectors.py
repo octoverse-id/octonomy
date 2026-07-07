@@ -97,7 +97,10 @@ def create_payload_with_scope(request, scope_context: ScopeContext) -> dict:
     if not isinstance(request.data, dict):
         return request.data
     payload = {**request.data}
-    if not scope_context.is_global and not payload.get("application_id"):
+    # Only fall back when the body omits the key entirely. An explicitly supplied
+    # value — including a blank string or null — must reach serializer validation
+    # unchanged rather than being silently replaced by the query value.
+    if not scope_context.is_global and "application_id" not in payload:
         query_application_id = request.query_params.get("application_id")
         if query_application_id:
             payload["application_id"] = query_application_id
