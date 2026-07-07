@@ -23,10 +23,18 @@ def parameter_names(operation):
 
 
 def operations(schema):
-    for path_item in schema["paths"].values():
+    for path, path_item in schema["paths"].items():
         for method, operation in path_item.items():
             if isinstance(operation, dict) and "responses" in operation:
-                yield method, operation
+                yield path, method, operation
+
+
+def api_operations(schema):
+    # Versioned API operations only — excludes unversioned routes (health) that
+    # appear in every schema and do not implement the namespace contract.
+    for path, method, operation in operations(schema):
+        if path.startswith("/api/"):
+            yield path, method, operation
 
 
 @pytest.fixture(scope="module")
@@ -49,15 +57,24 @@ def test_versions_use_their_own_path_prefix(v1_schema, v2_schema):
 
 
 def test_namespace_headers_are_v2_only(v1_schema, v2_schema):
-    assert not any("X-Namespace-Type" in parameter_names(op) for _, op in operations(v1_schema))
-    assert all("X-Namespace-Type" in parameter_names(op) for _, op in operations(v2_schema))
-    assert all("X-Namespace-ID" in parameter_names(op) for _, op in operations(v2_schema))
+    assert not any(
+        "X-Namespace-Type" in parameter_names(op) for *_, op in api_operations(v1_schema)
+    )
+    assert all("X-Namespace-Type" in parameter_names(op) for *_, op in api_operations(v2_schema))
+    assert all("X-Namespace-ID" in parameter_names(op) for *_, op in api_operations(v2_schema))
+
+
+def test_namespace_params_only_on_versioned_paths(v2_schema):
+    # Unversioned routes (health) must not advertise the namespace contract.
+    for path, _method, operation in operations(v2_schema):
+        has_namespace = "X-Namespace-Type" in parameter_names(operation)
+        assert has_namespace == path.startswith("/api/v2/"), path
 
 
 def test_include_global_is_v2_read_only(v1_schema, v2_schema):
-    assert not any("include_global" in parameter_names(op) for _, op in operations(v1_schema))
-    reads = [op for method, op in operations(v2_schema) if method == "get"]
-    writes = [op for method, op in operations(v2_schema) if method != "get"]
+    assert not any("include_global" in parameter_names(op) for *_, op in api_operations(v1_schema))
+    reads = [op for _path, method, op in api_operations(v2_schema) if method == "get"]
+    writes = [op for _path, method, op in api_operations(v2_schema) if method != "get"]
     assert reads and all("include_global" in parameter_names(op) for op in reads)
     assert not any("include_global" in parameter_names(op) for op in writes)
 
@@ -65,7 +82,7 @@ def test_include_global_is_v2_read_only(v1_schema, v2_schema):
 @pytest.mark.parametrize("version", ["v1", "v2"])
 def test_operation_ids_are_unique(version):
     schema = generate(version)
-    ids = [op["operationId"] for _, op in operations(schema) if "operationId" in op]
+    ids = [op["operationId"] for *_, op in operations(schema) if "operationId" in op]
     duplicates = [name for name, count in Counter(ids).items() if count > 1]
     assert duplicates == []
 

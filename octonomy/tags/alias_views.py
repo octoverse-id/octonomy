@@ -7,7 +7,12 @@ from rest_framework.response import Response
 
 from octonomy.core.api import api_view
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
+from octonomy.core.auth import (
+    GLOBAL_SCOPE,
+    application_ids_from_request,
+    request_include_global,
+    require_scopes,
+)
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.core.selectors import (
@@ -237,5 +242,10 @@ def tag_resolution(request):
         # authorized for global (include_global opt-in), same as list/detail.
         authorized_global=request_include_global(request),
     )
-    apply_usage_counts([result["tag"]], scope_context, mode=usage_count_mode_for_request(request))
+    apply_usage_counts(
+        [result["tag"]],
+        scope_context,
+        mode=usage_count_mode_for_request(request),
+        application_ids=application_ids_from_request(request),
+    )
     return data_response(TagResolutionSerializer(result).data)

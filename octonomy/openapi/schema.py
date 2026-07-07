@@ -55,10 +55,17 @@ def add_namespace_parameters(result, generator, request, public, **kwargs):
     if spectacular_settings.VERSION:
         result.setdefault("info", {})["version"] = spectacular_settings.VERSION
 
-    if getattr(generator, "api_version", None) != "v2":
+    api_version = getattr(generator, "api_version", None)
+    if api_version != "v2":
         return result
 
-    for path_item in result.get("paths", {}).values():
+    # Only the versioned API paths implement the namespace contract. Unversioned
+    # routes (e.g. /health/live, /health/ready) appear in every schema and must
+    # not advertise X-Namespace-* / include_global.
+    version_prefix = f"/api/{api_version}/"
+    for path, path_item in result.get("paths", {}).items():
+        if not path.startswith(version_prefix):
+            continue
         for method, operation in path_item.items():
             if not isinstance(operation, dict) or "responses" not in operation:
                 continue

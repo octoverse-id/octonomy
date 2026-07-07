@@ -163,6 +163,37 @@ def test_usage_count_is_namespace_scoped_in_v2(api_client, wildcard_token):
     assert v2["usage_count"] == 3  # merchant_a (2) + global (1), excludes merchant_b
 
 
+def test_v2_usage_count_stays_within_requested_application(wildcard_token):
+    # The namespace layer is below application: a shared tag viewed as
+    # application=commerce must not count assignments from another application that
+    # merely shares the namespace id (cms/merchant_a).
+    shared = make_tag(slug="sharedcount", name="Shared Count")
+
+    def assign(application_id, namespace_type, namespace_id, resource_id):
+        TagAssignment.objects.create(
+            tenant_id="tenant_a",
+            application_id=application_id,
+            tag=shared,
+            resource_type="product",
+            resource_id=resource_id,
+            namespace_type=namespace_type,
+            namespace_id=namespace_id,
+        )
+
+    assign(APP, "merchant", "merchant_a", "a1")
+    assign(APP, "merchant", "merchant_a", "a2")
+    assign("cms", "merchant", "merchant_a", "b1")  # cross-application, same namespace id
+    assign(APP, None, None, "g1")  # commerce global-namespace
+    assign("cms", None, None, "g2")  # cms global-namespace
+
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    data = client.get(f"/api/v2/tags/{shared.id}?application_id={APP}&include_global=true").json()[
+        "data"
+    ]
+    # commerce merchant_a (2) + commerce global (1); excludes both cms assignments.
+    assert data["usage_count"] == 3
+
+
 # --- writes: gated off by default, scoped when enabled ------------------------
 
 

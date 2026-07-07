@@ -7,7 +7,12 @@ from rest_framework.response import Response
 
 from octonomy.core.api import api_view
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
+from octonomy.core.auth import (
+    GLOBAL_SCOPE,
+    application_ids_from_request,
+    request_include_global,
+    require_scopes,
+)
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.core.selectors import (
@@ -76,6 +81,7 @@ def tags_collection(request):
 
     scope_context = scope_context_for_request(request)
     usage_count_mode = usage_count_mode_for_request(request)
+    count_application_ids = application_ids_from_request(request)
 
     if request.method == "GET":
         queryset = filter_tags(
@@ -84,6 +90,7 @@ def tags_collection(request):
                 scope_context,
                 include_global=request_include_global(request),
                 usage_count_mode=usage_count_mode,
+                application_ids=count_application_ids,
             ),
             request.query_params,
         )
@@ -104,7 +111,9 @@ def tags_collection(request):
         scoped_create_data(serializer, scope_context),
         build_audit_context(request),
     )
-    apply_usage_counts([tag], scope_context, mode=usage_count_mode)
+    apply_usage_counts(
+        [tag], scope_context, mode=usage_count_mode, application_ids=count_application_ids
+    )
     return data_response(TagSerializer(tag).data, status=status.HTTP_201_CREATED)
 
 
@@ -121,6 +130,7 @@ def tag_detail(request, tag_id):
     # mutate or deactivate a tenant-wide row.
     include_global = request_include_global(request) if request.method == "GET" else False
     usage_count_mode = usage_count_mode_for_request(request)
+    count_application_ids = application_ids_from_request(request)
     application_ids, include_shared = application_filter_params(request)
     tag = get_tag_or_404(
         tenant_id,
@@ -132,7 +142,9 @@ def tag_detail(request, tag_id):
     )
 
     if request.method == "GET":
-        apply_usage_counts([tag], scope_context, mode=usage_count_mode)
+        apply_usage_counts(
+            [tag], scope_context, mode=usage_count_mode, application_ids=count_application_ids
+        )
         return data_response(TagSerializer(tag).data)
 
     if request.method == "DELETE":
@@ -146,5 +158,7 @@ def tag_detail(request, tag_id):
     )
     serializer.is_valid(raise_exception=True)
     tag = update_tag(tag, serializer.validated_data, build_audit_context(request))
-    apply_usage_counts([tag], scope_context, mode=usage_count_mode)
+    apply_usage_counts(
+        [tag], scope_context, mode=usage_count_mode, application_ids=count_application_ids
+    )
     return data_response(TagSerializer(tag).data)

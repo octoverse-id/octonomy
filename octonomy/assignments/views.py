@@ -29,7 +29,12 @@ from octonomy.assignments.services import (
 )
 from octonomy.core.api import api_view
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
+from octonomy.core.auth import (
+    GLOBAL_SCOPE,
+    application_ids_from_request,
+    request_include_global,
+    require_scopes,
+)
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
 from octonomy.core.selectors import (
@@ -61,6 +66,7 @@ def paginate(request, queryset, serializer_class):
             [assignment.tag for assignment in page],
             scope_context_for_request(request),
             mode=usage_count_mode_for_request(request),
+            application_ids=application_ids_from_request(request),
         )
     serializer = serializer_class(page, many=True)
     return paginator.get_paginated_response(serializer.data)
@@ -220,7 +226,12 @@ def resource_tags(request, resource_type, resource_id):
         **data,
     )
     tags = [assignment.tag for assignment in result["assignments"]]
-    apply_usage_counts(tags, scope_context, mode=usage_count_mode_for_request(request))
+    apply_usage_counts(
+        tags,
+        scope_context,
+        mode=usage_count_mode_for_request(request),
+        application_ids=application_ids_from_request(request),
+    )
     return data_response(
         {
             "created": result["created"],

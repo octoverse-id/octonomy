@@ -1363,31 +1363,6 @@ paths:
       responses:
         '200':
           description: Service is live.
-      parameters:
-      - name: X-Namespace-Type
-        in: header
-        required: false
-        description: Namespace type for merchant/sub-tenant isolation. Omit for the
-          global (tenant-shared) namespace. When present, X-Namespace-ID is required
-          and the request must also carry an application_id. The literal 'global'
-          is reserved. Values are opaque, caller-canonical strings and are not case-folded.
-        schema:
-          type: string
-      - name: X-Namespace-ID
-        in: header
-        required: false
-        description: Namespace id. Required whenever X-Namespace-Type is present.
-        schema:
-          type: string
-      - name: include_global
-        in: query
-        required: false
-        description: 'Merchant (namespaced) reads exclude global rows by default.
-          Set true to also return global rows the caller is authorized for (fail-closed:
-          an exact merchant grant that lacks global authority still sees none).'
-        schema:
-          type: boolean
-          default: false
   /health/ready:
     get:
       operationId: health_ready_retrieve
@@ -1396,31 +1371,6 @@ paths:
       responses:
         '200':
           description: Service is ready.
-      parameters:
-      - name: X-Namespace-Type
-        in: header
-        required: false
-        description: Namespace type for merchant/sub-tenant isolation. Omit for the
-          global (tenant-shared) namespace. When present, X-Namespace-ID is required
-          and the request must also carry an application_id. The literal 'global'
-          is reserved. Values are opaque, caller-canonical strings and are not case-folded.
-        schema:
-          type: string
-      - name: X-Namespace-ID
-        in: header
-        required: false
-        description: Namespace id. Required whenever X-Namespace-Type is present.
-        schema:
-          type: string
-      - name: include_global
-        in: query
-        required: false
-        description: 'Merchant (namespaced) reads exclude global rows by default.
-          Set true to also return global rows the caller is authorized for (fail-closed:
-          an exact merchant grant that lacks global authority still sees none).'
-        schema:
-          type: boolean
-          default: false
 components:
   schemas:
     Assignment:
