@@ -31,7 +31,15 @@ class NamespaceURLPathVersioning(URLPathVersioning):
 
     def determine_version(self, request, *args, **kwargs):
         version = super().determine_version(request, *args, **kwargs)
-        resolve_scope_context(request, version)
+        # Resolve namespace scope only for requests actually served under the
+        # versioned API prefix (/api/<version>/...). URLPathVersioning also hands the
+        # default version to unversioned routes (health, schema, docs) and to
+        # drf-spectacular's endpoint enumeration (whose request path still holds the
+        # literal "{version}" placeholder); none of those should parse or reject
+        # X-Namespace-* headers. path_info (not path) keeps this correct under a
+        # script-name prefix.
+        if request.path_info.startswith(f"/api/{version}/"):
+            resolve_scope_context(request, version)
         return version
 
 

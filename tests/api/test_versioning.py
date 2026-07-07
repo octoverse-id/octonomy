@@ -156,3 +156,16 @@ def test_unknown_version_is_not_found(api_client):
 def test_v2_global_list_is_served(api_client):
     response = api_client.get("/api/v2/tags")
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/health/live", "/health/ready", "/api/schema/"])
+def test_unversioned_routes_ignore_namespace_headers(path):
+    # Unversioned routes get the default version from URLPathVersioning but are not
+    # under /api/<version>/, so a probe reusing its v2 headers must not get a 400.
+    client = APIClient()
+    response = client.get(
+        path,
+        HTTP_X_NAMESPACE_TYPE="merchant",
+        HTTP_X_NAMESPACE_ID="merchant_a",
+    )
+    assert response.status_code != 400
