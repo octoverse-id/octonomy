@@ -258,6 +258,14 @@ paths:
         description: Namespace id. Required whenever X-Namespace-Type is present.
         schema:
           type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
+        schema:
+          type: string
       tags:
       - api
       requestBody:
@@ -391,6 +399,14 @@ paths:
         description: Namespace id. Required whenever X-Namespace-Type is present.
         schema:
           type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
+        schema:
+          type: string
   /api/v2/tag-aliases/{alias_id}:
     get:
       operationId: api_v2_tag_aliases_retrieve
@@ -414,6 +430,14 @@ paths:
         in: header
         required: false
         description: Namespace id. Required whenever X-Namespace-Type is present.
+        schema:
+          type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
         schema:
           type: string
       - name: include_global
@@ -458,6 +482,14 @@ paths:
         description: Namespace id. Required whenever X-Namespace-Type is present.
         schema:
           type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
+        schema:
+          type: string
       tags:
       - api
       requestBody:
@@ -500,6 +532,14 @@ paths:
         in: header
         required: false
         description: Namespace id. Required whenever X-Namespace-Type is present.
+        schema:
+          type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
         schema:
           type: string
       tags:
@@ -553,6 +593,14 @@ paths:
         description: Namespace id. Required whenever X-Namespace-Type is present.
         schema:
           type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
+        schema:
+          type: string
     delete:
       operationId: api_v2_tag_assignments_destroy
       tags:
@@ -574,6 +622,14 @@ paths:
         in: header
         required: false
         description: Namespace id. Required whenever X-Namespace-Type is present.
+        schema:
+          type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
         schema:
           type: string
   /api/v2/tag-assignments/bulk-assign:
@@ -618,6 +674,14 @@ paths:
         description: Namespace id. Required whenever X-Namespace-Type is present.
         schema:
           type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
+        schema:
+          type: string
   /api/v2/tag-assignments/bulk-remove:
     post:
       operationId: api_v2_tag_assignments_bulk_remove_create
@@ -652,6 +716,14 @@ paths:
         in: header
         required: false
         description: Namespace id. Required whenever X-Namespace-Type is present.
+        schema:
+          type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
         schema:
           type: string
   /api/v2/tag-resolution:
@@ -826,6 +898,14 @@ paths:
         description: Namespace id. Required whenever X-Namespace-Type is present.
         schema:
           type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
+        schema:
+          type: string
   /api/v2/tags/{tag_id}:
     get:
       operationId: api_v2_tags_retrieve
@@ -849,6 +929,14 @@ paths:
         in: header
         required: false
         description: Namespace id. Required whenever X-Namespace-Type is present.
+        schema:
+          type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
         schema:
           type: string
       - name: include_global
@@ -893,6 +981,14 @@ paths:
         description: Namespace id. Required whenever X-Namespace-Type is present.
         schema:
           type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
+        schema:
+          type: string
       tags:
       - api
       requestBody:
@@ -935,6 +1031,14 @@ paths:
         in: header
         required: false
         description: Namespace id. Required whenever X-Namespace-Type is present.
+        schema:
+          type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
         schema:
           type: string
       tags:
@@ -1050,6 +1154,14 @@ paths:
         in: header
         required: false
         description: Namespace id. Required whenever X-Namespace-Type is present.
+        schema:
+          type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
         schema:
           type: string
       - name: include_global
@@ -1239,6 +1351,14 @@ paths:
         description: Namespace id. Required whenever X-Namespace-Type is present.
         schema:
           type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
+        schema:
+          type: string
   /api/v2/vocabularies/{vocabulary_id}:
     get:
       operationId: api_v2_vocabularies_retrieve
@@ -1262,6 +1382,14 @@ paths:
         in: header
         required: false
         description: Namespace id. Required whenever X-Namespace-Type is present.
+        schema:
+          type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
         schema:
           type: string
       - name: include_global
@@ -1306,6 +1434,14 @@ paths:
         description: Namespace id. Required whenever X-Namespace-Type is present.
         schema:
           type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
+        schema:
+          type: string
       tags:
       - api
       requestBody:
@@ -1348,6 +1484,14 @@ paths:
         in: header
         required: false
         description: Namespace id. Required whenever X-Namespace-Type is present.
+        schema:
+          type: string
+      - name: application_id
+        in: query
+        required: false
+        description: Application scope. Required for namespaced requests (when X-Namespace-Type
+          is present) because namespace isolation sits below application — a namespaced
+          request without it is rejected. Optional for global requests.
         schema:
           type: string
       tags:

@@ -33,6 +33,18 @@ NAMESPACE_ID_PARAMETER = {
     "schema": {"type": "string"},
 }
 
+APPLICATION_ID_PARAMETER = {
+    "name": "application_id",
+    "in": "query",
+    "required": False,
+    "description": (
+        "Application scope. Required for namespaced requests (when X-Namespace-Type "
+        "is present) because namespace isolation sits below application — a "
+        "namespaced request without it is rejected. Optional for global requests."
+    ),
+    "schema": {"type": "string"},
+}
+
 INCLUDE_GLOBAL_PARAMETER = {
     "name": "include_global",
     "in": "query",
@@ -72,6 +84,10 @@ def add_namespace_parameters(result, generator, request, public, **kwargs):
             parameters = operation.setdefault("parameters", [])
             _add_parameter(parameters, NAMESPACE_TYPE_PARAMETER)
             _add_parameter(parameters, NAMESPACE_ID_PARAMETER)
+            # A namespaced request must name its application; document the query
+            # parameter on operations that don't already declare one, so generated
+            # clients can construct valid namespaced calls (detail GET/DELETE, audit).
+            _add_parameter(parameters, APPLICATION_ID_PARAMETER)
             if method.lower() in _SAFE_METHODS:
                 _add_parameter(parameters, INCLUDE_GLOBAL_PARAMETER)
 

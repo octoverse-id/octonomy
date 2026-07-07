@@ -71,6 +71,17 @@ def test_namespace_params_only_on_versioned_paths(v2_schema):
         assert has_namespace == path.startswith("/api/v2/"), path
 
 
+def test_namespace_operations_document_application_id(v2_schema):
+    # A namespaced request is rejected without an application_id, so every
+    # namespace-capable v2 operation must document the query parameter — otherwise
+    # generated clients cannot construct a valid namespaced call.
+    for path, method, operation in api_operations(v2_schema):
+        if "X-Namespace-Type" not in parameter_names(operation):
+            continue
+        query = {p["name"] for p in operation.get("parameters", []) if p.get("in") == "query"}
+        assert "application_id" in query, (path, method)
+
+
 def test_include_global_is_v2_read_only(v1_schema, v2_schema):
     assert not any("include_global" in parameter_names(op) for *_, op in api_operations(v1_schema))
     reads = [op for _path, method, op in api_operations(v2_schema) if method == "get"]
