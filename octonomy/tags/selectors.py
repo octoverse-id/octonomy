@@ -12,12 +12,17 @@ def usage_count_filter(
     *,
     mode: str = "legacy",
     application_ids=None,
+    include_global: bool = True,
 ) -> Q | None:
     if mode == "legacy":
         return None
     if mode != "visible":
         raise ValueError("usage count mode must be 'legacy' or 'visible'.")
-    count_filter = namespace_q(scope_context, include_global=True, prefix="assignments__")
+    # Global-namespace assignments count only when the caller is authorized to see
+    # global rows (the same fail-closed include_global decision as the read). An
+    # exact merchant grant must not receive counts inflated by global assignments
+    # it cannot list or opt into.
+    count_filter = namespace_q(scope_context, include_global=include_global, prefix="assignments__")
     # The namespace layer sits below application, so a visible count must also stay
     # within the request's application scope. Otherwise a shared tag viewed as
     # application=commerce would count assignments from another application that
@@ -42,7 +47,10 @@ def tags_for_tenant(
         include_global=include_global,
     )
     count_filter = usage_count_filter(
-        scope_context, mode=usage_count_mode, application_ids=application_ids
+        scope_context,
+        mode=usage_count_mode,
+        application_ids=application_ids,
+        include_global=include_global,
     )
     if count_filter is None:
         return queryset.annotate(usage_count=Count("assignments"))
@@ -55,10 +63,13 @@ def apply_usage_counts(
     *,
     mode: str = "legacy",
     application_ids=None,
+    include_global: bool = True,
 ) -> None:
     tag_list = list(tags)
     tag_ids = [tag.id for tag in tag_list]
-    count_filter = usage_count_filter(scope_context, mode=mode, application_ids=application_ids)
+    count_filter = usage_count_filter(
+        scope_context, mode=mode, application_ids=application_ids, include_global=include_global
+    )
     queryset = Tag.objects.filter(id__in=tag_ids)
     if count_filter is None:
         queryset = queryset.annotate(usage_count=Count("assignments"))

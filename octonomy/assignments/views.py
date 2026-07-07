@@ -67,6 +67,7 @@ def paginate(request, queryset, serializer_class):
             scope_context_for_request(request),
             mode=usage_count_mode_for_request(request),
             application_ids=application_ids_from_request(request),
+            include_global=request_include_global(request),
         )
     serializer = serializer_class(page, many=True)
     return paginator.get_paginated_response(serializer.data)
@@ -231,6 +232,7 @@ def resource_tags(request, resource_type, resource_id):
         scope_context,
         mode=usage_count_mode_for_request(request),
         application_ids=application_ids_from_request(request),
+        include_global=request_include_global(request),
     )
     return data_response(
         {

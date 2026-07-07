@@ -20,6 +20,7 @@ from octonomy.core.selectors import (
     apply_application_filter,
     apply_namespace_filter,
     create_payload_with_scope,
+    reject_null_namespaced_application_id,
     scoped_create_data,
 )
 from octonomy.core.validators import validate_external_id, validate_slug_like
@@ -157,6 +158,7 @@ def alias_detail(request, alias_id):
         deactivate_tag_alias(alias, build_audit_context(request))
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    reject_null_namespaced_application_id(request.data, scope_context)
     serializer = TagAliasPatchSerializer(
         data=request.data,
         partial=True,
@@ -247,5 +249,6 @@ def tag_resolution(request):
         scope_context,
         mode=usage_count_mode_for_request(request),
         application_ids=application_ids_from_request(request),
+        include_global=request_include_global(request),
     )
     return data_response(TagResolutionSerializer(result).data)

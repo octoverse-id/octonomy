@@ -163,6 +163,50 @@ def test_usage_count_is_namespace_scoped_in_v2(api_client, wildcard_token):
     assert v2["usage_count"] == 3  # merchant_a (2) + global (1), excludes merchant_b
 
 
+def test_resource_tag_usage_count_is_fail_closed_for_exact_grant(merchant_token):
+    # An exact merchant grant is not authorized for global. It can see a global
+    # tag it assigned inside its namespace (via resource-tags), but the tag's
+    # usage_count must not include global-namespace assignments it cannot opt into.
+    tag = make_tag(application_id=APP, slug="globalassigned", name="Global Assigned")
+    for resource_id, ns_type, ns_id in (("p1", "merchant", "merchant_a"), ("p2", None, None)):
+        TagAssignment.objects.create(
+            tenant_id="tenant_a",
+            application_id=APP,
+            tag=tag,
+            resource_type="product",
+            resource_id=resource_id,
+            namespace_type=ns_type,
+            namespace_id=ns_id,
+        )
+
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    data = client.get(f"/api/v2/resources/product/p1/tags?application_id={APP}").json()["data"]
+    assert len(data) == 1
+    assert data[0]["tag"]["usage_count"] == 1  # merchant_a only; excludes the global assignment
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_null_body_application_id_on_namespaced_patch_is_rejected(merchant_token):
+    # The create guard also applies to PATCH: an explicit null application_id on a
+    # namespaced update is a 400, not a database/service conflict.
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    ns = {"namespace_type": "merchant", "namespace_id": "merchant_a"}
+    tag = make_tag(application_id=APP, slug="patchtag", **ns)
+    vocab = make_vocabulary(application_id=APP, slug="patchvocab", **ns)
+    alias = make_alias(tag=tag, application_id=APP, slug="patchalias", **ns)
+
+    for path in (
+        f"/api/v2/tags/{tag.id}",
+        f"/api/v2/vocabularies/{vocab.id}",
+        f"/api/v2/tag-aliases/{alias.id}",
+    ):
+        response = client.patch(
+            f"{path}?application_id={APP}", {"application_id": None}, format="json"
+        )
+        assert response.status_code == 400, (path, response.data)
+        assert response.json()["error"]["code"] == "validation_error", path
+
+
 def test_v2_usage_count_stays_within_requested_application(wildcard_token):
     # The namespace layer is below application: a shared tag viewed as
     # application=commerce must not count assignments from another application that

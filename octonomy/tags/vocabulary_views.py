@@ -14,6 +14,7 @@ from octonomy.core.selectors import (
     application_filter_params,
     apply_application_filter,
     create_payload_with_scope,
+    reject_null_namespaced_application_id,
     scoped_create_data,
 )
 from octonomy.tags.vocabulary_selectors import filter_vocabularies, vocabularies_for_tenant
@@ -112,6 +113,7 @@ def vocabularies_collection(request):
 @api_view(["GET", "PATCH", "DELETE"])
 def vocabulary_detail(request, vocabulary_id):
     tenant_id = require_tenant(request)
+    scope_context = scope_context_for_request(request)
     # Writes (PATCH/DELETE) target the exact request scope; reads may fall back
     # to global rows only when the caller is authorized for the global namespace.
     include_global = request_include_global(request) if request.method == "GET" else False
@@ -119,7 +121,7 @@ def vocabulary_detail(request, vocabulary_id):
     vocabulary = get_vocabulary_or_404(
         tenant_id,
         vocabulary_id,
-        scope_context_for_request(request),
+        scope_context,
         include_global=include_global,
         application_ids=application_ids,
         include_shared=include_shared,
@@ -132,6 +134,7 @@ def vocabulary_detail(request, vocabulary_id):
         deactivate_vocabulary(vocabulary, build_audit_context(request))
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    reject_null_namespaced_application_id(request.data, scope_context)
     serializer = VocabularyPatchSerializer(data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
     vocabulary = update_vocabulary(

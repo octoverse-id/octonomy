@@ -19,6 +19,7 @@ from octonomy.core.selectors import (
     application_filter_params,
     apply_application_filter,
     create_payload_with_scope,
+    reject_null_namespaced_application_id,
     scoped_create_data,
 )
 from octonomy.core.versioning import usage_count_mode_for_request
@@ -112,7 +113,11 @@ def tags_collection(request):
         build_audit_context(request),
     )
     apply_usage_counts(
-        [tag], scope_context, mode=usage_count_mode, application_ids=count_application_ids
+        [tag],
+        scope_context,
+        mode=usage_count_mode,
+        application_ids=count_application_ids,
+        include_global=request_include_global(request),
     )
     return data_response(TagSerializer(tag).data, status=status.HTTP_201_CREATED)
 
@@ -143,7 +148,11 @@ def tag_detail(request, tag_id):
 
     if request.method == "GET":
         apply_usage_counts(
-            [tag], scope_context, mode=usage_count_mode, application_ids=count_application_ids
+            [tag],
+            scope_context,
+            mode=usage_count_mode,
+            application_ids=count_application_ids,
+            include_global=include_global,
         )
         return data_response(TagSerializer(tag).data)
 
@@ -151,6 +160,7 @@ def tag_detail(request, tag_id):
         deactivate_tag(tag, build_audit_context(request))
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    reject_null_namespaced_application_id(request.data, scope_context)
     serializer = TagPatchSerializer(
         data=request.data,
         partial=True,
@@ -159,6 +169,10 @@ def tag_detail(request, tag_id):
     serializer.is_valid(raise_exception=True)
     tag = update_tag(tag, serializer.validated_data, build_audit_context(request))
     apply_usage_counts(
-        [tag], scope_context, mode=usage_count_mode, application_ids=count_application_ids
+        [tag],
+        scope_context,
+        mode=usage_count_mode,
+        application_ids=count_application_ids,
+        include_global=include_global,
     )
     return data_response(TagSerializer(tag).data)

@@ -102,15 +102,9 @@ def create_payload_with_scope(request, scope_context: ScopeContext):
         return data
 
     if "application_id" in data:
-        # An explicit value reaches serializer validation. ``NULL`` is valid for a
-        # global row but not a namespaced one (isolation sits below application),
-        # and the serializer cannot tell them apart, so reject it here with a clear
-        # 400 rather than letting the namespace check surface a misleading conflict.
-        # Blank/other values are left to the serializer.
-        if data.get("application_id") is None:
-            raise serializers.ValidationError(
-                {"application_id": ["This field is required for namespaced writes."]}
-            )
+        # An explicit value reaches serializer validation. Blank/other values are
+        # left to the serializer; an explicit null is rejected here (see below).
+        reject_null_namespaced_application_id(data, scope_context)
         return data
 
     query_application_id = request.query_params.get("application_id")
@@ -121,6 +115,24 @@ def create_payload_with_scope(request, scope_context: ScopeContext):
     payload = data.copy()
     payload["application_id"] = query_application_id
     return payload
+
+
+def reject_null_namespaced_application_id(data, scope_context: ScopeContext) -> None:
+    """Reject an explicit null ``application_id`` for a namespaced write.
+
+    A namespaced row requires a non-null ``application_id`` (isolation sits below
+    application), but the serializers allow ``null`` because it is valid for a
+    global row. The serializer cannot tell the two apart, so guard it here for
+    namespaced create/update paths — returning a clear ``400`` instead of letting
+    the database namespace check surface a misleading conflict.
+    """
+
+    if scope_context.is_global or not isinstance(data, dict):
+        return
+    if "application_id" in data and data.get("application_id") is None:
+        raise serializers.ValidationError(
+            {"application_id": ["This field is required for namespaced writes."]}
+        )
 
 
 def scoped_create_data(serializer, scope_context: ScopeContext) -> dict:
