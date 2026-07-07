@@ -241,6 +241,65 @@ def test_namespaced_write_cannot_mutate_global_row(wildcard_token, scoped_tags):
     assert Tag.objects.get(id=scoped_tags["global"].id).is_active
 
 
+def test_global_form_encoded_create_is_accepted(api_client):
+    # create_payload_with_scope must preserve a form/multipart QueryDict body
+    # instead of flattening each field into a list ("Not a valid string").
+    response = api_client.post(
+        "/api/v1/tags",
+        {"name": "Featured", "slug": "featured", "type": "label"},
+        format="multipart",
+    )
+    assert response.status_code == 201, response.data
+    assert response.json()["data"]["slug"] == "featured"
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_namespaced_form_encoded_create_uses_query_application_id(merchant_token):
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    for path, body, model, slug in (
+        ("/api/v2/tags", {"name": "F", "slug": "formtag", "type": "label"}, Tag, "formtag"),
+        ("/api/v2/vocabularies", {"name": "V", "slug": "formvocab"}, Vocabulary, "formvocab"),
+    ):
+        response = client.post(f"{path}?application_id={APP}", body, format="multipart")
+        assert response.status_code == 201, response.data
+        assert model.objects.get(slug=slug).application_id == APP
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_null_body_application_id_on_namespaced_create_is_rejected(tenant_wildcard_token):
+    # Explicit null is valid for a global row but not a namespaced one; it must be
+    # a 400 rather than the namespace check surfacing a misleading 409.
+    client = client_for(tenant_wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+
+    tag = client.post(
+        f"/api/v2/tags?application_id={APP}",
+        {"application_id": None, "name": "X", "slug": "xnull", "type": "label"},
+        format="json",
+    )
+    assert tag.status_code == 400, tag.data
+    assert tag.json()["error"]["code"] == "validation_error"
+    assert not Tag.objects.filter(slug="xnull").exists()
+
+    vocab = client.post(
+        f"/api/v2/vocabularies?application_id={APP}",
+        {"application_id": None, "name": "V", "slug": "vnull"},
+        format="json",
+    )
+    assert vocab.status_code == 400
+    assert not Vocabulary.objects.filter(slug="vnull").exists()
+
+    canonical = make_tag(
+        application_id=APP, namespace_type="merchant", namespace_id="merchant_a", slug="canon3"
+    )
+    alias = client.post(
+        f"/api/v2/tag-aliases?application_id={APP}",
+        {"application_id": None, "tag_id": str(canonical.id), "name": "A", "slug": "anull"},
+        format="json",
+    )
+    assert alias.status_code == 400
+    assert not TagAlias.objects.filter(slug="anull").exists()
+
+
 @override_settings(NAMESPACE_WRITE_ENABLED=True)
 def test_namespaced_create_uses_query_application_id_when_body_omits_it(merchant_token):
     # application_id only in the query string (authorization accepts it there). The

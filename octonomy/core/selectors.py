@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.db.models import Q, QuerySet
+from rest_framework import serializers
 
 from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, authorized_application_ids
 
@@ -83,27 +84,42 @@ def namespace_kwargs(scope_context: ScopeContext = GLOBAL_SCOPE) -> dict[str, st
     }
 
 
-def create_payload_with_scope(request, scope_context: ScopeContext) -> dict:
-    """Create-request body with the query ``application_id`` folded in.
+def create_payload_with_scope(request, scope_context: ScopeContext):
+    """Create-request body carrying the request's application scope.
 
     A namespaced row requires a non-null ``application_id``. Authorization accepts
     ``application_id`` from the query string as well as the body, so when the body
-    omits it, fold the query value into the serializer input — this way it passes
-    the serializer's ``application_id`` validation (blank/whitespace and length)
-    exactly like a body value, rather than being copied in unchecked. Global
-    creates are untouched (``NULL`` = shared is valid there).
+    omits the key, fold the query value into the serializer input — this way it
+    passes the serializer's ``application_id`` validation (blank/whitespace and
+    length) exactly like a body value. Global creates are untouched (``NULL`` =
+    shared is valid there). The original body is returned unchanged when no
+    injection is needed, preserving its type (a form/multipart ``QueryDict`` must
+    not be flattened into a plain dict, which would turn each field into a list).
     """
 
-    if not isinstance(request.data, dict):
-        return request.data
-    payload = {**request.data}
-    # Only fall back when the body omits the key entirely. An explicitly supplied
-    # value — including a blank string or null — must reach serializer validation
-    # unchanged rather than being silently replaced by the query value.
-    if not scope_context.is_global and "application_id" not in payload:
-        query_application_id = request.query_params.get("application_id")
-        if query_application_id:
-            payload["application_id"] = query_application_id
+    data = request.data
+    if scope_context.is_global or not isinstance(data, dict):
+        return data
+
+    if "application_id" in data:
+        # An explicit value reaches serializer validation. ``NULL`` is valid for a
+        # global row but not a namespaced one (isolation sits below application),
+        # and the serializer cannot tell them apart, so reject it here with a clear
+        # 400 rather than letting the namespace check surface a misleading conflict.
+        # Blank/other values are left to the serializer.
+        if data.get("application_id") is None:
+            raise serializers.ValidationError(
+                {"application_id": ["This field is required for namespaced writes."]}
+            )
+        return data
+
+    query_application_id = request.query_params.get("application_id")
+    if not query_application_id:
+        return data
+    # copy() preserves the payload type (QueryDict for form/multipart) instead of
+    # collapsing multi-value fields the way dict unpacking would.
+    payload = data.copy()
+    payload["application_id"] = query_application_id
     return payload
 
 
