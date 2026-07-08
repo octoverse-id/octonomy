@@ -107,6 +107,28 @@ def test_v2_detail_cannot_see_other_merchant(wildcard_token, scoped_tags):
     assert response.status_code == 404
 
 
+def test_detail_read_stays_within_requested_application(tenant_wildcard_token):
+    # A tenant-wide grant must not receive a commerce row for an application=cms
+    # request. Reads are bound to the request-named application, like the list.
+    commerce_tag = make_tag(
+        application_id=APP, namespace_type="merchant", namespace_id="merchant_a", slug="commercerow"
+    )
+    client = client_for(tenant_wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    assert client.get(f"/api/v2/tags/{commerce_tag.id}?application_id=cms").status_code == 404
+    assert client.get(f"/api/v2/tags/{commerce_tag.id}?application_id={APP}").status_code == 200
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_detail_delete_stays_within_requested_application(tenant_wildcard_token):
+    commerce_tag = make_tag(
+        application_id=APP, namespace_type="merchant", namespace_id="merchant_a", slug="commercedel"
+    )
+    client = client_for(tenant_wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    # Names cms but the row is commerce → not found, not deleted.
+    assert client.delete(f"/api/v2/tags/{commerce_tag.id}?application_id=cms").status_code == 404
+    assert Tag.objects.get(id=commerce_tag.id).is_active
+
+
 def test_v2_detail_global_excluded_by_default_visible_with_opt_in(wildcard_token, scoped_tags):
     client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
     path = f"/api/v2/tags/{scoped_tags['global'].id}?application_id={APP}"

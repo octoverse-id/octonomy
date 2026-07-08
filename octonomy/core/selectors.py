@@ -3,7 +3,18 @@ from __future__ import annotations
 from django.db.models import Q, QuerySet
 from rest_framework import serializers
 
-from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, authorized_application_ids
+from octonomy.core.auth import (
+    GLOBAL_SCOPE,
+    ScopeContext,
+    application_ids_from_request,
+    authorized_application_ids,
+)
+
+# Only a move-capable method (PATCH) may look up a row outside the request-named
+# application: its body names the *destination* app, so the source row must be
+# found by authorized scope. Reads and deletes act on the current row and stay
+# bound to the application the request named, consistent with list filtering.
+_MOVE_CAPABLE_METHODS = frozenset({"PATCH", "PUT"})
 
 
 def namespace_q(
@@ -65,16 +76,21 @@ def apply_application_filter(
 
 
 def application_filter_params(request) -> tuple[set[str] | None, bool]:
-    """Authorized application scope + ``include_shared`` for an object-by-id lookup.
+    """Application scope + ``include_shared`` for an object-by-id lookup.
 
-    The scope is the applications the caller is granted for the request's namespace
-    (``authorized_application_ids``), not the request-named ``application_id``: on a
-    PATCH move the body names the destination, so filtering by it would 404 the
-    source row before ``update_tag`` can validate the move.
+    Reads and deletes bound the fetched row to the application the request named
+    (``application_ids_from_request``), staying consistent with list filtering and
+    the "namespace below application" contract — a request for ``application_id=cms``
+    must not return a ``commerce`` row. A PATCH may be an application move whose body
+    names the *destination*, so its source lookup uses ``authorized_application_ids``
+    (the apps the grant covers for the namespace) instead. ``None`` means no
+    application filter (a tenant-wide request that named no application).
     """
 
     include_shared = request.query_params.get("include_shared", "true").lower() != "false"
-    return authorized_application_ids(request), include_shared
+    if request.method in _MOVE_CAPABLE_METHODS:
+        return authorized_application_ids(request), include_shared
+    return (application_ids_from_request(request) or None), include_shared
 
 
 def namespace_kwargs(scope_context: ScopeContext = GLOBAL_SCOPE) -> dict[str, str | None]:
