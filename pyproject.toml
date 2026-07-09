@@ -8,7 +8,7 @@ requires-python = ">=3.10"
 dependencies = [
   "django>=5.0,<5.3",
   "djangorestframework>=3.15,<3.18",
-  "drf-spectacular>=0.27,<0.30",
+  "drf-spectacular>=0.27,<0.31",
   "psycopg[binary]>=3.2,<3.4",
   "dj-database-url>=2.2,<4.0",
 ]
