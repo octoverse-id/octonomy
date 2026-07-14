@@ -10,6 +10,7 @@ from octonomy.core.audit import build_audit_context
 from octonomy.core.auth import (
     GLOBAL_SCOPE,
     application_ids_from_request,
+    request_authorizes_global_references,
     request_include_global,
     require_scopes,
 )
@@ -22,6 +23,7 @@ from octonomy.core.selectors import (
     reject_null_namespaced_application_id,
     scoped_create_data,
 )
+from octonomy.core.serializers import response_serializer_context
 from octonomy.core.versioning import usage_count_mode_for_request
 from octonomy.tags.selectors import apply_usage_counts, filter_tags, tags_for_tenant
 from octonomy.tags.serializers import TagPatchSerializer, TagSerializer, TagWriteSerializer
@@ -97,12 +99,16 @@ def tags_collection(request):
         )
         paginator = OctonomyLimitOffsetPagination()
         page = paginator.paginate_queryset(queryset, request)
-        serializer = TagSerializer(page, many=True)
+        serializer = TagSerializer(page, many=True, context=response_serializer_context(request))
         return paginator.get_paginated_response(serializer.data)
 
     serializer = TagWriteSerializer(
         data=create_payload_with_scope(request, scope_context),
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
     # Persist the request's namespace on create so an enabled namespaced write
@@ -119,7 +125,10 @@ def tags_collection(request):
         application_ids=count_application_ids,
         include_global=request_include_global(request),
     )
-    return data_response(TagSerializer(tag).data, status=status.HTTP_201_CREATED)
+    return data_response(
+        TagSerializer(tag, context=response_serializer_context(request)).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @extend_schema(methods=["GET"], responses=TagSerializer)
@@ -154,7 +163,7 @@ def tag_detail(request, tag_id):
             application_ids=count_application_ids,
             include_global=include_global,
         )
-        return data_response(TagSerializer(tag).data)
+        return data_response(TagSerializer(tag, context=response_serializer_context(request)).data)
 
     if request.method == "DELETE":
         deactivate_tag(tag, build_audit_context(request))
@@ -164,7 +173,11 @@ def tag_detail(request, tag_id):
     serializer = TagPatchSerializer(
         data=request.data,
         partial=True,
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
     tag = update_tag(tag, serializer.validated_data, build_audit_context(request))
@@ -175,4 +188,4 @@ def tag_detail(request, tag_id):
         application_ids=count_application_ids,
         include_global=include_global,
     )
-    return data_response(TagSerializer(tag).data)
+    return data_response(TagSerializer(tag, context=response_serializer_context(request)).data)

@@ -7,6 +7,7 @@ from django.test import override_settings
 from rest_framework.test import APIClient
 
 from octonomy.assignments.models import TagAssignment
+from octonomy.audit.models import AuditLog
 from octonomy.tags.models import Tag, TagAlias, Vocabulary
 from tests.factories import make_alias, make_tag, make_vocabulary
 
@@ -474,6 +475,172 @@ def test_namespaced_vocabulary_and_alias_creates_use_query_application_id(mercha
     assert alias.json()["data"]["application_id"] == APP
 
 
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_exact_merchant_write_references_cannot_target_global_rows(merchant_token):
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    global_tag = make_tag(application_id=APP, slug="global-write-ref")
+    global_alias = make_alias(tag=global_tag, application_id=APP, slug="global-write-alias")
+    global_vocabulary = make_vocabulary(application_id=APP, slug="global-write-vocab")
+
+    requests = (
+        (
+            "/api/v2/tags",
+            {
+                "application_id": APP,
+                "name": "Child",
+                "slug": "blocked-parent",
+                "type": "label",
+                "parent_id": str(global_tag.id),
+            },
+        ),
+        (
+            "/api/v2/tags",
+            {
+                "application_id": APP,
+                "name": "Vocab Child",
+                "slug": "blocked-vocab",
+                "type": "label",
+                "vocabulary_id": str(global_vocabulary.id),
+            },
+        ),
+        (
+            "/api/v2/tag-aliases",
+            {
+                "application_id": APP,
+                "name": "Blocked Alias",
+                "slug": "blocked-alias",
+                "tag_id": str(global_tag.id),
+            },
+        ),
+        (
+            "/api/v2/tag-assignments",
+            {
+                "application_id": APP,
+                "tag_id": str(global_tag.id),
+                "resource_type": "product",
+                "resource_id": "blocked-single",
+            },
+        ),
+        (
+            "/api/v2/tag-assignments",
+            {
+                "application_id": APP,
+                "alias_id": str(global_alias.id),
+                "resource_type": "product",
+                "resource_id": "blocked-alias-id",
+            },
+        ),
+        (
+            "/api/v2/tag-assignments",
+            {
+                "application_id": APP,
+                "alias_slug": global_alias.slug,
+                "resource_type": "product",
+                "resource_id": "blocked-alias-slug",
+            },
+        ),
+        (
+            "/api/v2/tag-assignments/bulk-assign",
+            {
+                "application_id": APP,
+                "tag_ids": [str(global_tag.id)],
+                "resource_type": "product",
+                "resource_id": "blocked-bulk",
+            },
+        ),
+        (
+            "/api/v2/tag-assignments/bulk-assign",
+            {
+                "application_id": APP,
+                "alias_slugs": [global_alias.slug],
+                "resource_type": "product",
+                "resource_id": "blocked-bulk-alias",
+            },
+        ),
+        (
+            "/api/v2/resources/product/blocked-replace/tags",
+            {"application_id": APP, "tag_ids": [str(global_tag.id)]},
+        ),
+    )
+
+    for path, payload in requests:
+        response = client.post(path, payload, format="json")
+        assert response.status_code == 400, (path, response.data)
+
+    assert not TagAssignment.objects.filter(
+        tenant_id="tenant_a", namespace_type="merchant", namespace_id="merchant_a"
+    ).exists()
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_wildcard_grant_can_reference_global_tag_on_namespaced_write(wildcard_token):
+    global_tag = make_tag(application_id=APP, slug="authorized-global-write-ref")
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+
+    response = client.post(
+        "/api/v2/tag-assignments",
+        {
+            "application_id": APP,
+            "tag_id": str(global_tag.id),
+            "resource_type": "product",
+            "resource_id": "allowed-single",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201, response.data
+    assert response.json()["data"]["namespace_type"] == "merchant"
+    assert response.json()["data"]["namespace_id"] == "merchant_a"
+
+
+def test_v2_responses_expose_namespace_identity_without_changing_v1(api_client, merchant_token):
+    namespace = {"namespace_type": "merchant", "namespace_id": "merchant_a"}
+    tag = make_tag(application_id=APP, slug="response-tag", **namespace)
+    alias = make_alias(tag=tag, application_id=APP, slug="response-alias", **namespace)
+    make_vocabulary(application_id=APP, slug="response-vocab", **namespace)
+    assignment = TagAssignment.objects.create(
+        tenant_id="tenant_a",
+        application_id=APP,
+        tag=tag,
+        resource_type="product",
+        resource_id="response-resource",
+        **namespace,
+    )
+    AuditLog.objects.create(
+        tenant_id="tenant_a",
+        application_id=APP,
+        action="test.response",
+        entity_type="tag",
+        entity_id=str(tag.id),
+        tag_id=tag.id,
+        **namespace,
+    )
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+
+    responses = (
+        client.get(f"/api/v2/tags/{tag.id}?application_id={APP}").json()["data"],
+        client.get(f"/api/v2/tag-aliases/{alias.id}?application_id={APP}").json()["data"],
+        client.get(f"/api/v2/vocabularies?application_id={APP}").json()["data"][0],
+        client.get(
+            f"/api/v2/resources/product/{assignment.resource_id}/tags?application_id={APP}"
+        ).json()["data"][0],
+        client.get(f"/api/v2/tags/{tag.id}/resources?application_id={APP}").json()["data"][0],
+        client.get(f"/api/v2/audit-logs?application_id={APP}").json()["data"][0],
+    )
+    for data in responses:
+        assert data["namespace_type"] == "merchant"
+        assert data["namespace_id"] == "merchant_a"
+
+    nested_tag = responses[3]["tag"]
+    assert nested_tag["namespace_type"] == "merchant"
+    assert nested_tag["namespace_id"] == "merchant_a"
+
+    global_tag = make_tag(application_id=APP, slug="v1-response-shape")
+    v1_data = api_client.get(f"/api/v1/tags/{global_tag.id}").json()["data"]
+    assert "namespace_type" not in v1_data
+    assert "namespace_id" not in v1_data
+
+
 # --- tag-resolution honours the fail-closed global contract -------------------
 
 
@@ -521,6 +688,15 @@ def test_resolution_global_visible_with_authorized_opt_in(wildcard_token, resolu
     client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
     response = resolve(client, "globaldeal", "&include_global=true")
     assert response.status_code == 200
+    assert response.json()["data"]["tag"]["id"] == str(resolution_tags["global"].id)
+
+
+def test_resolution_scope_global_authorizes_wildcard_without_include_global(
+    wildcard_token, resolution_tags
+):
+    client = client_for(wildcard_token, namespace_type="merchant", namespace_id="merchant_a")
+    response = resolve(client, "globaldeal", "&scope=global")
+    assert response.status_code == 200, response.data
     assert response.json()["data"]["tag"]["id"] == str(resolution_tags["global"].id)
 
 

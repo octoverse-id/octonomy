@@ -10,6 +10,7 @@ from octonomy.core.audit import build_audit_context
 from octonomy.core.auth import (
     GLOBAL_SCOPE,
     application_ids_from_request,
+    request_authorizes_global_references,
     request_include_global,
     require_scopes,
 )
@@ -23,6 +24,7 @@ from octonomy.core.selectors import (
     reject_null_namespaced_application_id,
     scoped_create_data,
 )
+from octonomy.core.serializers import response_serializer_context
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.core.versioning import usage_count_mode_for_request
 from octonomy.tags.alias_selectors import aliases_for_tenant, filter_aliases
@@ -114,12 +116,18 @@ def aliases_collection(request):
         )
         paginator = OctonomyLimitOffsetPagination()
         page = paginator.paginate_queryset(queryset, request)
-        serializer = TagAliasSerializer(page, many=True)
+        serializer = TagAliasSerializer(
+            page, many=True, context=response_serializer_context(request)
+        )
         return paginator.get_paginated_response(serializer.data)
 
     serializer = TagAliasWriteSerializer(
         data=create_payload_with_scope(request, scope_context),
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
     alias = create_tag_alias(
@@ -127,7 +135,10 @@ def aliases_collection(request):
         scoped_create_data(serializer, scope_context),
         build_audit_context(request),
     )
-    return data_response(TagAliasSerializer(alias).data, status=status.HTTP_201_CREATED)
+    return data_response(
+        TagAliasSerializer(alias, context=response_serializer_context(request)).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @extend_schema(methods=["GET"], responses=TagAliasSerializer)
@@ -152,7 +163,9 @@ def alias_detail(request, alias_id):
     )
 
     if request.method == "GET":
-        return data_response(TagAliasSerializer(alias).data)
+        return data_response(
+            TagAliasSerializer(alias, context=response_serializer_context(request)).data
+        )
 
     if request.method == "DELETE":
         deactivate_tag_alias(alias, build_audit_context(request))
@@ -162,11 +175,17 @@ def alias_detail(request, alias_id):
     serializer = TagAliasPatchSerializer(
         data=request.data,
         partial=True,
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
     alias = update_tag_alias(alias, serializer.validated_data, build_audit_context(request))
-    return data_response(TagAliasSerializer(alias).data)
+    return data_response(
+        TagAliasSerializer(alias, context=response_serializer_context(request)).data
+    )
 
 
 @extend_schema(
@@ -206,7 +225,7 @@ def tag_aliases(request, tag_id):
     )
     paginator = OctonomyLimitOffsetPagination()
     page = paginator.paginate_queryset(queryset, request)
-    serializer = TagAliasSerializer(page, many=True)
+    serializer = TagAliasSerializer(page, many=True, context=response_serializer_context(request))
     return paginator.get_paginated_response(serializer.data)
 
 
@@ -251,4 +270,6 @@ def tag_resolution(request):
         application_ids=application_ids_from_request(request),
         include_global=request_include_global(request),
     )
-    return data_response(TagResolutionSerializer(result).data)
+    return data_response(
+        TagResolutionSerializer(result, context=response_serializer_context(request)).data
+    )

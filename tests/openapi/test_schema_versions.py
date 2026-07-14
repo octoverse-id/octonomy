@@ -90,6 +90,25 @@ def test_include_global_is_v2_read_only(v1_schema, v2_schema):
     assert not any("include_global" in parameter_names(op) for op in writes)
 
 
+def test_namespace_identity_is_documented_on_v2_responses_only(v1_schema, v2_schema):
+    response_schemas = {
+        "Assignment",
+        "AuditLog",
+        "ResourceTag",
+        "Tag",
+        "TagAlias",
+        "TagResource",
+        "Vocabulary",
+    }
+    for name in response_schemas:
+        v1_properties = v1_schema["components"]["schemas"][name]["properties"]
+        v2_properties = v2_schema["components"]["schemas"][name]["properties"]
+        assert "namespace_type" not in v1_properties, name
+        assert "namespace_id" not in v1_properties, name
+        assert "namespace_type" in v2_properties, name
+        assert "namespace_id" in v2_properties, name
+
+
 @pytest.mark.parametrize("version", ["v1", "v2"])
 def test_operation_ids_are_unique(version):
     schema = generate(version)

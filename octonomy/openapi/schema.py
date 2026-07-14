@@ -58,6 +58,15 @@ INCLUDE_GLOBAL_PARAMETER = {
 }
 
 _SAFE_METHODS = {"get", "head"}
+_NAMESPACE_RESPONSE_SCHEMAS = {
+    "Assignment",
+    "AuditLog",
+    "ResourceTag",
+    "Tag",
+    "TagAlias",
+    "TagResource",
+    "Vocabulary",
+}
 
 
 def add_namespace_parameters(result, generator, request, public, **kwargs):
@@ -69,6 +78,17 @@ def add_namespace_parameters(result, generator, request, public, **kwargs):
 
     api_version = getattr(generator, "api_version", None)
     if api_version != "v2":
+        # Response serializers declare namespace identity so the v2 schema and
+        # runtime payload can expose row ownership. Remove those properties from
+        # the shared v1 components to preserve the established v1 contract.
+        for name in _NAMESPACE_RESPONSE_SCHEMAS:
+            schema = result.get("components", {}).get("schemas", {}).get(name)
+            if schema is None:
+                continue
+            for field in ("namespace_type", "namespace_id"):
+                schema.get("properties", {}).pop(field, None)
+                if field in schema.get("required", []):
+                    schema["required"].remove(field)
         return result
 
     # Only the versioned API paths implement the namespace contract. Unversioned

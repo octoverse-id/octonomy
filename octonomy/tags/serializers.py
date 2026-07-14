@@ -4,12 +4,13 @@ from rest_framework import serializers
 
 from octonomy.core.auth import GLOBAL_SCOPE
 from octonomy.core.selectors import apply_namespace_filter
+from octonomy.core.serializers import NamespaceIdentityResponseMixin
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.tags.models import Tag, Vocabulary
 from octonomy.tags.services import validate_metadata
 
 
-class TagSerializer(serializers.ModelSerializer):
+class TagSerializer(NamespaceIdentityResponseMixin, serializers.ModelSerializer):
     parent_id = serializers.UUIDField(source="parent.id", read_only=True)
     vocabulary_id = serializers.UUIDField(source="vocabulary.id", read_only=True)
     usage_count = serializers.SerializerMethodField()
@@ -20,6 +21,8 @@ class TagSerializer(serializers.ModelSerializer):
             "id",
             "tenant_id",
             "application_id",
+            "namespace_type",
+            "namespace_id",
             "name",
             "slug",
             "type",
@@ -71,11 +74,12 @@ class TagWriteSerializer(serializers.Serializer):
             return None
         tenant_id = self.context["tenant_id"]
         scope_context = self.context.get("scope_context", GLOBAL_SCOPE)
+        include_global = self.context.get("include_global", True)
         try:
             return apply_namespace_filter(
                 Tag.objects.for_tenant(tenant_id),
                 scope_context,
-                include_global=True,
+                include_global=include_global,
             ).get(id=value)
         except Tag.DoesNotExist:
             raise serializers.ValidationError("Parent tag was not found.")
@@ -85,11 +89,12 @@ class TagWriteSerializer(serializers.Serializer):
             return None
         tenant_id = self.context["tenant_id"]
         scope_context = self.context.get("scope_context", GLOBAL_SCOPE)
+        include_global = self.context.get("include_global", True)
         try:
             return apply_namespace_filter(
                 Vocabulary.objects.for_tenant(tenant_id),
                 scope_context,
-                include_global=True,
+                include_global=include_global,
             ).get(id=value)
         except Vocabulary.DoesNotExist:
             raise serializers.ValidationError("Vocabulary was not found.")

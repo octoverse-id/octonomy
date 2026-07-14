@@ -1530,6 +1530,14 @@ components:
         application_id:
           type: string
           maxLength: 100
+        namespace_type:
+          type: string
+          nullable: true
+          maxLength: 100
+        namespace_id:
+          type: string
+          nullable: true
+          maxLength: 100
         tag_id:
           type: string
           format: uuid
@@ -1599,6 +1607,14 @@ components:
           type: string
           readOnly: true
           nullable: true
+        namespace_type:
+          type: string
+          readOnly: true
+          nullable: true
+        namespace_id:
+          type: string
+          readOnly: true
+          nullable: true
         action:
           type: string
           readOnly: true
@@ -1651,6 +1667,8 @@ components:
       - entity_type
       - id
       - metadata
+      - namespace_id
+      - namespace_type
       - operation_id
       - request_id
       - resource_id
@@ -1813,6 +1831,12 @@ components:
         assignment_id:
           type: string
           format: uuid
+        namespace_type:
+          type: string
+          nullable: true
+        namespace_id:
+          type: string
+          nullable: true
         assigned_by:
           type: string
           nullable: true
@@ -1825,6 +1849,8 @@ components:
       - assigned_at
       - assigned_by
       - assignment_id
+      - namespace_id
+      - namespace_type
       - tag
     Tag:
       type: object
@@ -1837,6 +1863,14 @@ components:
           type: string
           readOnly: true
         application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        namespace_type:
+          type: string
+          nullable: true
+          maxLength: 100
+        namespace_id:
           type: string
           nullable: true
           maxLength: 100
@@ -1879,6 +1913,8 @@ components:
       - created_at
       - id
       - name
+      - namespace_id
+      - namespace_type
       - parent_id
       - slug
       - tenant_id
@@ -1897,6 +1933,14 @@ components:
           type: string
           readOnly: true
         application_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        namespace_type:
+          type: string
+          nullable: true
+          maxLength: 100
+        namespace_id:
           type: string
           nullable: true
           maxLength: 100
@@ -1926,6 +1970,8 @@ components:
       - created_at
       - id
       - name
+      - namespace_id
+      - namespace_type
       - slug
       - tag_id
       - tenant_id
@@ -1974,6 +2020,12 @@ components:
       properties:
         application_id:
           type: string
+        namespace_type:
+          type: string
+          nullable: true
+        namespace_id:
+          type: string
+          nullable: true
         resource_type:
           type: string
         resource_id:
@@ -1988,6 +2040,8 @@ components:
       - application_id
       - assigned_at
       - assigned_by
+      - namespace_id
+      - namespace_type
       - resource_id
       - resource_type
     TagWrite:
@@ -2039,6 +2093,14 @@ components:
           type: string
           nullable: true
           maxLength: 100
+        namespace_type:
+          type: string
+          nullable: true
+          maxLength: 100
+        namespace_id:
+          type: string
+          nullable: true
+          maxLength: 100
         name:
           type: string
           maxLength: 255
@@ -2064,6 +2126,8 @@ components:
       - created_at
       - id
       - name
+      - namespace_id
+      - namespace_type
       - slug
       - tenant_id
       - updated_at

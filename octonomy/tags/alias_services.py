@@ -290,6 +290,7 @@ def resolve_assignable_alias(
     tenant_id: str,
     application_id: str,
     scope_context: ScopeContext = GLOBAL_SCOPE,
+    include_global: bool = True,
     alias_id=None,
     alias_slug: str | None = None,
 ) -> Tag:
@@ -304,9 +305,9 @@ def resolve_assignable_alias(
             )
         except TagAlias.DoesNotExist:
             raise serializers.ValidationError({"alias_id": ["Alias was not found."]})
-        if not row_matches_scope(alias, scope_context, include_global=True):
+        if not row_matches_scope(alias, scope_context, include_global=include_global):
             raise serializers.ValidationError({"alias_id": ["Alias was not found."]})
-        if not row_matches_scope(alias.tag, scope_context, include_global=True):
+        if not row_matches_scope(alias.tag, scope_context, include_global=include_global):
             raise serializers.ValidationError({"alias_id": ["Alias was not found."]})
     else:
         alias = active_aliases_for_resolution(
@@ -314,7 +315,7 @@ def resolve_assignable_alias(
             alias_slug,
             application_id,
             scope_context,
-            include_global=True,
+            include_global=include_global,
         ).first()
         if alias is None:
             raise serializers.ValidationError({"alias_slug": ["Alias was not found."]})

@@ -135,7 +135,17 @@ def _wants_global(request) -> bool:
     params = getattr(request, "query_params", None)
     if params is None:
         return False
-    return params.get(INCLUDE_GLOBAL_PARAM, "false").lower() == "true"
+    if params.get(INCLUDE_GLOBAL_PARAM, "false").lower() == "true":
+        return True
+    # ``scope=global`` is an explicit global pin on tag resolution. Add global
+    # to the requested authorization set for that endpoint only; treating the
+    # parameter generically would let unrelated list endpoints use it as an
+    # undocumented alias for include_global.
+    resolver_match = getattr(request, "resolver_match", None)
+    return (
+        getattr(resolver_match, "url_name", None) == "tag-resolution"
+        and params.get("scope") == "global"
+    )
 
 
 def _set(request, scope_context, *, include_global: bool) -> None:

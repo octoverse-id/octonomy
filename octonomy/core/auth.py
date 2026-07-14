@@ -67,6 +67,26 @@ def request_include_global(request) -> bool:
     return GLOBAL_SCOPE in authorized
 
 
+def request_authorizes_global_references(request) -> bool:
+    """Whether write-time foreign keys may target global rows.
+
+    Unlike ``request_include_global``, this is not a read opt-in. Write serializers
+    need to know whether the token has an independent global grant before allowing
+    a namespaced tag, alias, or assignment to reference a tenant-shared row. The
+    permission class computes the decision across every application named by the
+    request so an exact merchant grant cannot use reference resolution as a path
+    around fail-closed global authorization.
+    """
+
+    authorized = getattr(request, "authorized_global_references", None)
+    if authorized is None:
+        # Preserve legacy/direct serializer behaviour outside authenticated API
+        # requests. BearerTokenPermission always sets the value for public API
+        # writes before the view or serializer runs.
+        return True
+    return authorized
+
+
 def enforce_namespace_write_gate(request, scope_context: ScopeContext) -> None:
     """Reject namespaced writes while the kill-switch is off.
 
@@ -298,6 +318,23 @@ class BearerTokenPermission(BasePermission):
         }
         request.authorized_scope_contexts = frozenset.intersection(
             *authorized_by_application.values()
+        )
+        # Write-time references are allowed to fall back to global rows only
+        # when every application target is covered by an independent global
+        # grant. This is deliberately separate from include_global, which is a
+        # read visibility opt-in rather than part of the write contract.
+        request.authorized_global_references = all(
+            any(
+                grant_authorizes(
+                    grant,
+                    tenant_id=tenant_id,
+                    application_id=application_id,
+                    scope_context=GLOBAL_SCOPE,
+                    required_scope=scope,
+                )
+                for grant in grants
+            )
+            for application_id in application_targets
         )
 
         if scope_context in request.authorized_scope_contexts:

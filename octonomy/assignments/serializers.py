@@ -6,6 +6,7 @@ from rest_framework import serializers
 from octonomy.assignments.models import TagAssignment
 from octonomy.core.auth import GLOBAL_SCOPE
 from octonomy.core.selectors import apply_namespace_filter
+from octonomy.core.serializers import NamespaceIdentityResponseMixin
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.tags.alias_selectors import active_aliases_for_resolution_bulk
 from octonomy.tags.alias_services import resolve_assignable_alias
@@ -13,13 +14,15 @@ from octonomy.tags.models import Tag
 from octonomy.tags.serializers import TagSerializer
 
 
-class AssignmentSerializer(serializers.ModelSerializer):
+class AssignmentSerializer(NamespaceIdentityResponseMixin, serializers.ModelSerializer):
     class Meta:
         model = TagAssignment
         fields = [
             "id",
             "tenant_id",
             "application_id",
+            "namespace_type",
+            "namespace_id",
             "tag_id",
             "resource_type",
             "resource_id",
@@ -65,12 +68,13 @@ class AssignmentWriteSerializer(serializers.Serializer):
         tenant_id = self.context["tenant_id"]
         application_id = attrs["application_id"]
         scope_context = self.context.get("scope_context", GLOBAL_SCOPE)
+        include_global = self.context.get("include_global", True)
         if attrs.get("tag_id"):
             try:
                 attrs["tag"] = apply_namespace_filter(
                     Tag.objects.for_tenant(tenant_id),
                     scope_context,
-                    include_global=True,
+                    include_global=include_global,
                 ).get(id=attrs.pop("tag_id"))
             except Tag.DoesNotExist:
                 raise serializers.ValidationError({"tag_id": ["Tag was not found."]})
@@ -81,6 +85,7 @@ class AssignmentWriteSerializer(serializers.Serializer):
                 scope_context=scope_context,
                 alias_id=attrs.pop("alias_id", None),
                 alias_slug=attrs.pop("alias_slug", None),
+                include_global=include_global,
             )
         return attrs
 
@@ -145,6 +150,7 @@ class BulkAssignSerializer(serializers.Serializer):
         tenant_id = self.context["tenant_id"]
         application_id = attrs["application_id"]
         scope_context = self.context.get("scope_context", GLOBAL_SCOPE)
+        include_global = self.context.get("include_global", True)
 
         max_bulk = getattr(settings, "MAX_BULK_TAGS", 200)
         if len(tag_ids) + len(alias_slugs) > max_bulk:
@@ -157,7 +163,7 @@ class BulkAssignSerializer(serializers.Serializer):
             alias_slugs,
             application_id,
             scope_context,
-            include_global=True,
+            include_global=include_global,
         ).select_related("tag")
         resolved = {}
         for alias in aliases:
@@ -202,15 +208,19 @@ class ResourceReplaceSerializer(BulkAssignSerializer):
         return attrs
 
 
-class ResourceTagSerializer(serializers.Serializer):
+class ResourceTagSerializer(NamespaceIdentityResponseMixin, serializers.Serializer):
     assignment_id = serializers.UUIDField(source="id")
+    namespace_type = serializers.CharField(allow_null=True)
+    namespace_id = serializers.CharField(allow_null=True)
     assigned_by = serializers.CharField(allow_null=True)
     assigned_at = serializers.DateTimeField()
     tag = TagSerializer()
 
 
-class TagResourceSerializer(serializers.Serializer):
+class TagResourceSerializer(NamespaceIdentityResponseMixin, serializers.Serializer):
     application_id = serializers.CharField()
+    namespace_type = serializers.CharField(allow_null=True)
+    namespace_id = serializers.CharField(allow_null=True)
     resource_type = serializers.CharField()
     resource_id = serializers.CharField()
     assigned_by = serializers.CharField(allow_null=True)

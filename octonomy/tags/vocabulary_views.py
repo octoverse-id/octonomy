@@ -17,6 +17,7 @@ from octonomy.core.selectors import (
     reject_null_namespaced_application_id,
     scoped_create_data,
 )
+from octonomy.core.serializers import response_serializer_context
 from octonomy.tags.vocabulary_selectors import filter_vocabularies, vocabularies_for_tenant
 from octonomy.tags.vocabulary_serializers import (
     VocabularyPatchSerializer,
@@ -93,7 +94,9 @@ def vocabularies_collection(request):
         )
         paginator = OctonomyLimitOffsetPagination()
         page = paginator.paginate_queryset(queryset, request)
-        serializer = VocabularySerializer(page, many=True)
+        serializer = VocabularySerializer(
+            page, many=True, context=response_serializer_context(request)
+        )
         return paginator.get_paginated_response(serializer.data)
 
     serializer = VocabularyWriteSerializer(data=create_payload_with_scope(request, scope_context))
@@ -103,7 +106,10 @@ def vocabularies_collection(request):
         scoped_create_data(serializer, scope_context),
         build_audit_context(request),
     )
-    return data_response(VocabularySerializer(vocabulary).data, status=status.HTTP_201_CREATED)
+    return data_response(
+        VocabularySerializer(vocabulary, context=response_serializer_context(request)).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @extend_schema(methods=["GET"], responses=VocabularySerializer)
@@ -128,7 +134,9 @@ def vocabulary_detail(request, vocabulary_id):
     )
 
     if request.method == "GET":
-        return data_response(VocabularySerializer(vocabulary).data)
+        return data_response(
+            VocabularySerializer(vocabulary, context=response_serializer_context(request)).data
+        )
 
     if request.method == "DELETE":
         deactivate_vocabulary(vocabulary, build_audit_context(request))
@@ -142,4 +150,6 @@ def vocabulary_detail(request, vocabulary_id):
         serializer.validated_data,
         build_audit_context(request),
     )
-    return data_response(VocabularySerializer(vocabulary).data)
+    return data_response(
+        VocabularySerializer(vocabulary, context=response_serializer_context(request)).data
+    )
