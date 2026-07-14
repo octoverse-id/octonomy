@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import exceptions
 from rest_framework.permissions import BasePermission
@@ -16,6 +17,10 @@ from octonomy.service_auth.services import (
 )
 
 LAST_USED_UPDATE_INTERVAL = timedelta(seconds=60)
+
+# HTTP methods that only read. Any other method persists state and, when it also
+# carries a namespace scope, is gated by NAMESPACE_WRITE_ENABLED.
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,48 @@ def request_include_global(request) -> bool:
     if authorized is None:
         return True
     return GLOBAL_SCOPE in authorized
+
+
+def request_authorizes_global_references(request) -> bool:
+    """Whether write-time foreign keys may target global rows.
+
+    Unlike ``request_include_global``, this is not a read opt-in. Write serializers
+    need to know whether the token has an independent global grant before allowing
+    a namespaced tag, alias, or assignment to reference a tenant-shared row. The
+    permission class computes the decision across every application named by the
+    request so an exact merchant grant cannot use reference resolution as a path
+    around fail-closed global authorization.
+    """
+
+    authorized = getattr(request, "authorized_global_references", None)
+    if authorized is None:
+        # Preserve legacy/direct serializer behaviour outside authenticated API
+        # requests. BearerTokenPermission always sets the value for public API
+        # writes before the view or serializer runs.
+        return True
+    return authorized
+
+
+def enforce_namespace_write_gate(request, scope_context: ScopeContext) -> None:
+    """Reject namespaced writes while the kill-switch is off.
+
+    v2 reads are namespace-aware, but persisting namespaced rows stays disabled
+    until audit/outbox carry namespace and rollout controls land. Global writes
+    (v1 and v2-global) are always allowed; only an authorized namespaced writer
+    reaches this gate, so the error is a precise capability signal.
+    """
+
+    if scope_context.is_global or request.method in SAFE_METHODS:
+        return
+    if getattr(settings, "NAMESPACE_WRITE_ENABLED", False):
+        return
+
+    from octonomy.core.errors import NamespacedWritesDisabledError
+
+    raise NamespacedWritesDisabledError(
+        "Namespaced writes are not enabled; this deployment accepts namespaced reads only.",
+        {"namespace": ["Namespaced writes are disabled."]},
+    )
 
 
 def require_scopes(**method_scopes: str):
@@ -125,16 +172,51 @@ def grant_authorizes(
     if not scope_context.is_global and application_id is None:
         return False
 
+    return grant_matches_namespace(grant, scope_context)
+
+
+def grant_matches_namespace(grant: ServiceClientGrant, scope_context: ScopeContext) -> bool:
+    """Whether a grant reaches the namespace partition, ignoring application."""
+
     if grant.namespace_wildcard:
         return True
-
     if scope_context.is_global:
         return grant.namespace_type is None and grant.namespace_id is None
-
     return (
         grant.namespace_type == scope_context.namespace_type
         and grant.namespace_id == scope_context.namespace_id
     )
+
+
+def authorized_application_ids(request) -> set[str] | None:
+    """Applications the caller may access in the request's namespace partition.
+
+    Returns ``None`` when access is unrestricted (a tenant-wide grant reaches the
+    namespace with no application bound), otherwise the set of application ids the
+    caller is granted for. Object-by-id lookups bound the fetched row to this so a
+    grant cannot reach a row in an application it is not authorized for — while an
+    unrestricted caller can still fetch a row it is moving to another application
+    (the request body names the destination, not the source).
+    """
+
+    client = getattr(request, "service_client", None)
+    tenant_id = getattr(request, "tenant_id", None)
+    if client is None or not tenant_id:
+        return None
+
+    scope_context = getattr(request, "scope_context", GLOBAL_SCOPE)
+    required_scope = getattr(request, "required_scope", None)
+
+    application_ids: set[str] = set()
+    for grant in tenant_grants(client, tenant_id):
+        if required_scope and not grant.has_scope(required_scope):
+            continue
+        if not grant_matches_namespace(grant, scope_context):
+            continue
+        if grant.application_id is None:
+            return None
+        application_ids.add(grant.application_id)
+    return application_ids
 
 
 def authorized_scope_contexts(
@@ -199,6 +281,9 @@ class BearerTokenPermission(BasePermission):
             raise exceptions.ValidationError({"X-Tenant-ID": ["This header is required."]})
 
         scope = required_scope_for_request(request, view)
+        # Stash the resolved scope so object-by-id lookups can bound the fetched
+        # row to the applications this caller is granted for the same scope.
+        request.required_scope = scope
         tenant_grant_list = tenant_grants(client, tenant_id)
         if not tenant_grant_list:
             raise TenantMismatchError(
@@ -234,8 +319,26 @@ class BearerTokenPermission(BasePermission):
         request.authorized_scope_contexts = frozenset.intersection(
             *authorized_by_application.values()
         )
+        # Write-time references are allowed to fall back to global rows only
+        # when every application target is covered by an independent global
+        # grant. This is deliberately separate from include_global, which is a
+        # read visibility opt-in rather than part of the write contract.
+        request.authorized_global_references = all(
+            any(
+                grant_authorizes(
+                    grant,
+                    tenant_id=tenant_id,
+                    application_id=application_id,
+                    scope_context=GLOBAL_SCOPE,
+                    required_scope=scope,
+                )
+                for grant in grants
+            )
+            for application_id in application_targets
+        )
 
         if scope_context in request.authorized_scope_contexts:
+            enforce_namespace_write_gate(request, scope_context)
             self.mark_client_used(client)
             return True
 

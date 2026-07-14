@@ -11,12 +11,26 @@ def usage_count_filter(
     scope_context: ScopeContext = GLOBAL_SCOPE,
     *,
     mode: str = "legacy",
+    application_ids=None,
+    include_global: bool = True,
 ) -> Q | None:
     if mode == "legacy":
         return None
     if mode != "visible":
         raise ValueError("usage count mode must be 'legacy' or 'visible'.")
-    return namespace_q(scope_context, include_global=True, prefix="assignments__")
+    # Global-namespace assignments count only when the caller is authorized to see
+    # global rows (the same fail-closed include_global decision as the read). An
+    # exact merchant grant must not receive counts inflated by global assignments
+    # it cannot list or opt into.
+    count_filter = namespace_q(scope_context, include_global=include_global, prefix="assignments__")
+    # The namespace layer sits below application, so a visible count must also stay
+    # within the request's application scope. Otherwise a shared tag viewed as
+    # application=commerce would count assignments from another application that
+    # merely shares the namespace id (e.g. cms/merchant_a).
+    ids = [application_id for application_id in (application_ids or ()) if application_id]
+    if ids:
+        count_filter &= Q(assignments__application_id__in=ids)
+    return count_filter
 
 
 def tags_for_tenant(
@@ -25,13 +39,19 @@ def tags_for_tenant(
     *,
     include_global: bool = True,
     usage_count_mode: str = "legacy",
+    application_ids=None,
 ) -> QuerySet[Tag]:
     queryset = apply_namespace_filter(
         Tag.objects.for_tenant(tenant_id),
         scope_context,
         include_global=include_global,
     )
-    count_filter = usage_count_filter(scope_context, mode=usage_count_mode)
+    count_filter = usage_count_filter(
+        scope_context,
+        mode=usage_count_mode,
+        application_ids=application_ids,
+        include_global=include_global,
+    )
     if count_filter is None:
         return queryset.annotate(usage_count=Count("assignments"))
     return queryset.annotate(usage_count=Count("assignments", filter=count_filter))
@@ -42,10 +62,14 @@ def apply_usage_counts(
     scope_context: ScopeContext = GLOBAL_SCOPE,
     *,
     mode: str = "legacy",
+    application_ids=None,
+    include_global: bool = True,
 ) -> None:
     tag_list = list(tags)
     tag_ids = [tag.id for tag in tag_list]
-    count_filter = usage_count_filter(scope_context, mode=mode)
+    count_filter = usage_count_filter(
+        scope_context, mode=mode, application_ids=application_ids, include_global=include_global
+    )
     queryset = Tag.objects.filter(id__in=tag_ids)
     if count_filter is None:
         queryset = queryset.annotate(usage_count=Count("assignments"))

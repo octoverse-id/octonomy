@@ -31,11 +31,13 @@ makemigrations:
 	uv run python manage.py makemigrations
 
 openapi:
-	uv run python manage.py spectacular --file docs/openapi.yaml --format openapi
+	uv run python manage.py spectacular --api-version v1 --file docs/openapi.yaml --format openapi
+	uv run python manage.py spectacular --api-version v2 --file docs/openapi-v2.yaml --format openapi
 
 openapi-check:
-	uv run python manage.py spectacular --file docs/openapi.yaml --format openapi
-	git diff --exit-code docs/openapi.yaml
+	uv run python manage.py spectacular --api-version v1 --file docs/openapi.yaml --format openapi
+	uv run python manage.py spectacular --api-version v2 --file docs/openapi-v2.yaml --format openapi
+	git diff --exit-code docs/openapi.yaml docs/openapi-v2.yaml
 
 audit:
 	uv export --format requirements-txt --no-emit-project --frozen | uv run pip-audit --no-deps -r /dev/stdin

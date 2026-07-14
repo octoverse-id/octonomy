@@ -6,6 +6,11 @@ from django.db.models import Q
 
 RESERVED_NAMESPACE_TYPE_GLOBAL = "global"
 
+# Single source of truth for the namespace column width. The header parser
+# validates against this so caller input never reaches the database as a value
+# too long for the column (a DataError/500 on PostgreSQL).
+NAMESPACE_FIELD_MAX_LENGTH = 100
+
 
 def namespace_scope_check() -> Q:
     return Q(namespace_type__isnull=True, namespace_id__isnull=True) | (
@@ -24,8 +29,8 @@ def namespace_scope_constraint() -> models.CheckConstraint:
 
 
 class NamespaceScopedModel(models.Model):
-    namespace_type = models.CharField(max_length=100, null=True, blank=True)
-    namespace_id = models.CharField(max_length=100, null=True, blank=True)
+    namespace_type = models.CharField(max_length=NAMESPACE_FIELD_MAX_LENGTH, null=True, blank=True)
+    namespace_id = models.CharField(max_length=NAMESPACE_FIELD_MAX_LENGTH, null=True, blank=True)
 
     class Meta:
         abstract = True

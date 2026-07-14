@@ -2,16 +2,31 @@ from __future__ import annotations
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
-from rest_framework.decorators import api_view
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
+from octonomy.core.api import api_view
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
+from octonomy.core.auth import (
+    GLOBAL_SCOPE,
+    application_ids_from_request,
+    request_authorizes_global_references,
+    request_include_global,
+    require_scopes,
+)
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
-from octonomy.core.selectors import apply_namespace_filter
+from octonomy.core.selectors import (
+    application_filter_params,
+    apply_application_filter,
+    apply_namespace_filter,
+    create_payload_with_scope,
+    reject_null_namespaced_application_id,
+    scoped_create_data,
+)
+from octonomy.core.serializers import response_serializer_context
 from octonomy.core.validators import validate_external_id, validate_slug_like
+from octonomy.core.versioning import usage_count_mode_for_request
 from octonomy.tags.alias_selectors import aliases_for_tenant, filter_aliases
 from octonomy.tags.alias_serializers import (
     TagAliasPatchSerializer,
@@ -40,12 +55,21 @@ def scope_context_for_request(request):
 
 
 def get_alias_or_404(
-    tenant_id: str, alias_id, scope_context=GLOBAL_SCOPE, *, include_global: bool = True
+    tenant_id: str,
+    alias_id,
+    scope_context=GLOBAL_SCOPE,
+    *,
+    include_global: bool = True,
+    application_ids=None,
+    include_shared: bool = True,
 ):
     try:
-        return aliases_for_tenant(tenant_id, scope_context, include_global=include_global).get(
-            id=alias_id
+        queryset = apply_application_filter(
+            aliases_for_tenant(tenant_id, scope_context, include_global=include_global),
+            application_ids,
+            include_shared=include_shared,
         )
+        return queryset.get(id=alias_id)
     except TagAlias.DoesNotExist:
         raise NotFound("Tag alias was not found.")
 
@@ -92,16 +116,29 @@ def aliases_collection(request):
         )
         paginator = OctonomyLimitOffsetPagination()
         page = paginator.paginate_queryset(queryset, request)
-        serializer = TagAliasSerializer(page, many=True)
+        serializer = TagAliasSerializer(
+            page, many=True, context=response_serializer_context(request)
+        )
         return paginator.get_paginated_response(serializer.data)
 
     serializer = TagAliasWriteSerializer(
-        data=request.data,
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        data=create_payload_with_scope(request, scope_context),
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
-    alias = create_tag_alias(tenant_id, serializer.validated_data, build_audit_context(request))
-    return data_response(TagAliasSerializer(alias).data, status=status.HTTP_201_CREATED)
+    alias = create_tag_alias(
+        tenant_id,
+        scoped_create_data(serializer, scope_context),
+        build_audit_context(request),
+    )
+    return data_response(
+        TagAliasSerializer(alias, context=response_serializer_context(request)).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @extend_schema(methods=["GET"], responses=TagAliasSerializer)
@@ -115,23 +152,40 @@ def alias_detail(request, alias_id):
     # Writes (PATCH/DELETE) target the exact request scope; reads may fall back
     # to global rows only when the caller is authorized for the global namespace.
     include_global = request_include_global(request) if request.method == "GET" else False
-    alias = get_alias_or_404(tenant_id, alias_id, scope_context, include_global=include_global)
+    application_ids, include_shared = application_filter_params(request)
+    alias = get_alias_or_404(
+        tenant_id,
+        alias_id,
+        scope_context,
+        include_global=include_global,
+        application_ids=application_ids,
+        include_shared=include_shared,
+    )
 
     if request.method == "GET":
-        return data_response(TagAliasSerializer(alias).data)
+        return data_response(
+            TagAliasSerializer(alias, context=response_serializer_context(request)).data
+        )
 
     if request.method == "DELETE":
         deactivate_tag_alias(alias, build_audit_context(request))
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    reject_null_namespaced_application_id(request.data, scope_context)
     serializer = TagAliasPatchSerializer(
         data=request.data,
         partial=True,
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
     alias = update_tag_alias(alias, serializer.validated_data, build_audit_context(request))
-    return data_response(TagAliasSerializer(alias).data)
+    return data_response(
+        TagAliasSerializer(alias, context=response_serializer_context(request)).data
+    )
 
 
 @extend_schema(
@@ -151,11 +205,16 @@ def tag_aliases(request, tag_id):
     scope_context = scope_context_for_request(request)
     include_global = request_include_global(request)
     maybe_validate_application_id(request)
+    application_ids, include_shared = application_filter_params(request)
     try:
-        tag = apply_namespace_filter(
-            Tag.objects.for_tenant(tenant_id),
-            scope_context,
-            include_global=include_global,
+        tag = apply_application_filter(
+            apply_namespace_filter(
+                Tag.objects.for_tenant(tenant_id),
+                scope_context,
+                include_global=include_global,
+            ),
+            application_ids,
+            include_shared=include_shared,
         ).get(id=tag_id)
     except Tag.DoesNotExist:
         raise NotFound("Tag was not found.")
@@ -166,7 +225,7 @@ def tag_aliases(request, tag_id):
     )
     paginator = OctonomyLimitOffsetPagination()
     page = paginator.paginate_queryset(queryset, request)
-    serializer = TagAliasSerializer(page, many=True)
+    serializer = TagAliasSerializer(page, many=True, context=response_serializer_context(request))
     return paginator.get_paginated_response(serializer.data)
 
 
@@ -192,13 +251,25 @@ def tag_resolution(request):
     if tag_type:
         validate_slug_like(tag_type, "type")
 
+    scope_context = scope_context_for_request(request)
     result = resolve_tag_reference(
         tenant_id=tenant_id,
         slug=slug,
         application_id=application_id,
         tag_type=tag_type,
-        scope_context=scope_context_for_request(request),
+        scope_context=scope_context,
         scope_qualifier=request.query_params.get("scope"),
+        # Fail-closed: global rows are reachable only when the caller is
+        # authorized for global (include_global opt-in), same as list/detail.
+        authorized_global=request_include_global(request),
     )
-    apply_usage_counts([result["tag"]])
-    return data_response(TagResolutionSerializer(result).data)
+    apply_usage_counts(
+        [result["tag"]],
+        scope_context,
+        mode=usage_count_mode_for_request(request),
+        application_ids=application_ids_from_request(request),
+        include_global=request_include_global(request),
+    )
+    return data_response(
+        TagResolutionSerializer(result, context=response_serializer_context(request)).data
+    )

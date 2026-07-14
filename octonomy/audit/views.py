@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from rest_framework.decorators import api_view
 from rest_framework.exceptions import ValidationError
 
 from octonomy.audit.selectors import audit_logs_for_tenant, filter_audit_logs
 from octonomy.audit.serializers import AuditLogSerializer
+from octonomy.core.api import api_view
 from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
+from octonomy.core.serializers import response_serializer_context
 
 
 def require_tenant(request) -> str:
@@ -23,7 +24,7 @@ def scope_context_for_request(request):
 def paginate(request, queryset):
     paginator = OctonomyLimitOffsetPagination()
     page = paginator.paginate_queryset(queryset, request)
-    serializer = AuditLogSerializer(page, many=True)
+    serializer = AuditLogSerializer(page, many=True, context=response_serializer_context(request))
     return paginator.get_paginated_response(serializer.data)
 
 

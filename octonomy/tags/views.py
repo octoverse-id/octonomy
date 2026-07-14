@@ -2,14 +2,29 @@ from __future__ import annotations
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
-from rest_framework.decorators import api_view
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
+from octonomy.core.api import api_view
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
+from octonomy.core.auth import (
+    GLOBAL_SCOPE,
+    application_ids_from_request,
+    request_authorizes_global_references,
+    request_include_global,
+    require_scopes,
+)
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
+from octonomy.core.selectors import (
+    application_filter_params,
+    apply_application_filter,
+    create_payload_with_scope,
+    reject_null_namespaced_application_id,
+    scoped_create_data,
+)
+from octonomy.core.serializers import response_serializer_context
+from octonomy.core.versioning import usage_count_mode_for_request
 from octonomy.tags.selectors import apply_usage_counts, filter_tags, tags_for_tenant
 from octonomy.tags.serializers import TagPatchSerializer, TagSerializer, TagWriteSerializer
 from octonomy.tags.services import create_tag, deactivate_tag, update_tag
@@ -26,12 +41,21 @@ def scope_context_for_request(request):
 
 
 def get_tag_or_404(
-    tenant_id: str, tag_id, scope_context=GLOBAL_SCOPE, *, include_global: bool = True
+    tenant_id: str,
+    tag_id,
+    scope_context=GLOBAL_SCOPE,
+    *,
+    include_global: bool = True,
+    application_ids=None,
+    include_shared: bool = True,
 ) -> object:
     try:
-        return tags_for_tenant(tenant_id, scope_context, include_global=include_global).get(
-            id=tag_id
+        queryset = apply_application_filter(
+            tags_for_tenant(tenant_id, scope_context, include_global=include_global),
+            application_ids,
+            include_shared=include_shared,
         )
+        return queryset.get(id=tag_id)
     except Exception:
         raise NotFound("Tag was not found.")
 
@@ -58,28 +82,53 @@ def get_tag_or_404(
 def tags_collection(request):
     tenant_id = require_tenant(request)
 
+    scope_context = scope_context_for_request(request)
+    usage_count_mode = usage_count_mode_for_request(request)
+    count_application_ids = application_ids_from_request(request)
+
     if request.method == "GET":
-        scope_context = scope_context_for_request(request)
         queryset = filter_tags(
             tags_for_tenant(
-                tenant_id, scope_context, include_global=request_include_global(request)
+                tenant_id,
+                scope_context,
+                include_global=request_include_global(request),
+                usage_count_mode=usage_count_mode,
+                application_ids=count_application_ids,
             ),
             request.query_params,
         )
         paginator = OctonomyLimitOffsetPagination()
         page = paginator.paginate_queryset(queryset, request)
-        serializer = TagSerializer(page, many=True)
+        serializer = TagSerializer(page, many=True, context=response_serializer_context(request))
         return paginator.get_paginated_response(serializer.data)
 
-    scope_context = scope_context_for_request(request)
     serializer = TagWriteSerializer(
-        data=request.data,
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        data=create_payload_with_scope(request, scope_context),
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
-    tag = create_tag(tenant_id, serializer.validated_data, build_audit_context(request))
-    apply_usage_counts([tag])
-    return data_response(TagSerializer(tag).data, status=status.HTTP_201_CREATED)
+    # Persist the request's namespace on create so an enabled namespaced write
+    # lands in the caller's scope; for global requests this injects nulls.
+    tag = create_tag(
+        tenant_id,
+        scoped_create_data(serializer, scope_context),
+        build_audit_context(request),
+    )
+    apply_usage_counts(
+        [tag],
+        scope_context,
+        mode=usage_count_mode,
+        application_ids=count_application_ids,
+        include_global=request_include_global(request),
+    )
+    return data_response(
+        TagSerializer(tag, context=response_serializer_context(request)).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @extend_schema(methods=["GET"], responses=TagSerializer)
@@ -94,22 +143,49 @@ def tag_detail(request, tag_id):
     # must target the request's exact scope so a namespaced caller can never
     # mutate or deactivate a tenant-wide row.
     include_global = request_include_global(request) if request.method == "GET" else False
-    tag = get_tag_or_404(tenant_id, tag_id, scope_context, include_global=include_global)
+    usage_count_mode = usage_count_mode_for_request(request)
+    count_application_ids = application_ids_from_request(request)
+    application_ids, include_shared = application_filter_params(request)
+    tag = get_tag_or_404(
+        tenant_id,
+        tag_id,
+        scope_context,
+        include_global=include_global,
+        application_ids=application_ids,
+        include_shared=include_shared,
+    )
 
     if request.method == "GET":
-        apply_usage_counts([tag])
-        return data_response(TagSerializer(tag).data)
+        apply_usage_counts(
+            [tag],
+            scope_context,
+            mode=usage_count_mode,
+            application_ids=count_application_ids,
+            include_global=include_global,
+        )
+        return data_response(TagSerializer(tag, context=response_serializer_context(request)).data)
 
     if request.method == "DELETE":
         deactivate_tag(tag, build_audit_context(request))
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    reject_null_namespaced_application_id(request.data, scope_context)
     serializer = TagPatchSerializer(
         data=request.data,
         partial=True,
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
     tag = update_tag(tag, serializer.validated_data, build_audit_context(request))
-    apply_usage_counts([tag])
-    return data_response(TagSerializer(tag).data)
+    apply_usage_counts(
+        [tag],
+        scope_context,
+        mode=usage_count_mode,
+        application_ids=count_application_ids,
+        include_global=include_global,
+    )
+    return data_response(TagSerializer(tag, context=response_serializer_context(request)).data)

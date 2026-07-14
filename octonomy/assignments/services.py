@@ -32,6 +32,7 @@ def validate_tag_for_assignment(
     tenant_id: str,
     application_id: str,
     scope_context: ScopeContext = GLOBAL_SCOPE,
+    include_global: bool = True,
 ) -> None:
     if tag.tenant_id != tenant_id:
         raise serializers.ValidationError({"tag_id": ["Tag was not found."]})
@@ -43,7 +44,7 @@ def validate_tag_for_assignment(
         raise ApplicationMismatchError(
             details={"application_id": ["Tag belongs to another application."]}
         )
-    if not row_matches_scope(tag, scope_context, include_global=True):
+    if not row_matches_scope(tag, scope_context, include_global=include_global):
         raise serializers.ValidationError({"tag_id": ["Tag was not found."]})
 
 
@@ -52,6 +53,7 @@ def get_assignable_tags(
     application_id: str,
     tag_ids: list,
     scope_context: ScopeContext = GLOBAL_SCOPE,
+    include_global: bool = True,
 ) -> list[Tag]:
     max_bulk = getattr(settings, "MAX_BULK_TAGS", 200)
     if len(tag_ids) > max_bulk:
@@ -67,7 +69,13 @@ def get_assignable_tags(
         raise serializers.ValidationError({"tag_ids": [f"Unknown tag ids: {', '.join(missing)}"]})
 
     for tag in tags:
-        validate_tag_for_assignment(tag, tenant_id, application_id, scope_context)
+        validate_tag_for_assignment(
+            tag,
+            tenant_id,
+            application_id,
+            scope_context,
+            include_global=include_global,
+        )
     return tags
 
 
@@ -130,8 +138,15 @@ def assign_tag(
     assigned_by: str | None = None,
     audit_context: AuditContext | None = None,
     scope_context: ScopeContext = GLOBAL_SCOPE,
+    include_global: bool = True,
 ) -> AssignmentResult:
-    validate_tag_for_assignment(tag, tenant_id, application_id, scope_context)
+    validate_tag_for_assignment(
+        tag,
+        tenant_id,
+        application_id,
+        scope_context,
+        include_global=include_global,
+    )
     lookup = assignment_lookup(
         tenant_id=tenant_id,
         application_id=application_id,
@@ -242,8 +257,15 @@ def bulk_assign_tags(
     assigned_by: str | None = None,
     audit_context: AuditContext | None = None,
     scope_context: ScopeContext = GLOBAL_SCOPE,
+    include_global: bool = True,
 ) -> dict:
-    tags = get_assignable_tags(tenant_id, application_id, tag_ids, scope_context)
+    tags = get_assignable_tags(
+        tenant_id,
+        application_id,
+        tag_ids,
+        scope_context,
+        include_global=include_global,
+    )
     created = 0
     existing = 0
     assignments = []
@@ -375,8 +397,15 @@ def replace_resource_tags(
     assigned_by: str | None = None,
     audit_context: AuditContext | None = None,
     scope_context: ScopeContext = GLOBAL_SCOPE,
+    include_global: bool = True,
 ) -> dict:
-    tags = get_assignable_tags(tenant_id, application_id, tag_ids, scope_context)
+    tags = get_assignable_tags(
+        tenant_id,
+        application_id,
+        tag_ids,
+        scope_context,
+        include_global=include_global,
+    )
     requested_ids = {tag.id for tag in tags}
 
     with transaction.atomic():
@@ -444,6 +473,7 @@ def replace_resource_tags(
                 assigned_by,
                 audit_context=audit_context,
                 scope_context=scope_context,
+                include_global=include_global,
             )
             created += int(result.created)
 

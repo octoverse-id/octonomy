@@ -4,13 +4,14 @@ from rest_framework import serializers
 
 from octonomy.core.auth import GLOBAL_SCOPE
 from octonomy.core.selectors import apply_namespace_filter
+from octonomy.core.serializers import NamespaceIdentityResponseMixin
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.tags.models import Tag, TagAlias
 from octonomy.tags.serializers import TagSerializer
 from octonomy.tags.services import validate_metadata
 
 
-class TagAliasSerializer(serializers.ModelSerializer):
+class TagAliasSerializer(NamespaceIdentityResponseMixin, serializers.ModelSerializer):
     tag_id = serializers.UUIDField(source="tag.id", read_only=True)
 
     class Meta:
@@ -19,6 +20,8 @@ class TagAliasSerializer(serializers.ModelSerializer):
             "id",
             "tenant_id",
             "application_id",
+            "namespace_type",
+            "namespace_id",
             "tag_id",
             "name",
             "slug",
@@ -52,11 +55,12 @@ class TagAliasWriteSerializer(serializers.Serializer):
     def validate_tag_id(self, value):
         tenant_id = self.context["tenant_id"]
         scope_context = self.context.get("scope_context", GLOBAL_SCOPE)
+        include_global = self.context.get("include_global", True)
         try:
             return apply_namespace_filter(
                 Tag.objects.for_tenant(tenant_id),
                 scope_context,
-                include_global=True,
+                include_global=include_global,
             ).get(id=value)
         except Tag.DoesNotExist:
             raise serializers.ValidationError("Tag was not found.")

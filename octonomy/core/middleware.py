@@ -4,7 +4,14 @@ import logging
 import time
 import uuid
 
+from django.utils.cache import patch_vary_headers
+
 logger = logging.getLogger("octonomy.requests")
+
+# Cacheable reads vary by caller identity and the requested namespace partition,
+# so a shared cache must not serve one namespace's rows to another.
+VARY_HEADERS = ("Authorization", "X-Tenant-ID", "X-Namespace-Type", "X-Namespace-ID")
+CACHEABLE_METHODS = frozenset({"GET", "HEAD"})
 
 
 class RequestContextMiddleware:
@@ -18,6 +25,9 @@ class RequestContextMiddleware:
         started_at = time.monotonic()
         response = self.get_response(request)
         response["X-Request-ID"] = request.request_id
+
+        if request.method in CACHEABLE_METHODS:
+            patch_vary_headers(response, VARY_HEADERS)
 
         scope_context = getattr(request, "scope_context", None)
         logger.info(

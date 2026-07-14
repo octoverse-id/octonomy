@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
-from rest_framework.decorators import api_view
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
@@ -28,11 +27,24 @@ from octonomy.assignments.services import (
     remove_tag_assignment,
     replace_resource_tags,
 )
+from octonomy.core.api import api_view
 from octonomy.core.audit import build_audit_context
-from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
+from octonomy.core.auth import (
+    GLOBAL_SCOPE,
+    application_ids_from_request,
+    request_authorizes_global_references,
+    request_include_global,
+    require_scopes,
+)
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
-from octonomy.core.selectors import apply_namespace_filter
+from octonomy.core.selectors import (
+    application_filter_params,
+    apply_application_filter,
+    apply_namespace_filter,
+)
+from octonomy.core.serializers import response_serializer_context
+from octonomy.core.versioning import usage_count_mode_for_request
 from octonomy.tags.models import Tag
 from octonomy.tags.selectors import apply_usage_counts
 from octonomy.tags.serializers import TagSerializer
@@ -52,8 +64,14 @@ def paginate(request, queryset, serializer_class):
     paginator = OctonomyLimitOffsetPagination()
     page = paginator.paginate_queryset(queryset, request)
     if serializer_class is ResourceTagSerializer:
-        apply_usage_counts([assignment.tag for assignment in page])
-    serializer = serializer_class(page, many=True)
+        apply_usage_counts(
+            [assignment.tag for assignment in page],
+            scope_context_for_request(request),
+            mode=usage_count_mode_for_request(request),
+            application_ids=application_ids_from_request(request),
+            include_global=request_include_global(request),
+        )
+    serializer = serializer_class(page, many=True, context=response_serializer_context(request))
     return paginator.get_paginated_response(serializer.data)
 
 
@@ -86,7 +104,11 @@ def assignment_collection(request):
 
     serializer = AssignmentWriteSerializer(
         data=request.data,
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
@@ -99,9 +121,13 @@ def assignment_collection(request):
         assigned_by=data.get("assigned_by"),
         audit_context=build_audit_context(request, data.get("assigned_by")),
         scope_context=scope_context,
+        include_global=request_authorizes_global_references(request),
     )
     response_status = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
-    return data_response(AssignmentSerializer(result.assignment).data, status=response_status)
+    return data_response(
+        AssignmentSerializer(result.assignment, context=response_serializer_context(request)).data,
+        status=response_status,
+    )
 
 
 @extend_schema(
@@ -116,7 +142,11 @@ def bulk_assign(request):
     scope_context = scope_context_for_request(request)
     serializer = BulkAssignSerializer(
         data=request.data,
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
@@ -124,6 +154,7 @@ def bulk_assign(request):
         tenant_id=tenant_id,
         audit_context=build_audit_context(request, data.get("assigned_by")),
         scope_context=scope_context,
+        include_global=request_authorizes_global_references(request),
         **data,
     )
     return data_response(
@@ -131,7 +162,11 @@ def bulk_assign(request):
             "created": result["created"],
             "existing": result["existing"],
             "skipped": result["skipped"],
-            "assignments": AssignmentSerializer(result["assignments"], many=True).data,
+            "assignments": AssignmentSerializer(
+                result["assignments"],
+                many=True,
+                context=response_serializer_context(request),
+            ).data,
         }
     )
 
@@ -200,7 +235,11 @@ def resource_tags(request, resource_type, resource_id):
 
     serializer = ResourceReplaceSerializer(
         data={**request.data, "resource_type": resource_type, "resource_id": resource_id},
-        context={"tenant_id": tenant_id, "scope_context": scope_context},
+        context={
+            "tenant_id": tenant_id,
+            "scope_context": scope_context,
+            "include_global": request_authorizes_global_references(request),
+        },
     )
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
@@ -208,15 +247,24 @@ def resource_tags(request, resource_type, resource_id):
         tenant_id=tenant_id,
         audit_context=build_audit_context(request, data.get("assigned_by")),
         scope_context=scope_context,
+        include_global=request_authorizes_global_references(request),
         **data,
     )
     tags = [assignment.tag for assignment in result["assignments"]]
-    apply_usage_counts(tags)
+    apply_usage_counts(
+        tags,
+        scope_context,
+        mode=usage_count_mode_for_request(request),
+        application_ids=application_ids_from_request(request),
+        include_global=request_include_global(request),
+    )
     return data_response(
         {
             "created": result["created"],
             "removed": result["removed"],
-            "tags": TagSerializer(tags, many=True).data,
+            "tags": TagSerializer(
+                tags, many=True, context=response_serializer_context(request)
+            ).data,
         }
     )
 
@@ -236,11 +284,16 @@ def tag_resources(request, tag_id):
     tenant_id = require_tenant(request)
     scope_context = scope_context_for_request(request)
     include_global = request_include_global(request)
+    application_ids, include_shared = application_filter_params(request)
     try:
-        tag = apply_namespace_filter(
-            Tag.objects.for_tenant(tenant_id),
-            scope_context,
-            include_global=include_global,
+        tag = apply_application_filter(
+            apply_namespace_filter(
+                Tag.objects.for_tenant(tenant_id),
+                scope_context,
+                include_global=include_global,
+            ),
+            application_ids,
+            include_shared=include_shared,
         ).get(id=tag_id)
     except Tag.DoesNotExist:
         raise NotFound("Tag was not found.")

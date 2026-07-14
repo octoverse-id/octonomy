@@ -2,18 +2,21 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from octonomy.core.serializers import NamespaceIdentityResponseMixin
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.tags.models import Vocabulary
 from octonomy.tags.services import validate_metadata
 
 
-class VocabularySerializer(serializers.ModelSerializer):
+class VocabularySerializer(NamespaceIdentityResponseMixin, serializers.ModelSerializer):
     class Meta:
         model = Vocabulary
         fields = [
             "id",
             "tenant_id",
             "application_id",
+            "namespace_type",
+            "namespace_id",
             "name",
             "slug",
             "description",

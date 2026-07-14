@@ -3,15 +3,18 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from octonomy.audit.models import AuditLog
+from octonomy.core.serializers import NamespaceIdentityResponseMixin
 
 
-class AuditLogSerializer(serializers.ModelSerializer):
+class AuditLogSerializer(NamespaceIdentityResponseMixin, serializers.ModelSerializer):
     class Meta:
         model = AuditLog
         fields = [
             "id",
             "tenant_id",
             "application_id",
+            "namespace_type",
+            "namespace_id",
             "action",
             "entity_type",
             "entity_id",

@@ -2,14 +2,22 @@ from __future__ import annotations
 
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
-from rest_framework.decorators import api_view
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
+from octonomy.core.api import api_view
 from octonomy.core.audit import build_audit_context
 from octonomy.core.auth import GLOBAL_SCOPE, request_include_global, require_scopes
 from octonomy.core.pagination import OctonomyLimitOffsetPagination
 from octonomy.core.responses import data_response
+from octonomy.core.selectors import (
+    application_filter_params,
+    apply_application_filter,
+    create_payload_with_scope,
+    reject_null_namespaced_application_id,
+    scoped_create_data,
+)
+from octonomy.core.serializers import response_serializer_context
 from octonomy.tags.vocabulary_selectors import filter_vocabularies, vocabularies_for_tenant
 from octonomy.tags.vocabulary_serializers import (
     VocabularyPatchSerializer,
@@ -34,12 +42,21 @@ def scope_context_for_request(request):
 
 
 def get_vocabulary_or_404(
-    tenant_id: str, vocabulary_id, scope_context=GLOBAL_SCOPE, *, include_global: bool = True
+    tenant_id: str,
+    vocabulary_id,
+    scope_context=GLOBAL_SCOPE,
+    *,
+    include_global: bool = True,
+    application_ids=None,
+    include_shared: bool = True,
 ):
     try:
-        return vocabularies_for_tenant(tenant_id, scope_context, include_global=include_global).get(
-            id=vocabulary_id
+        queryset = apply_application_filter(
+            vocabularies_for_tenant(tenant_id, scope_context, include_global=include_global),
+            application_ids,
+            include_shared=include_shared,
         )
+        return queryset.get(id=vocabulary_id)
     except Exception:
         raise NotFound("Vocabulary was not found.")
 
@@ -77,17 +94,22 @@ def vocabularies_collection(request):
         )
         paginator = OctonomyLimitOffsetPagination()
         page = paginator.paginate_queryset(queryset, request)
-        serializer = VocabularySerializer(page, many=True)
+        serializer = VocabularySerializer(
+            page, many=True, context=response_serializer_context(request)
+        )
         return paginator.get_paginated_response(serializer.data)
 
-    serializer = VocabularyWriteSerializer(data=request.data)
+    serializer = VocabularyWriteSerializer(data=create_payload_with_scope(request, scope_context))
     serializer.is_valid(raise_exception=True)
     vocabulary = create_vocabulary(
         tenant_id,
-        serializer.validated_data,
+        scoped_create_data(serializer, scope_context),
         build_audit_context(request),
     )
-    return data_response(VocabularySerializer(vocabulary).data, status=status.HTTP_201_CREATED)
+    return data_response(
+        VocabularySerializer(vocabulary, context=response_serializer_context(request)).data,
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @extend_schema(methods=["GET"], responses=VocabularySerializer)
@@ -97,23 +119,30 @@ def vocabularies_collection(request):
 @api_view(["GET", "PATCH", "DELETE"])
 def vocabulary_detail(request, vocabulary_id):
     tenant_id = require_tenant(request)
+    scope_context = scope_context_for_request(request)
     # Writes (PATCH/DELETE) target the exact request scope; reads may fall back
     # to global rows only when the caller is authorized for the global namespace.
     include_global = request_include_global(request) if request.method == "GET" else False
+    application_ids, include_shared = application_filter_params(request)
     vocabulary = get_vocabulary_or_404(
         tenant_id,
         vocabulary_id,
-        scope_context_for_request(request),
+        scope_context,
         include_global=include_global,
+        application_ids=application_ids,
+        include_shared=include_shared,
     )
 
     if request.method == "GET":
-        return data_response(VocabularySerializer(vocabulary).data)
+        return data_response(
+            VocabularySerializer(vocabulary, context=response_serializer_context(request)).data
+        )
 
     if request.method == "DELETE":
         deactivate_vocabulary(vocabulary, build_audit_context(request))
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    reject_null_namespaced_application_id(request.data, scope_context)
     serializer = VocabularyPatchSerializer(data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
     vocabulary = update_vocabulary(
@@ -121,4 +150,6 @@ def vocabulary_detail(request, vocabulary_id):
         serializer.validated_data,
         build_audit_context(request),
     )
-    return data_response(VocabularySerializer(vocabulary).data)
+    return data_response(
+        VocabularySerializer(vocabulary, context=response_serializer_context(request)).data
+    )
