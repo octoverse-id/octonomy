@@ -22,8 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   correlation headers.
 - Outbox retry backoff, expired-claim recovery tracking, and dead-letter handling for failed
   deliveries.
+- Namespace propagation through audit and outbox: audit rows and outbox events carry the mutated
+  row's `namespace_type`/`namespace_id`, so a merchant mutation never emits a namespace-blind
+  (global) audit row or event. Global mutations stay `null`/`null`.
+- Audit list/read endpoints are namespace-filtered: a merchant-restricted grant reads only its own
+  namespace slice and global rows fail closed (an exact merchant grant cannot opt into global even
+  with `include_global=true`).
+- `docs/events.md`: the outbox consumer contract — event envelope, per-event payload schemas,
+  namespace routing guidance, and at-least-once replay/redelivery semantics.
 
 ### Changed
+- Outbox event payloads gain additive `namespace_type`/`namespace_id` JSON fields (`null` for
+  global). Existing consumers ignore the new keys; every pre-existing field is unchanged, so the
+  serialized shape stays backward compatible.
 - `NAMESPACE_WRITE_ENABLED` (env `OCTONOMY_NAMESPACE_WRITE_ENABLED`, default off) gates namespaced
   writes: v2 reads are namespace-aware, but a write carrying a namespace scope returns
   `403 namespaced_writes_disabled` until the flag is enabled. Global writes are unaffected.

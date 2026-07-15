@@ -7,7 +7,11 @@ from octonomy.audit.services import create_audit_log, tag_alias_snapshot
 from octonomy.core.audit import AuditContext
 from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
 from octonomy.core.errors import ApplicationMismatchError, ConflictError, DomainError
-from octonomy.core.selectors import row_matches_scope, scope_context_from_values
+from octonomy.core.selectors import (
+    namespace_fields,
+    row_matches_scope,
+    scope_context_from_values,
+)
 from octonomy.events.services import create_outbox_event
 from octonomy.tags.alias_selectors import (
     active_aliases_for_resolution,
@@ -109,6 +113,7 @@ def create_tag_alias(
             create_audit_log(
                 tenant_id=tenant_id,
                 application_id=alias.application_id,
+                **namespace_fields(alias),
                 action="tag_alias.created",
                 entity_type="tag_alias",
                 entity_id=str(alias.id),
@@ -119,6 +124,7 @@ def create_tag_alias(
             create_outbox_event(
                 tenant_id=tenant_id,
                 application_id=alias.application_id,
+                **namespace_fields(alias),
                 event_type="tag_alias.created",
                 aggregate_type="tag_alias",
                 aggregate_id=str(alias.id),
@@ -172,6 +178,7 @@ def update_tag_alias(
             create_audit_log(
                 tenant_id=alias.tenant_id,
                 application_id=alias.application_id,
+                **namespace_fields(alias),
                 action="tag_alias.updated",
                 entity_type="tag_alias",
                 entity_id=str(alias.id),
@@ -182,6 +189,7 @@ def update_tag_alias(
             create_outbox_event(
                 tenant_id=alias.tenant_id,
                 application_id=alias.application_id,
+                **namespace_fields(alias),
                 event_type="tag_alias.updated",
                 aggregate_type="tag_alias",
                 aggregate_id=str(alias.id),
@@ -207,6 +215,7 @@ def deactivate_tag_alias(alias: TagAlias, audit_context: AuditContext | None = N
         create_audit_log(
             tenant_id=alias.tenant_id,
             application_id=alias.application_id,
+            **namespace_fields(alias),
             action="tag_alias.deactivated",
             entity_type="tag_alias",
             entity_id=str(alias.id),
@@ -217,6 +226,7 @@ def deactivate_tag_alias(alias: TagAlias, audit_context: AuditContext | None = N
         create_outbox_event(
             tenant_id=alias.tenant_id,
             application_id=alias.application_id,
+            **namespace_fields(alias),
             event_type="tag_alias.deactivated",
             aggregate_type="tag_alias",
             aggregate_id=str(alias.id),

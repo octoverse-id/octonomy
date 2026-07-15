@@ -100,6 +100,21 @@ def namespace_kwargs(scope_context: ScopeContext = GLOBAL_SCOPE) -> dict[str, st
     }
 
 
+def namespace_fields(instance) -> dict[str, str | None]:
+    """Namespace scope copied from the mutated row itself.
+
+    Audit and outbox rows must carry the exact namespace of the entity they
+    describe — never a request/scope value that could drift from where the row
+    actually landed. Deriving the fields from the persisted instance is what
+    keeps merchant mutations from emitting namespace-blind audit/outbox rows.
+    """
+
+    return {
+        "namespace_type": instance.namespace_type,
+        "namespace_id": instance.namespace_id,
+    }
+
+
 def create_payload_with_scope(request, scope_context: ScopeContext):
     """Create-request body carrying the request's application scope.
 

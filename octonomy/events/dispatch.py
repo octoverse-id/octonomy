@@ -28,6 +28,11 @@ def serialize_outbox_event(event: OutboxEvent) -> dict:
         "id": str(event.id),
         "tenant_id": event.tenant_id,
         "application_id": event.application_id,
+        # Additive namespace fields (issue #43). Global rows serialize as null,
+        # preserving the pre-namespace shape for existing consumers, which ignore
+        # unknown keys. See docs/events.md for the consumer-compatibility contract.
+        "namespace_type": event.namespace_type,
+        "namespace_id": event.namespace_id,
         "event_type": event.event_type,
         "aggregate_type": event.aggregate_type,
         "aggregate_id": event.aggregate_id,

@@ -16,7 +16,7 @@ from octonomy.audit.services import (
 from octonomy.core.audit import AuditContext
 from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
 from octonomy.core.errors import ApplicationMismatchError, InactiveTagError
-from octonomy.core.selectors import namespace_kwargs, row_matches_scope
+from octonomy.core.selectors import namespace_fields, namespace_kwargs, row_matches_scope
 from octonomy.events.services import build_outbox_event, create_outbox_event, create_outbox_events
 from octonomy.tags.models import Tag
 
@@ -165,6 +165,7 @@ def assign_tag(
                 create_audit_log(
                     tenant_id=tenant_id,
                     application_id=application_id,
+                    **namespace_fields(assignment),
                     action="assignment.created",
                     entity_type="tag_assignment",
                     entity_id=str(assignment.id),
@@ -177,6 +178,7 @@ def assign_tag(
                 create_outbox_event(
                     tenant_id=tenant_id,
                     application_id=application_id,
+                    **namespace_fields(assignment),
                     event_type="assignment.created",
                     aggregate_type="tag_assignment",
                     aggregate_id=str(assignment.id),
@@ -220,6 +222,7 @@ def remove_tag_assignment(
             create_audit_log(
                 tenant_id=tenant_id,
                 application_id=application_id,
+                **namespace_fields(assignment),
                 action="assignment.removed",
                 entity_type="tag_assignment",
                 entity_id=str(assignment.id),
@@ -233,6 +236,7 @@ def remove_tag_assignment(
                 build_outbox_event(
                     tenant_id=tenant_id,
                     application_id=application_id,
+                    **namespace_fields(assignment),
                     event_type="assignment.removed",
                     aggregate_type="tag_assignment",
                     aggregate_id=str(assignment.id),
@@ -293,6 +297,7 @@ def bulk_assign_tags(
                 audit_log = build_audit_log(
                     tenant_id=tenant_id,
                     application_id=application_id,
+                    **namespace_fields(assignment),
                     action="assignment.created",
                     entity_type="tag_assignment",
                     entity_id=str(assignment.id),
@@ -308,6 +313,7 @@ def bulk_assign_tags(
                     build_outbox_event(
                         tenant_id=tenant_id,
                         application_id=application_id,
+                        **namespace_fields(assignment),
                         event_type="assignment.created",
                         aggregate_type="tag_assignment",
                         aggregate_id=str(assignment.id),
@@ -355,6 +361,7 @@ def bulk_remove_tags(
             audit_log = build_audit_log(
                 tenant_id=tenant_id,
                 application_id=application_id,
+                **namespace_fields(assignment),
                 action="assignment.removed",
                 entity_type="tag_assignment",
                 entity_id=str(assignment.id),
@@ -370,6 +377,7 @@ def bulk_remove_tags(
                 build_outbox_event(
                     tenant_id=tenant_id,
                     application_id=application_id,
+                    **namespace_fields(assignment),
                     event_type="assignment.removed",
                     aggregate_type="tag_assignment",
                     aggregate_id=str(assignment.id),
@@ -430,6 +438,7 @@ def replace_resource_tags(
             audit_log = build_audit_log(
                 tenant_id=tenant_id,
                 application_id=application_id,
+                **namespace_fields(assignment),
                 action="assignment.removed",
                 entity_type="tag_assignment",
                 entity_id=str(assignment.id),
@@ -445,6 +454,7 @@ def replace_resource_tags(
                 build_outbox_event(
                     tenant_id=tenant_id,
                     application_id=application_id,
+                    **namespace_fields(assignment),
                     event_type="assignment.removed",
                     aggregate_type="tag_assignment",
                     aggregate_id=str(assignment.id),

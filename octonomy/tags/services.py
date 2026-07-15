@@ -10,6 +10,7 @@ from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
 from octonomy.core.errors import ConflictError, DomainError
 from octonomy.core.selectors import (
     namespace_changed,
+    namespace_fields,
     row_matches_scope,
     scope_context_from_instance_data,
     scope_context_from_values,
@@ -169,6 +170,7 @@ def create_tag(
             create_audit_log(
                 tenant_id=tenant_id,
                 application_id=tag.application_id,
+                **namespace_fields(tag),
                 action="tag.created",
                 entity_type="tag",
                 entity_id=str(tag.id),
@@ -179,6 +181,7 @@ def create_tag(
             create_outbox_event(
                 tenant_id=tenant_id,
                 application_id=tag.application_id,
+                **namespace_fields(tag),
                 event_type="tag.created",
                 aggregate_type="tag",
                 aggregate_id=str(tag.id),
@@ -239,6 +242,7 @@ def update_tag(
             create_audit_log(
                 tenant_id=tag.tenant_id,
                 application_id=tag.application_id,
+                **namespace_fields(tag),
                 action="tag.updated",
                 entity_type="tag",
                 entity_id=str(tag.id),
@@ -249,6 +253,7 @@ def update_tag(
             create_outbox_event(
                 tenant_id=tag.tenant_id,
                 application_id=tag.application_id,
+                **namespace_fields(tag),
                 event_type="tag.updated",
                 aggregate_type="tag",
                 aggregate_id=str(tag.id),
@@ -298,6 +303,7 @@ def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
             build_outbox_event(
                 tenant_id=alias.tenant_id,
                 application_id=alias.application_id,
+                **namespace_fields(alias),
                 event_type="tag_alias.deactivated",
                 aggregate_type="tag_alias",
                 aggregate_id=str(alias.id),
@@ -323,6 +329,7 @@ def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
         create_audit_log(
             tenant_id=locked_tag.tenant_id,
             application_id=locked_tag.application_id,
+            **namespace_fields(locked_tag),
             action="tag.deactivated",
             entity_type="tag",
             entity_id=str(locked_tag.id),
@@ -333,6 +340,7 @@ def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
         create_outbox_event(
             tenant_id=locked_tag.tenant_id,
             application_id=locked_tag.application_id,
+            **namespace_fields(locked_tag),
             event_type="tag.deactivated",
             aggregate_type="tag",
             aggregate_id=str(locked_tag.id),

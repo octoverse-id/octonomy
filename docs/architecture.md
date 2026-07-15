@@ -139,6 +139,12 @@ Outbox events carry tenant/application context plus correlation fields such as `
 `request_id`, `actor_id`, `tag_id`, `resource_type`, and `resource_id`. Bulk and replace operations
 emit one event per concrete assignment created or removed while sharing the same `operation_id`.
 
+Events (and audit rows) also carry the mutated row's `namespace_type`/`namespace_id` so a merchant
+mutation never emits a namespace-blind (global) event or audit row; global rows serialize as
+`null`/`null`. These are additive JSON fields — existing consumers ignore them. The full consumer
+contract (envelope, per-event payloads, namespace routing, replay semantics) is documented in
+[`docs/events.md`](events.md).
+
 Current event types:
 
 - `tag.created`
