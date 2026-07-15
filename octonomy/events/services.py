@@ -23,6 +23,8 @@ def build_outbox_event(
     aggregate_id: str,
     payload: dict,
     application_id: str | None = None,
+    namespace_type: str | None = None,
+    namespace_id: str | None = None,
     metadata: dict | None = None,
     audit_context: AuditContext | None = None,
     tag_id=None,
@@ -44,6 +46,8 @@ def build_outbox_event(
     return OutboxEvent(
         tenant_id=tenant_id,
         application_id=application_id,
+        namespace_type=namespace_type,
+        namespace_id=namespace_id,
         event_type=event_type,
         aggregate_type=aggregate_type,
         aggregate_id=str(aggregate_id),

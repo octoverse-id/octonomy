@@ -78,6 +78,8 @@ def build_audit_log(
     entity_id: str,
     audit_context: AuditContext | None,
     application_id: str | None = None,
+    namespace_type: str | None = None,
+    namespace_id: str | None = None,
     tag_id=None,
     resource_type: str | None = None,
     resource_id: str | None = None,
@@ -96,6 +98,8 @@ def build_audit_log(
     return AuditLog(
         tenant_id=tenant_id,
         application_id=application_id,
+        namespace_type=namespace_type,
+        namespace_id=namespace_id,
         action=action,
         entity_type=entity_type,
         entity_id=str(entity_id),

@@ -5,7 +5,7 @@ from django.db import IntegrityError, transaction
 from octonomy.audit.services import create_audit_log, vocabulary_snapshot
 from octonomy.core.audit import AuditContext
 from octonomy.core.errors import ConflictError
-from octonomy.core.selectors import namespace_changed
+from octonomy.core.selectors import namespace_changed, namespace_fields
 from octonomy.events.services import create_outbox_event
 from octonomy.tags.models import Vocabulary
 from octonomy.tags.services import validate_metadata
@@ -24,6 +24,7 @@ def create_vocabulary(
             create_audit_log(
                 tenant_id=tenant_id,
                 application_id=vocabulary.application_id,
+                **namespace_fields(vocabulary),
                 action="vocabulary.created",
                 entity_type="vocabulary",
                 entity_id=str(vocabulary.id),
@@ -33,6 +34,7 @@ def create_vocabulary(
             create_outbox_event(
                 tenant_id=tenant_id,
                 application_id=vocabulary.application_id,
+                **namespace_fields(vocabulary),
                 event_type="vocabulary.created",
                 aggregate_type="vocabulary",
                 aggregate_id=str(vocabulary.id),
@@ -90,6 +92,7 @@ def update_vocabulary(
             create_audit_log(
                 tenant_id=vocabulary.tenant_id,
                 application_id=vocabulary.application_id,
+                **namespace_fields(vocabulary),
                 action="vocabulary.updated",
                 entity_type="vocabulary",
                 entity_id=str(vocabulary.id),
@@ -99,6 +102,7 @@ def update_vocabulary(
             create_outbox_event(
                 tenant_id=vocabulary.tenant_id,
                 application_id=vocabulary.application_id,
+                **namespace_fields(vocabulary),
                 event_type="vocabulary.updated",
                 aggregate_type="vocabulary",
                 aggregate_id=str(vocabulary.id),
@@ -125,6 +129,7 @@ def deactivate_vocabulary(
         create_audit_log(
             tenant_id=vocabulary.tenant_id,
             application_id=vocabulary.application_id,
+            **namespace_fields(vocabulary),
             action="vocabulary.deactivated",
             entity_type="vocabulary",
             entity_id=str(vocabulary.id),
@@ -134,6 +139,7 @@ def deactivate_vocabulary(
         create_outbox_event(
             tenant_id=vocabulary.tenant_id,
             application_id=vocabulary.application_id,
+            **namespace_fields(vocabulary),
             event_type="vocabulary.deactivated",
             aggregate_type="vocabulary",
             aggregate_id=str(vocabulary.id),
