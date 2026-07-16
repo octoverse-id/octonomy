@@ -19,6 +19,7 @@ lives in ``tests/events/test_outbox_namespace_payload.py``.
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -75,7 +76,7 @@ def test_bulk_partial_failure_is_not_a_cross_namespace_existence_oracle(merchant
     )
     nonexistent = str(uuid.uuid4())
 
-    def reject(tag_id: str):
+    def normalized_rejection(tag_id: str):
         response = merchant_a_client.post(
             "/api/v2/tag-assignments/bulk-assign",
             {
@@ -87,19 +88,22 @@ def test_bulk_partial_failure_is_not_a_cross_namespace_existence_oracle(merchant
             format="json",
         )
         assert response.status_code == 400, response.data
-        return response.json()["error"]
+        error = response.json()["error"]
+        error.pop("request_id", None)  # per-request random
+        # Replace the caller's own submitted id (which it obviously already knows)
+        # with a placeholder, so only the *shape* of the rejection remains to
+        # compare. Any residual difference would be a genuine leak.
+        return json.loads(json.dumps(error).replace(tag_id, "<ID>"))
 
-    foreign_error = reject(str(foreign.id))
-    missing_error = reject(nonexistent)
+    foreign_error = normalized_rejection(str(foreign.id))
+    missing_error = normalized_rejection(nonexistent)
 
-    # Same code and same field: the two are indistinguishable to the caller.
-    assert foreign_error["code"] == missing_error["code"]
-    assert set(foreign_error["details"]) == set(missing_error["details"])
-    # And nothing about the foreign row's identity leaks either way.
-    foreign_body = str(foreign_error)
-    assert "merchant_b" not in foreign_body
-    assert foreign.name not in foreign_body
-    assert foreign.slug not in foreign_body
+    # Byte-identical envelopes (modulo the caller's own id): a foreign row is
+    # indistinguishable from a missing one. Equality also subsumes non-disclosure
+    # — the missing-id envelope cannot contain the foreign row's name/slug, so an
+    # equal foreign envelope cannot either.
+    assert foreign_error == missing_error
+    assert "merchant_b" not in json.dumps(foreign_error)
 
 
 # --- event payload contents (namespace partitioning) --------------------------
