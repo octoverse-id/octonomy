@@ -31,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/events.md`: the outbox consumer contract — event envelope, per-event payload schemas,
   namespace routing guidance, and at-least-once replay/redelivery semantics.
 
+### Tests
+- Registry-driven namespace isolation sweep (`tests/isolation/`): walks the live v2 URL registry
+  and asserts a `merchant_b` caller can never see a `merchant_a` row on any read endpoint, with a
+  non-vacuous positive control per endpoint. A newly registered v2 read endpoint without a fixture
+  mapping fails CI loudly, keeping isolation coverage at 100% of the read surface.
+- Semantic-leak, flag-chaos, conflict/concurrency, and duplicate-slug resolution-order suites:
+  bulk partial-failure atomicity and non-disclosure, per-namespace audit/outbox event partitioning,
+  read-after-write durability across `NAMESPACE_WRITE_ENABLED` flips, same-slug 409 conflict
+  envelopes scoped per namespace with a deactivate→recreate→reactivate matrix, and deterministic
+  merchant-before-global resolution (single and bulk paths).
+
 ### Changed
 - Outbox event payloads gain additive `namespace_type`/`namespace_id` JSON fields (`null` for
   global). Existing consumers ignore the new keys; every pre-existing field is unchanged, so the
