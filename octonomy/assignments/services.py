@@ -64,7 +64,16 @@ def get_assignable_tags(
     # cross-tenant UUIDs are indistinguishable from missing tags to callers.
     tags = list(Tag.objects.for_tenant(tenant_id).filter(id__in=unique_ids))
     tags_by_id = {tag.id: tag for tag in tags}
-    missing = [str(tag_id) for tag_id in unique_ids if tag_id not in tags_by_id]
+    # A tag outside the caller's namespace scope is folded into the missing set:
+    # reporting it any differently from a nonexistent id would tell the caller the
+    # id names a real tag in another namespace — a cross-namespace existence
+    # oracle. Both cases surface the same "Unknown tag ids" error.
+    missing = [
+        str(tag_id)
+        for tag_id in unique_ids
+        if tag_id not in tags_by_id
+        or not row_matches_scope(tags_by_id[tag_id], scope_context, include_global=include_global)
+    ]
     if missing:
         raise serializers.ValidationError({"tag_ids": [f"Unknown tag ids: {', '.join(missing)}"]})
 

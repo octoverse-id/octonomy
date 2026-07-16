@@ -19,6 +19,8 @@ lives in ``tests/events/test_outbox_namespace_payload.py``.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from django.test import override_settings
 
@@ -60,33 +62,44 @@ def test_bulk_assign_with_a_cross_namespace_reference_is_all_or_nothing(merchant
 
 
 @override_settings(NAMESPACE_WRITE_ENABLED=True)
-def test_bulk_partial_failure_does_not_disclose_the_foreign_row(merchant_a_client):
-    # The rejection must read as "not found", never "belongs to merchant_b" — a
-    # partial failure must not become an existence oracle for another namespace.
+def test_bulk_partial_failure_is_not_a_cross_namespace_existence_oracle(merchant_a_client):
+    # A foreign (merchant_b) tag id and a nonexistent id must be rejected
+    # *identically*. If they differed (e.g. "Tag was not found" vs "Unknown tag
+    # ids"), the response would reveal that the id names a real tag in another
+    # namespace — an existence oracle across the isolation boundary.
     foreign = make_tag(
         application_id=APP,
         slug="secret-merchant-b-tag",
         name="Secret Merchant B Tag",
-        namespace_type="merchant",
-        namespace_id="merchant_b",
+        **NS_B,
     )
+    nonexistent = str(uuid.uuid4())
 
-    response = merchant_a_client.post(
-        "/api/v2/tag-assignments/bulk-assign",
-        {
-            "application_id": APP,
-            "tag_ids": [str(foreign.id)],
-            "resource_type": "product",
-            "resource_id": "bulk-oracle",
-        },
-        format="json",
-    )
+    def reject(tag_id: str):
+        response = merchant_a_client.post(
+            "/api/v2/tag-assignments/bulk-assign",
+            {
+                "application_id": APP,
+                "tag_ids": [tag_id],
+                "resource_type": "product",
+                "resource_id": "bulk-oracle",
+            },
+            format="json",
+        )
+        assert response.status_code == 400, response.data
+        return response.json()["error"]
 
-    assert response.status_code == 400
-    body = str(response.data)
-    assert "merchant_b" not in body
-    assert foreign.name not in body
-    assert foreign.slug not in body
+    foreign_error = reject(str(foreign.id))
+    missing_error = reject(nonexistent)
+
+    # Same code and same field: the two are indistinguishable to the caller.
+    assert foreign_error["code"] == missing_error["code"]
+    assert set(foreign_error["details"]) == set(missing_error["details"])
+    # And nothing about the foreign row's identity leaks either way.
+    foreign_body = str(foreign_error)
+    assert "merchant_b" not in foreign_body
+    assert foreign.name not in foreign_body
+    assert foreign.slug not in foreign_body
 
 
 # --- event payload contents (namespace partitioning) --------------------------
@@ -111,29 +124,33 @@ def test_namespaced_write_stamps_events_and_audit_with_its_own_namespace(merchan
     audit = AuditLog.objects.get(entity_type="tag", entity_id=tag_id)
     assert (audit.namespace_type, audit.namespace_id) == ("merchant", "merchant_a")
 
-    # A consumer routing merchant_b's stream must receive none of this write.
-    assert not OutboxEvent.objects.filter(namespace_id="merchant_b").exists()
-    assert not AuditLog.objects.filter(namespace_id="merchant_b").exists()
-
 
 @override_settings(NAMESPACE_WRITE_ENABLED=True)
-def test_two_merchants_writing_the_same_slug_emit_disjoint_event_streams(
-    merchant_a_client, merchant_b_client
-):
-    for client in (merchant_a_client, merchant_b_client):
+def test_event_streams_route_by_namespace_and_do_not_cross(merchant_a_client, merchant_b_client):
+    # Both merchants write the same slug, so each emits an event. A consumer that
+    # routes by namespace_id must receive exactly its own aggregate and never the
+    # other merchant's — seeding both sides makes this a real routing assertion,
+    # not the tautology of "no B row exists when only A wrote".
+    ids = {}
+    for client, merchant in ((merchant_a_client, "merchant_a"), (merchant_b_client, "merchant_b")):
         response = client.post(
             "/api/v2/tags",
             {"application_id": APP, "name": "Shared Slug", "slug": "sharedslug", "type": "label"},
             format="json",
         )
         assert response.status_code == 201, response.data
+        ids[merchant] = response.json()["data"]["id"]
 
-    a_events = OutboxEvent.objects.filter(namespace_id="merchant_a", aggregate_type="tag")
-    b_events = OutboxEvent.objects.filter(namespace_id="merchant_b", aggregate_type="tag")
-    assert a_events.count() == 1
-    assert b_events.count() == 1
-    # The two writes share a slug but must not share an event: each namespace's
-    # stream carries only its own aggregate id.
-    assert set(a_events.values_list("aggregate_id", flat=True)).isdisjoint(
-        b_events.values_list("aggregate_id", flat=True)
-    )
+    for stream, own, other in (
+        ("merchant_a", ids["merchant_a"], ids["merchant_b"]),
+        ("merchant_b", ids["merchant_b"], ids["merchant_a"]),
+    ):
+        aggregates = set(
+            OutboxEvent.objects.filter(namespace_id=stream, aggregate_type="tag").values_list(
+                "aggregate_id", flat=True
+            )
+        )
+        assert aggregates == {own}, (stream, aggregates)
+        assert other not in aggregates
+        # Audit reads route the same way.
+        assert not AuditLog.objects.filter(namespace_id=stream, entity_id=other).exists()

@@ -15,6 +15,8 @@ These tests pin the behaviour those constraints must produce:
 
 from __future__ import annotations
 
+from unittest import mock
+
 import pytest
 from django.db import IntegrityError, transaction
 from django.test import override_settings
@@ -61,6 +63,22 @@ def test_same_slug_in_a_sibling_namespace_does_not_conflict(merchant_a_client, m
     assert a.status_code == 201, a.data
     assert b.status_code == 201, b.data
     assert a.json()["data"]["id"] != b.json()["data"]["id"]
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_insert_time_integrity_error_is_translated_to_409(merchant_a_client):
+    # The true race: our request clears every app-layer pre-check, then a
+    # concurrent writer wins the unique constraint so *our* INSERT raises
+    # IntegrityError. The view must surface the 409 conflict envelope, never a
+    # 500. Patching the create call reproduces the losing writer deterministically.
+    with mock.patch(
+        "octonomy.tags.services.Tag.objects.create",
+        side_effect=IntegrityError("duplicate key"),
+    ):
+        response = _create_tag(merchant_a_client, "racemock")
+
+    assert response.status_code == 409, response.data
+    assert response.json()["error"]["code"] == "conflict"
 
 
 def test_database_constraint_is_the_race_arbiter(db):
