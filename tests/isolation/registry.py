@@ -118,12 +118,19 @@ class Scenario:
     appear when ``merchant_a`` itself calls ``path`` — the guard against a
     vacuously green sweep (an endpoint that 404s for everyone would otherwise
     "pass").
+
+    ``b_status`` defaults to ``(200,)``: an authorized ``merchant_b`` must get a
+    working, isolated read — its own rows or an empty set — not a refusal. This
+    catches a regression where a read endpoint starts *refusing* another
+    authorized merchant instead of serving its isolated view (which would still
+    have no ``merchant_a`` ids and thus pass a laxer check). Detail and resolution
+    scenarios override it with the not-found/validation status they intend.
     """
 
     path: str
     forbidden: set[str]
     positive_id: str
-    b_status: tuple[int, ...] = (200, 400, 404)
+    b_status: tuple[int, ...] = (200,)
 
 
 def _tokens(*rows) -> set[str]:
