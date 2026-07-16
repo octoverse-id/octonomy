@@ -52,6 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Outbox dispatch now claims rows before publishing so network delivery happens outside the
   row-locking transaction.
 
+### Fixed
+- Bulk tag assignment no longer distinguishes a tag in another namespace from a nonexistent one:
+  both are rejected identically as `Unknown tag ids`, closing a cross-namespace existence oracle
+  (previously an out-of-scope tag returned `Tag was not found` while a missing id returned
+  `Unknown tag ids`, letting a caller probe whether an id named a real tag in another namespace).
+
 ## [1.0.0] - 2026-06-08
 
 First stable release. The Octonomy REST v1 API contract is now stable and follows Semantic
