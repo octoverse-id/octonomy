@@ -592,7 +592,7 @@ requires-dist = [
     { name = "dj-database-url", specifier = ">=2.2,<4.0" },
     { name = "django", specifier = ">=5.0,<5.3" },
     { name = "djangorestframework", specifier = ">=3.15,<3.18" },
-    { name = "drf-spectacular", specifier = ">=0.27,<0.30" },
+    { name = "drf-spectacular", specifier = ">=0.27,<0.31" },
     { name = "factory-boy", marker = "extra == 'dev'", specifier = ">=3.3,<3.4" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.7,<3.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<3.4" },
