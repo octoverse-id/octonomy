@@ -57,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both are rejected identically as `Unknown tag ids`, closing a cross-namespace existence oracle
   (previously an out-of-scope tag returned `Tag was not found` while a missing id returned
   `Unknown tag ids`, letting a caller probe whether an id named a real tag in another namespace).
+- Outbox dispatcher no longer conflates an expired processing claim with a delivery failure. A
+  recovered claim is re-queued for redelivery (`pending`) instead of being marked `failed`, so a
+  successfully-delivered-but-claim-expired event is never recorded as failed and recoveries count
+  only under `recovered` (previously each recovery was counted as both `failed` and `recovered`).
+  Recovery still never increments `attempts`, so a repeatedly-recovered event is retried rather than
+  dead-lettered.
 
 ## [1.0.0] - 2026-06-08
 

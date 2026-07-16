@@ -165,8 +165,16 @@ with `cascaded_alias_ids` and one `tag_alias.deactivated` outbox event per alias
 
 The dispatcher is intentionally broker-free for v1. It claims rows quickly in the database,
 publishes outside the row-locking transaction, and then marks each event as published, retryable
-failed, or dead-lettered. Expired processing claims are recovered by later dispatcher runs without
-counting as delivery attempts.
+failed, or dead-lettered. Completion is gated on still holding the claim token, so a worker whose
+claim was stolen (its claim expired and another worker took over) can never mark a delivered event
+failed.
+
+An expired processing claim is not a delivery failure: the original worker vanished before its
+outcome landed, so the event is re-queued for redelivery (back to `pending`, at-least-once) rather
+than marked failed. Recovery increments a separate `recoveries` counter, never `attempts`, and so
+never dead-letters — a claim expiry is not a delivery attempt. A successfully-delivered-but-claim-
+expired event is therefore redelivered (a duplicate the consumer dedupes on `id`), never recorded
+as failed.
 
 Default local logging transport:
 

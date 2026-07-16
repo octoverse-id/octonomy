@@ -124,9 +124,11 @@ Recommended scheduling for production-like environments:
 
 The dispatcher uses row locking with `skip_locked` where supported, so multiple workers can safely
 split eligible rows on PostgreSQL. Rows are claimed inside a short transaction, published outside
-that transaction, and then marked with the result. A later run recovers expired `processing` claims
-and schedules them for retry without incrementing delivery `attempts`; expired-claim recoveries are
-tracked in `recoveries`.
+that transaction, and then marked with the result — completion only applies while the worker still
+holds the claim token, so a stolen claim cannot mark a delivered event failed. A later run recovers
+expired `processing` claims by returning them to `pending` for redelivery (an expired claim is not a
+delivery failure), without incrementing delivery `attempts`; expired-claim recoveries are tracked in
+`recoveries` and counted under `recovered`, never `failed`.
 
 Configuration:
 
