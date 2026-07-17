@@ -215,8 +215,9 @@ def dispatch_outbox_events(
         retry_base_seconds=retry_base_seconds,
         retry_max_seconds=retry_max_seconds,
     )
-    summary["failed"] += recovery_summary["failed"]
-    summary["recovered"] += recovery_summary["failed"]
+    # An expired claim is re-queued for redelivery, not recorded as a delivery
+    # failure, so it counts only under "recovered" — never conflated into "failed".
+    summary["recovered"] += recovery_summary["recovered"]
 
     return summary
 
@@ -227,7 +228,7 @@ def _recover_expired_claims(
     retry_base_seconds: int,
     retry_max_seconds: int,
 ) -> dict[str, int]:
-    summary = {"failed": 0}
+    summary = {"recovered": 0}
 
     for _ in range(limit):
         with transaction.atomic():
@@ -236,7 +237,7 @@ def _recover_expired_claims(
                 break
             result = _mark_recovered(
                 event,
-                RuntimeError("outbox claim expired before publish completed"),
+                "outbox claim expired before publish completed",
                 retry_base_seconds=retry_base_seconds,
                 retry_max_seconds=retry_max_seconds,
             )
@@ -429,19 +430,39 @@ def _mark_failed(
 
 def _mark_recovered(
     event: OutboxEvent,
-    exc: Exception,
+    note: str,
     *,
     retry_base_seconds: int,
     retry_max_seconds: int,
 ) -> str:
+    # An expired claim means the worker vanished before its completion landed; we
+    # cannot tell whether delivery happened. Under at-least-once semantics the
+    # event is re-queued for redelivery (status PENDING) rather than recorded as a
+    # delivery failure — so a successfully-delivered-but-claim-expired event is
+    # never left FAILED. Recovery bumps `recoveries` (observability), never
+    # `attempts`, and therefore never dead-letters: a claim expiry is not a
+    # delivery attempt. Backoff grows with the recovery count to avoid hammering a
+    # row whose worker keeps dying.
     event.recoveries += 1
-    event.last_error = str(exc)
-    event.status = OutboxEvent.Status.FAILED
+    event.last_error = note
+    event.status = OutboxEvent.Status.PENDING
+    # Back off on the recovery count, but never schedule sooner than the failure
+    # backoff the row already earned from its delivery `attempts`. Otherwise an
+    # event that failed several times (large backoff) whose retry claim then
+    # expires would be re-queued at the small first-recovery delay and hammer a
+    # still-failing destination. attempts is a floor, never incremented here.
     event.available_at = timezone.now() + timezone.timedelta(
-        seconds=_retry_delay_seconds(
-            attempt_number=max(event.attempts, 1),
-            retry_base_seconds=retry_base_seconds,
-            retry_max_seconds=retry_max_seconds,
+        seconds=max(
+            _retry_delay_seconds(
+                attempt_number=event.recoveries,
+                retry_base_seconds=retry_base_seconds,
+                retry_max_seconds=retry_max_seconds,
+            ),
+            _retry_delay_seconds(
+                attempt_number=event.attempts,
+                retry_base_seconds=retry_base_seconds,
+                retry_max_seconds=retry_max_seconds,
+            ),
         )
     )
     event.claim_id = None
@@ -459,7 +480,7 @@ def _mark_recovered(
             "updated_at",
         ]
     )
-    return "failed"
+    return "recovered"
 
 
 def _retry_delay_seconds(

@@ -183,8 +183,11 @@ def test_dispatch_recovers_expired_claims():
     )
 
     event.refresh_from_db()
-    assert summary == {"published": 0, "failed": 1, "dead_lettered": 0, "recovered": 1}
-    assert event.status == OutboxEvent.Status.FAILED
+    # A recovered claim is re-queued for redelivery (PENDING), not recorded as a
+    # delivery failure: it counts only under "recovered", leaves attempts at 0, and
+    # is never conflated into "failed".
+    assert summary == {"published": 0, "failed": 0, "dead_lettered": 0, "recovered": 1}
+    assert event.status == OutboxEvent.Status.PENDING
     assert event.attempts == 0
     assert event.recoveries == 1
     assert "claim expired" in event.last_error
@@ -220,9 +223,9 @@ def test_expired_claim_recovery_does_not_starve_pending_events():
 
     expired.refresh_from_db()
     pending.refresh_from_db()
-    assert summary == {"published": 1, "failed": 1, "dead_lettered": 0, "recovered": 1}
+    assert summary == {"published": 1, "failed": 0, "dead_lettered": 0, "recovered": 1}
     assert transport.events == [pending.id]
-    assert expired.status == OutboxEvent.Status.FAILED
+    assert expired.status == OutboxEvent.Status.PENDING
     assert expired.attempts == 0
     assert expired.recoveries == 1
     assert pending.status == OutboxEvent.Status.PUBLISHED
@@ -239,11 +242,15 @@ def test_lost_claim_after_publish_logs_error_and_continues(caplog):
         def publish(self, event: OutboxEvent) -> None:
             self.events.append(event.id)
             if event.id == first.id:
+                # Simulate a concurrent recovery stealing the expired claim: it
+                # re-queues the row as PENDING (redeliverable) with a backed-off
+                # available_at, never FAILED.
                 OutboxEvent.objects.filter(id=event.id).update(
-                    status=OutboxEvent.Status.FAILED,
+                    status=OutboxEvent.Status.PENDING,
                     claim_id=None,
                     claimed_at=None,
                     claim_expires_at=None,
+                    available_at=timezone.now() + timezone.timedelta(minutes=5),
                 )
 
     transport = StealingTransport()
@@ -255,7 +262,10 @@ def test_lost_claim_after_publish_logs_error_and_continues(caplog):
     second.refresh_from_db()
     assert summary == {"published": 1, "failed": 0, "dead_lettered": 0, "recovered": 0}
     assert transport.events == [first.id, second.id]
-    assert first.status == OutboxEvent.Status.FAILED
+    # The stale worker cannot mark its lost claim: `first` is delivered but its
+    # completion is a no-op (claim-token mismatch), so it is never recorded as
+    # FAILED — it stays PENDING and will be redelivered (at-least-once).
+    assert first.status == OutboxEvent.Status.PENDING
     assert second.status == OutboxEvent.Status.PUBLISHED
     assert any(record.message == "outbox_delivered_but_claim_lost" for record in caplog.records)
 
