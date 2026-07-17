@@ -79,6 +79,27 @@ def test_namespace_conflict_metric_not_emitted_on_scope_move_conflict(caplog):
 
 
 @override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_check_constraint_violation_at_entity_write_does_not_emit_metric(caplog):
+    # A non-uniqueness IntegrityError from the entity write itself (here the
+    # namespace_scope check: a namespaced row with no application_id) must not be
+    # counted as a duplicate-key collision.
+    data = {
+        "application_id": None,
+        "namespace_type": "merchant",
+        "namespace_id": "merchant_a",
+        "slug": "no-app",
+        "type": "label",
+        "name": "No App",
+        "metadata": {},
+    }
+    caplog.set_level(logging.INFO, logger="octonomy.metrics")
+    with pytest.raises(ConflictError):
+        create_tag("tenant_a", data)
+
+    assert _namespace_conflicts(caplog) == []
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
 def test_non_uniqueness_integrity_error_is_not_mislabelled(monkeypatch, caplog):
     # An IntegrityError from the audit/outbox writes (not the entity write) must
     # propagate as-is, never be relabelled a duplicate-slug 409 or counted as a

@@ -39,18 +39,37 @@ def emit_metric(name: str, **fields) -> None:
     logger.info(name, extra={"metric": name, "metric_fields": fields})
 
 
-def emit_namespace_conflict(entity: str, scope_context) -> None:
+def emit_namespace_conflict(exc, entity: str, scope_context) -> None:
     """Record a duplicate-key collision on a namespace-aware unique constraint.
 
-    Emitted only from the ``IntegrityError`` branches that raise a 409 for a real
-    uniqueness violation (never from business-rule conflicts), so the count is a
-    clean "duplicate-key errors on the new constraints" signal. ``namespace_type``
-    is null for a global-scope collision, so dashboards can split global vs merchant.
+    Called from the entity-write ``IntegrityError`` branches, but emits only for an
+    actual *uniqueness* violation: the same ``create()``/``save()`` can also trip a
+    check constraint (e.g. ``tag_parent_cannot_be_self``), which is not a duplicate
+    and must not pollute the uniqueness dashboard. ``namespace_type`` is null for a
+    global-scope collision, so dashboards can split global vs merchant.
     """
 
+    if not _is_unique_violation(exc):
+        return
     emit_metric(
         NAMESPACE_CONFLICT,
         entity=entity,
         namespace_type=scope_context.namespace_type,
         namespace_id=scope_context.namespace_id,
     )
+
+
+def _is_unique_violation(exc) -> bool:
+    """Whether an ``IntegrityError`` is a unique-constraint violation (vs a check
+    or other constraint), across the SQLite and PostgreSQL backends.
+
+    PostgreSQL surfaces SQLSTATE ``23505`` (``unique_violation``) on the wrapped
+    driver error (``sqlstate`` on psycopg3, ``pgcode`` on psycopg2). SQLite has no
+    SQLSTATE, so fall back to the driver message.
+    """
+
+    cause = exc.__cause__
+    sqlstate = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+    if sqlstate is not None:
+        return sqlstate == "23505"
+    return "unique constraint failed" in str(cause or exc).lower()

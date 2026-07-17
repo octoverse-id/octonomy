@@ -116,8 +116,8 @@ def create_tag_alias(
         try:
             with transaction.atomic():
                 alias = TagAlias.objects.create(**data)
-        except IntegrityError:
-            emit_namespace_conflict("tag_alias", scope_context)
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "tag_alias", scope_context)
             raise ConflictError(
                 "An active tag alias with this tenant, application, and slug already exists.",
                 {"slug": ["Duplicate active alias slug."]},
@@ -191,8 +191,8 @@ def update_tag_alias(
         try:
             with transaction.atomic():
                 alias.save()
-        except IntegrityError:
-            emit_namespace_conflict("tag_alias", scope_context)
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "tag_alias", scope_context)
             raise ConflictError(
                 "An active tag alias with this tenant, application, and slug already exists.",
                 {"slug": ["Duplicate active alias slug."]},

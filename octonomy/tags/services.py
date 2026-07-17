@@ -174,8 +174,8 @@ def create_tag(
         try:
             with transaction.atomic():
                 tag = Tag.objects.create(**data)
-        except IntegrityError:
-            emit_namespace_conflict("tag", scope_context)
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "tag", scope_context)
             raise ConflictError(
                 "An active tag with this tenant, application, type, and slug already exists.",
                 {"slug": ["Duplicate active tag slug."]},
@@ -255,8 +255,8 @@ def update_tag(
         try:
             with transaction.atomic():
                 tag.save()
-        except IntegrityError:
-            emit_namespace_conflict("tag", scope_context)
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "tag", scope_context)
             raise ConflictError(
                 "An active tag with this tenant, application, type, and slug already exists.",
                 {"slug": ["Duplicate active tag slug."]},
@@ -307,6 +307,15 @@ def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
                 is_active=True,
             )
         )
+        # The cascade below mutates every active alias for this tag, including
+        # namespaced aliases that point at a global tag. Deactivating a global tag
+        # therefore writes namespaced rows, so the kill-switch must gate the cascade
+        # too — the tag's own scope guard above does not cover it. A namespaced alias
+        # while writes are off rejects the whole (atomic) deactivation.
+        for alias in active_aliases:
+            guard_namespace_write_enabled(
+                scope_context_from_values(alias.namespace_type, alias.namespace_id)
+            )
         # A deactivated canonical tag cannot have assignable aliases left behind;
         # cascade by deactivation rather than hard delete so alias history remains
         # visible in audit trails and outbox events can describe the cascade.

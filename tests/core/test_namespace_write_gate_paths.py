@@ -15,8 +15,8 @@ from rest_framework import serializers
 from octonomy.assignments.services import assign_tag, get_or_create_assignment
 from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
 from octonomy.core.errors import NamespacedWritesDisabledError
-from octonomy.tags.services import create_tag, update_tag
-from tests.factories import make_tag
+from octonomy.tags.services import create_tag, deactivate_tag, update_tag
+from tests.factories import make_alias, make_tag
 
 pytestmark = pytest.mark.django_db
 
@@ -119,6 +119,32 @@ def test_global_assignment_is_allowed_when_kill_switch_off():
         tag=tag,
     )
     assert created is True
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=False)
+def test_global_tag_deactivation_is_refused_when_it_cascades_to_a_namespaced_alias():
+    # Deactivating a global tag cascades to deactivate every active alias pointing at
+    # it — including merchant aliases. That is a namespaced write, so the kill-switch
+    # must reject the whole (atomic) deactivation, not just guard the tag's own scope.
+    global_tag = make_tag(application_id="commerce", slug="global-canonical")
+    make_alias(
+        tag=global_tag,
+        application_id="commerce",
+        namespace_type="merchant",
+        namespace_id="merchant_a",
+        slug="merchant-alias",
+    )
+    with pytest.raises(NamespacedWritesDisabledError):
+        deactivate_tag(global_tag)
+    global_tag.refresh_from_db()
+    assert global_tag.is_active is True  # rolled back, not left half-deactivated
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=False)
+def test_global_tag_deactivation_with_only_global_aliases_is_allowed_when_off():
+    global_tag = make_tag(application_id="commerce", slug="global-canonical-2")
+    make_alias(tag=global_tag, application_id="commerce", slug="global-alias")
+    assert deactivate_tag(global_tag) is True
 
 
 @override_settings(NAMESPACE_WRITE_ENABLED=True)

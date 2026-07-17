@@ -33,8 +33,8 @@ def create_vocabulary(
         try:
             with transaction.atomic():
                 vocabulary = Vocabulary.objects.create(**data)
-        except IntegrityError:
-            emit_namespace_conflict("vocabulary", scope_context)
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "vocabulary", scope_context)
             raise ConflictError(
                 "An active vocabulary with this tenant, application, and slug already exists.",
                 {"slug": ["Duplicate active vocabulary slug."]},
@@ -113,8 +113,8 @@ def update_vocabulary(
         try:
             with transaction.atomic():
                 vocabulary.save()
-        except IntegrityError:
-            emit_namespace_conflict("vocabulary", scope_context)
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "vocabulary", scope_context)
             raise ConflictError(
                 "An active vocabulary with this tenant, application, and slug already exists.",
                 {"slug": ["Duplicate active vocabulary slug."]},
