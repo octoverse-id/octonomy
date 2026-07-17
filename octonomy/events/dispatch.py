@@ -12,8 +12,10 @@ from urllib import request as urllib_request
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
+from django.db.models import Count, Min
 from django.utils import timezone
 
+from octonomy.core.metrics import OUTBOX_DISPATCH_SUMMARY, emit_metric
 from octonomy.events.models import OutboxEvent
 
 logger = logging.getLogger(__name__)
@@ -219,7 +221,43 @@ def dispatch_outbox_events(
     # failure, so it counts only under "recovered" — never conflated into "failed".
     summary["recovered"] += recovery_summary["recovered"]
 
+    _emit_dispatch_metric(summary)
     return summary
+
+
+def _emit_dispatch_metric(summary: dict[str, int]) -> None:
+    """Structured heartbeat: run totals plus deliverable backlog lag per namespace.
+
+    Emitted once per run (no request to ride on). ``lag_by_namespace_type`` reports,
+    for each namespace type with a due backlog, how many events are waiting and how
+    long the oldest has been due — the "outbox lag by namespace type" signal that
+    flags a merchant namespace falling behind independently of global traffic.
+    """
+
+    now = timezone.now()
+    rows = (
+        OutboxEvent.objects.filter(
+            status__in=[OutboxEvent.Status.PENDING, OutboxEvent.Status.FAILED],
+            available_at__lte=now,
+        )
+        .values("namespace_type")
+        .annotate(backlog=Count("id"), oldest=Min("available_at"))
+    )
+    lag = {
+        (row["namespace_type"] or "global"): {
+            "backlog": row["backlog"],
+            "oldest_pending_seconds": round((now - row["oldest"]).total_seconds(), 2),
+        }
+        for row in rows
+    }
+    emit_metric(
+        OUTBOX_DISPATCH_SUMMARY,
+        published=summary["published"],
+        failed=summary["failed"],
+        dead_lettered=summary["dead_lettered"],
+        recovered=summary["recovered"],
+        lag_by_namespace_type=lag,
+    )
 
 
 def _recover_expired_claims(

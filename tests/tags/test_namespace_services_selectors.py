@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from django.test import override_settings
 from rest_framework import serializers
 
 from octonomy.assignments.models import TagAssignment
@@ -20,6 +21,9 @@ MERCHANT_A = ScopeContext("merchant", "merchant_a")
 MERCHANT_B = ScopeContext("merchant", "merchant_b")
 
 
+# Namespaced writes go through the service layer here, which the S7 kill-switch
+# gates; these matrices exercise namespaced creates/assigns, so writes are enabled.
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
 def test_parent_and_vocabulary_namespace_compatibility_matrix():
     global_parent = make_tag(application_id="commerce", slug="global-parent")
     merchant_parent = make_tag(
@@ -154,6 +158,7 @@ def test_parent_and_vocabulary_namespace_compatibility_matrix():
         )
 
 
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
 def test_alias_namespace_compatibility_matrix():
     global_tag = make_tag(application_id="commerce", slug="global-target")
     merchant_tag = make_tag(
@@ -239,6 +244,7 @@ def test_alias_namespace_compatibility_matrix():
         )
 
 
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
 def test_assignment_namespace_compatibility_matrix():
     global_tag = make_tag(application_id="commerce", slug="global-assignable")
     merchant_tag = make_tag(
@@ -448,6 +454,7 @@ def test_no_application_bulk_alias_resolution_uses_namespace_precedence():
     assert aliases[0].tag_id == merchant_target.id
 
 
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
 def test_usage_count_matrix_for_legacy_global_and_visible_scoped_views():
     tag = make_tag(application_id="commerce", slug="counted")
     for scope_context, resource_id in [
@@ -509,6 +516,7 @@ def test_tree_traversal_filters_children_to_visible_namespace():
     assert merchant_b_child.id not in set(queryset.values_list("id", flat=True))
 
 
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
 def test_namespaced_assignment_retry_requeries_same_scope(monkeypatch):
     tag = make_tag(application_id="commerce", slug="retry-tag")
     merchant_a_assignment = TagAssignment.objects.create(

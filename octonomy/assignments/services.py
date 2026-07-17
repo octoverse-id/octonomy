@@ -14,7 +14,7 @@ from octonomy.audit.services import (
     create_audit_logs,
 )
 from octonomy.core.audit import AuditContext
-from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
+from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, guard_namespace_write_enabled
 from octonomy.core.errors import ApplicationMismatchError, InactiveTagError
 from octonomy.core.selectors import namespace_fields, namespace_kwargs, row_matches_scope
 from octonomy.events.services import build_outbox_event, create_outbox_event, create_outbox_events
@@ -117,6 +117,17 @@ def get_or_create_assignment(
     tag: Tag,
     assigned_by: str | None = None,
 ) -> tuple[TagAssignment, bool]:
+    # Guard here too, not only at the public bulk/single entry points: this helper
+    # is importable, so a management command or background writer calling it directly
+    # must still hit the namespaced-write kill-switch AND the tag/scope compatibility
+    # check. Without the latter a direct caller could insert a global assignment
+    # referencing a merchant tag (or a cross-namespace one). include_global=True is the
+    # permissive backstop: it rejects only genuinely incompatible pairs (global scope ->
+    # namespaced tag, or a different namespace) and never over-rejects a pair the
+    # request-level include_global policy already accepted upstream in
+    # get_assignable_tags. Idempotent for the guarded/validated public callers.
+    guard_namespace_write_enabled(scope_context)
+    validate_tag_for_assignment(tag, tenant_id, application_id, scope_context, include_global=True)
     lookup = assignment_lookup(
         tenant_id=tenant_id,
         application_id=application_id,
@@ -149,6 +160,7 @@ def assign_tag(
     scope_context: ScopeContext = GLOBAL_SCOPE,
     include_global: bool = True,
 ) -> AssignmentResult:
+    guard_namespace_write_enabled(scope_context)
     validate_tag_for_assignment(
         tag,
         tenant_id,
@@ -214,6 +226,7 @@ def remove_tag_assignment(
     audit_context: AuditContext | None = None,
     scope_context: ScopeContext = GLOBAL_SCOPE,
 ) -> int:
+    guard_namespace_write_enabled(scope_context)
     queryset = TagAssignment.objects.for_exact_scope(scope_context).filter(
         tenant_id=tenant_id,
         application_id=application_id,
@@ -272,6 +285,7 @@ def bulk_assign_tags(
     scope_context: ScopeContext = GLOBAL_SCOPE,
     include_global: bool = True,
 ) -> dict:
+    guard_namespace_write_enabled(scope_context)
     tags = get_assignable_tags(
         tenant_id,
         application_id,
@@ -349,6 +363,7 @@ def bulk_remove_tags(
     audit_context: AuditContext | None = None,
     scope_context: ScopeContext = GLOBAL_SCOPE,
 ) -> int:
+    guard_namespace_write_enabled(scope_context)
     max_bulk = getattr(settings, "MAX_BULK_TAGS", 200)
     if len(tag_ids) > max_bulk:
         raise serializers.ValidationError({"tag_ids": [f"Maximum bulk size is {max_bulk}."]})
@@ -416,6 +431,7 @@ def replace_resource_tags(
     scope_context: ScopeContext = GLOBAL_SCOPE,
     include_global: bool = True,
 ) -> dict:
+    guard_namespace_write_enabled(scope_context)
     tags = get_assignable_tags(
         tenant_id,
         application_id,

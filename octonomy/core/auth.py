@@ -87,16 +87,19 @@ def request_authorizes_global_references(request) -> bool:
     return authorized
 
 
-def enforce_namespace_write_gate(request, scope_context: ScopeContext) -> None:
-    """Reject namespaced writes while the kill-switch is off.
+def guard_namespace_write_enabled(scope_context: ScopeContext) -> None:
+    """Reject persisting a namespaced row while the write kill-switch is off.
 
-    v2 reads are namespace-aware, but persisting namespaced rows stays disabled
-    until audit/outbox carry namespace and rollout controls land. Global writes
-    (v1 and v2-global) are always allowed; only an authorized namespaced writer
-    reaches this gate, so the error is a precise capability signal.
+    Enforced at the domain-service layer so *every* write path is gated — HTTP
+    requests, management commands, and any programmatic/background writer — not
+    just HTTP routing (epic decision #11). Global writes (namespace-less) always
+    pass; only a namespaced mutation reaches the flag check, so the error is a
+    precise capability signal. Raw ORM writes (test factories, data migrations)
+    are deliberately not gated: the kill-switch governs domain operations, not the
+    storage layer.
     """
 
-    if scope_context.is_global or request.method in SAFE_METHODS:
+    if scope_context.is_global:
         return
     if getattr(settings, "NAMESPACE_WRITE_ENABLED", False):
         return
@@ -107,6 +110,20 @@ def enforce_namespace_write_gate(request, scope_context: ScopeContext) -> None:
         "Namespaced writes are not enabled; this deployment accepts namespaced reads only.",
         {"namespace": ["Namespaced writes are disabled."]},
     )
+
+
+def enforce_namespace_write_gate(request, scope_context: ScopeContext) -> None:
+    """HTTP-layer kill-switch: refuse namespaced mutating requests early.
+
+    Runs in ``BearerTokenPermission`` so an unauthorized namespaced write gets a
+    clean 403 before the view. The authoritative gate is
+    ``guard_namespace_write_enabled`` in the services (covers non-HTTP paths); this
+    is the same check applied one layer earlier for a precise capability signal.
+    """
+
+    if request.method in SAFE_METHODS:
+        return
+    guard_namespace_write_enabled(scope_context)
 
 
 def require_scopes(**method_scopes: str):

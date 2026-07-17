@@ -100,3 +100,25 @@ def test_global_writes_are_accepted_and_readable_while_namespaced_writes_are_off
         assert response.status_code == 201, response.data
         tag_id = response.json()["data"]["id"]
         assert api_client.get(f"/api/v2/tags/{tag_id}?application_id={APP}").status_code == 200
+
+
+def test_rollback_ladder_hides_then_restores_writes_without_losing_them(merchant_a_client):
+    # Full-ladder rollback (issue #45): with writes enabled, a merchant write is
+    # accepted and readable. Disabling the v2 API (rollback step 1) refuses further
+    # namespaced reads/writes with 503 — but never deletes the row. Re-enabling the
+    # surface makes the original write readable again: rollback hides, never loses.
+    with override_settings(NAMESPACE_WRITE_ENABLED=True):
+        created = _write_tag(merchant_a_client, "ladder")
+        assert created.status_code == 201, created.data
+        tag_id = created.json()["data"]["id"]
+        assert tag_id in _list_ids(merchant_a_client)
+
+    with override_settings(NAMESPACE_V2_API_ENABLED=False):
+        assert _detail(merchant_a_client, tag_id).status_code == 503
+        refused = _write_tag(merchant_a_client, "ladder-during-rollback")
+        assert refused.status_code == 503
+        assert refused.data["error"]["code"] == "namespace_api_disabled"
+
+    # Surface restored: the write accepted before rollback is still there.
+    assert _detail(merchant_a_client, tag_id).status_code == 200
+    assert tag_id in _list_ids(merchant_a_client)

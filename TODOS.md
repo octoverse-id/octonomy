@@ -60,3 +60,20 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Why:** Eng review kept Django-native constraints (no CONCURRENTLY) and accepted a brief
   maintenance window; confirm the window is actually brief at real scale before deploy.
 - **Depends on:** #39 (schema/migrations).
+
+### NS-7: Post-burn-in flag + index cleanup — deferred from S7 (#45)
+- **What:** After the namespace rollout has burned in and stabilised in production, remove the
+  rollout feature flags and their system check, and drop any superseded pre-swap indexes left from
+  the constraint swap.
+- **Why:** The five `OCTONOMY_NAMESPACE_*` flags and the E010–E016 dependency check are rollout
+  scaffolding, not steady-state config; once namespaced writes are permanently on, the flags are
+  dead weight and the old global-only indexes (if any survive the swap) are unused.
+- **Context:** S7 shipped the flags, system check, metrics, and runbook but deliberately kept the
+  cleanup for a later pass so rollback stays available through burn-in. When picked up: confirm no
+  environment still relies on a disabled flag, delete the flags/settings/`.env.example` entries and
+  the `namespace_flag_dependencies` / `namespace_write_requires_swap` checks, simplify
+  `guard_namespace_write_enabled` / the v2 edge gate if writes are unconditionally on, and remove the
+  now-redundant indexes after an `EXPLAIN` confirms they are unused.
+- **Tripwire:** revisit once merchant writes have been enabled in production without rollback for a
+  full burn-in window.
+- **Depends on:** #45 shipped and merchant writes enabled in production.

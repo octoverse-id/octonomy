@@ -39,6 +39,11 @@ class NamespaceURLPathVersioning(URLPathVersioning):
         # X-Namespace-* headers. path_info (not path) keeps this correct under a
         # script-name prefix.
         if request.path_info.startswith(f"/api/{version}/"):
+            # Stamp the version onto the underlying HttpRequest *before* resolving
+            # scope so request-completion logging reports it even when scope
+            # resolution rejects the request (malformed headers, or the v2 edge gate
+            # returning 503) — rollback traffic must stay on the version dashboard.
+            _mirror_to_http_request(request, api_version=version)
             resolve_scope_context(request, version)
         return version
 
@@ -62,7 +67,35 @@ def resolve_scope_context(request, version: str) -> None:
         return
 
     scope_context = _scope_from_headers(namespace_type, namespace_id)
+    # Mirror the resolved scope before the edge gate so a request rejected with
+    # 503 namespace_api_disabled still carries namespace_type/id into the request
+    # log — otherwise rollback (V2_API off) traffic vanishes from the namespace
+    # dashboards exactly when operators are watching them.
+    _mirror_to_http_request(request, scope_context=scope_context)
+    _reject_if_v2_api_disabled(scope_context)
     _set(request, scope_context, include_global=_wants_global(request))
+
+
+def _reject_if_v2_api_disabled(scope_context) -> None:
+    """Edge gate for the rollback ladder's first step.
+
+    When ``NAMESPACE_V2_API_ENABLED`` is off, the namespaced v2 surface is
+    withdrawn: a namespaced request is refused before authentication so no new
+    merchant traffic is served. Global v2 requests (no namespace headers) are left
+    untouched, so disabling the flag stops merchant traffic without breaking global
+    clients — exactly what "disable V2_API first" needs on rollback.
+    """
+
+    from django.conf import settings
+
+    if scope_context.is_global:
+        return
+    if getattr(settings, "NAMESPACE_V2_API_ENABLED", True):
+        return
+
+    from octonomy.core.errors import NamespaceApiDisabledError
+
+    raise NamespaceApiDisabledError()
 
 
 def usage_count_mode_for_request(request) -> str:
@@ -152,6 +185,11 @@ def _set(request, scope_context, *, include_global: bool) -> None:
     from octonomy.core.auth import GLOBAL_SCOPE
 
     request.scope_context = scope_context
+    # Mirror the resolved scope onto the underlying HttpRequest so request-completion
+    # logging (RequestContextMiddleware) sees the namespace: DRF's Request wrapper
+    # proxies attribute reads to _request but not writes, so the middleware — which
+    # holds the underlying request — would otherwise always log a null namespace.
+    _mirror_to_http_request(request, scope_context=scope_context)
     # include_global is fail-closed: it only widens the *requested* set. Whether
     # global rows are actually visible still depends on the authorized scope set
     # computed in BearerTokenPermission via request_include_global().
@@ -159,3 +197,19 @@ def _set(request, scope_context, *, include_global: bool) -> None:
         request.requested_scope_contexts = (scope_context, GLOBAL_SCOPE)
     else:
         request.requested_scope_contexts = (scope_context,)
+
+
+def _mirror_to_http_request(request, **attrs) -> None:
+    """Copy attributes onto the underlying HttpRequest for the middleware.
+
+    ``resolve_scope_context`` runs against DRF's ``Request`` wrapper, whose writes
+    do not reach ``_request``; the request-logging middleware operates on that
+    underlying ``HttpRequest``. Stashing there bridges the two without the
+    middleware having to know about DRF's request object.
+    """
+
+    underlying = getattr(request, "_request", None)
+    if underlying is None:
+        return
+    for name, value in attrs.items():
+        setattr(underlying, name, value)

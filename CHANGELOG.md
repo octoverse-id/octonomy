@@ -30,6 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `include_global=true`).
 - `docs/events.md`: the outbox consumer contract — event envelope, per-event payload schemas,
   namespace routing guidance, and at-least-once replay/redelivery semantics.
+- Namespace rollout control plane: env-backed flags `OCTONOMY_NAMESPACE_SCHEMA_ENABLED`,
+  `OCTONOMY_NAMESPACE_READ_ENABLED`, `OCTONOMY_NAMESPACE_AUTH_ENFORCED`, and
+  `OCTONOMY_NAMESPACE_V2_API_ENABLED` (all default on), joining the existing
+  `OCTONOMY_NAMESPACE_WRITE_ENABLED`. A Django system check enforces the dependency contract at boot
+  (`octonomy.E010`–`E016`), so an invalid combination — notably v2 accepting namespaced writes that
+  no read path can return (`WRITE` on with `READ` off) — refuses to start. The `WRITE`-requires-swap
+  gate (E016) is deploy-tagged so it never blocks `manage.py migrate`.
+- `NAMESPACE_V2_API_ENABLED=false` (rollback step 1) refuses namespaced v2 requests with
+  `503 namespace_api_disabled` while global v1/v2 traffic continues.
+- Namespace observability via structured logs: `request_completed` now carries `version`,
+  `namespace_type`/`namespace_id`, `error_code`, and `duration_ms` (requests by version + namespace,
+  endpoint latency, 4xx/deny reasons). A dedicated `namespace_conflict` metric counts duplicate-key
+  collisions on the namespace-aware unique constraints (entity + namespace, emitted only from the
+  actual uniqueness branches), and the outbox dispatcher emits an `outbox_dispatch_summary` metric
+  with run totals and `lag_by_namespace_type`.
+- `docs/operations.md`: "Namespace Rollout & Operations" runbook — flag reference, dependency
+  contract, rollout/rollback ladders, dashboards/metrics reference, `namespace_mismatch`-spike
+  response, backfill verification, post-deploy checklist, curl smoke tests, and staging rehearsal.
 
 ### Tests
 - Registry-driven namespace isolation sweep (`tests/isolation/`): walks the live v2 URL registry
@@ -48,7 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serialized shape stays backward compatible.
 - `NAMESPACE_WRITE_ENABLED` (env `OCTONOMY_NAMESPACE_WRITE_ENABLED`, default off) gates namespaced
   writes: v2 reads are namespace-aware, but a write carrying a namespace scope returns
-  `403 namespaced_writes_disabled` until the flag is enabled. Global writes are unaffected.
+  `403 namespaced_writes_disabled` until the flag is enabled. Global writes are unaffected. The kill
+  switch is now enforced in the domain-service layer as well as HTTP routing, so management commands
+  and any programmatic writer are gated too (raw ORM writes — test factories, data migrations — are
+  intentionally not gated).
 - Outbox dispatch now claims rows before publishing so network delivery happens outside the
   row-locking transaction.
 
