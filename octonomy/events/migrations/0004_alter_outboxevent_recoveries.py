@@ -4,15 +4,14 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0003_outboxevent_namespace_id_outboxevent_namespace_type_and_more'),
+        ("events", "0003_outboxevent_namespace_id_outboxevent_namespace_type_and_more"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='outboxevent',
-            name='recoveries',
+            model_name="outboxevent",
+            name="recoveries",
             field=models.PositiveIntegerField(
                 default=0,
                 help_text=(

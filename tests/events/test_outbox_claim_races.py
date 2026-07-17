@@ -160,3 +160,32 @@ def test_recovery_backoff_grows_with_recovery_count_and_caps():
         # available_at = recovery_time + expected; recovery_time >= before, so the
         # measured delay is at least `expected` and only microseconds above it.
         assert expected <= delay < expected + 5, (recovery_number, delay, expected)
+
+
+def test_recovery_preserves_accumulated_failure_backoff():
+    # A row that already failed several delivery attempts carries a large retry
+    # backoff. If its retry claim then expires, recovery must not reset the delay
+    # to the small first-recovery backoff and hammer a still-failing destination:
+    # the failure backoff for the accumulated attempts is a floor.
+    event = make_event()
+    event.attempts = 5  # accumulated real delivery failures
+    event.save(update_fields=["attempts", "updated_at"])
+    force_expired_claim(event)  # PROCESSING + expired; attempts unchanged
+
+    base, cap = 2, 10_000
+    before = timezone.now()
+    dispatch_outbox_events(
+        limit=100,
+        transport=RecordingTransport(),
+        retry_base_seconds=base,
+        retry_max_seconds=cap,
+    )
+
+    event.refresh_from_db()
+    assert event.recoveries == 1
+    assert event.attempts == 5  # recovery never touches attempts
+    # Floor = failure backoff for 5 attempts = base * 2**(5-1) = 32, far above the
+    # first-recovery delay (base = 2). Recovery must respect that floor.
+    failure_floor = base * 2 ** (5 - 1)
+    delay = (event.available_at - before).total_seconds()
+    assert delay >= failure_floor, (delay, failure_floor)

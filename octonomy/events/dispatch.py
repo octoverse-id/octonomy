@@ -446,11 +446,23 @@ def _mark_recovered(
     event.recoveries += 1
     event.last_error = note
     event.status = OutboxEvent.Status.PENDING
+    # Back off on the recovery count, but never schedule sooner than the failure
+    # backoff the row already earned from its delivery `attempts`. Otherwise an
+    # event that failed several times (large backoff) whose retry claim then
+    # expires would be re-queued at the small first-recovery delay and hammer a
+    # still-failing destination. attempts is a floor, never incremented here.
     event.available_at = timezone.now() + timezone.timedelta(
-        seconds=_retry_delay_seconds(
-            attempt_number=event.recoveries,
-            retry_base_seconds=retry_base_seconds,
-            retry_max_seconds=retry_max_seconds,
+        seconds=max(
+            _retry_delay_seconds(
+                attempt_number=event.recoveries,
+                retry_base_seconds=retry_base_seconds,
+                retry_max_seconds=retry_max_seconds,
+            ),
+            _retry_delay_seconds(
+                attempt_number=event.attempts,
+                retry_base_seconds=retry_base_seconds,
+                retry_max_seconds=retry_max_seconds,
+            ),
         )
     )
     event.claim_id = None
