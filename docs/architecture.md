@@ -170,11 +170,13 @@ claim was stolen (its claim expired and another worker took over) can never mark
 failed.
 
 An expired processing claim is not a delivery failure: the original worker vanished before its
-outcome landed, so the event is re-queued for redelivery (back to `pending`, at-least-once) rather
-than marked failed. Recovery increments a separate `recoveries` counter, never `attempts`, and so
-never dead-letters — a claim expiry is not a delivery attempt. A successfully-delivered-but-claim-
-expired event is therefore redelivered (a duplicate the consumer dedupes on `id`), never recorded
-as failed.
+outcome landed (its delivery may or may not have reached the transport), so the event is re-queued
+for redelivery (back to `pending`, at-least-once) rather than marked failed. Recovery increments a
+separate `recoveries` counter, never `attempts`, and so never dead-letters — a claim expiry is not a
+delivery attempt. A successfully-delivered-but-claim-expired event is therefore redelivered (a
+duplicate the consumer dedupes on `id`); the recovery itself never records it as failed. A genuine
+failure of that redelivery still follows the normal failed/retry/dead-letter path — recovery narrows
+only claim-expiry, not real delivery failures.
 
 Default local logging transport:
 

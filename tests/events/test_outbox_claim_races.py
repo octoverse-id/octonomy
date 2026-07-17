@@ -135,3 +135,28 @@ def test_repeated_recoveries_never_dead_letter():
         assert event.recoveries == expected_recoveries
 
     assert event.status != OutboxEvent.Status.DEAD_LETTER
+
+
+def test_recovery_backoff_grows_with_recovery_count_and_caps():
+    # Backoff is keyed to the recovery count, not a constant first-recovery delay:
+    # each successive recovery of the same row waits longer, capped at retry_max.
+    event = make_event()
+    base, cap = 2, 20
+    # min(cap, base * 2**(k-1)) for k = 1..6 -> 2, 4, 8, 16, 20, 20
+    expected_delays = [2, 4, 8, 16, 20, 20]
+
+    for recovery_number, expected in enumerate(expected_delays, start=1):
+        force_expired_claim(event)
+        before = timezone.now()
+        dispatch_outbox_events(
+            limit=100,
+            transport=RecordingTransport(),
+            retry_base_seconds=base,
+            retry_max_seconds=cap,
+        )
+        event.refresh_from_db()
+        assert event.recoveries == recovery_number
+        delay = (event.available_at - before).total_seconds()
+        # available_at = recovery_time + expected; recovery_time >= before, so the
+        # measured delay is at least `expected` and only microseconds above it.
+        assert expected <= delay < expected + 5, (recovery_number, delay, expected)

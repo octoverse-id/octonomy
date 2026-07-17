@@ -40,7 +40,10 @@ class OutboxEvent(NamespaceScopedModel):
     )
     recoveries = models.PositiveIntegerField(
         default=0,
-        help_text="Expired claim recoveries that did not reach the delivery transport.",
+        help_text=(
+            "Times an expired processing claim was recovered (worker vanished mid-flight; "
+            "delivery outcome unknown). Re-queued for redelivery, not counted as delivery attempts."
+        ),
     )
     last_error = models.TextField(blank=True, default="")
     available_at = models.DateTimeField(default=timezone.now)
