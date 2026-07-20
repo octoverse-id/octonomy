@@ -62,8 +62,25 @@ class NamespacedWritesDisabledError(DomainError):
     message = "Namespaced writes are not enabled."
 
 
+class NamespaceApiDisabledError(DomainError):
+    # Rollback edge gate (S7): NAMESPACE_V2_API_ENABLED is off, so the namespaced
+    # v2 surface is withdrawn. Only namespaced v2 requests hit this — global v1/v2
+    # traffic is unaffected, so the first rollback step stops merchant traffic
+    # without stranding global clients. 503 (temporary, config-driven) not 404.
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "namespace_api_disabled"
+    message = "The namespaced v2 API is not enabled on this deployment."
+
+
 def error_response(code: str, message: str, details: Any, request, http_status: int) -> Response:
     request_id = getattr(request, "request_id", None)
+    # Stamp the error code onto the underlying HttpRequest so request-completion
+    # logging can report the failure reason (4xx-by-reason and auth-deny metrics).
+    # Every API error funnels through here, so this is the single place that sees
+    # the resolved code for both DRF and Octonomy domain errors.
+    if request is not None:
+        underlying = getattr(request, "_request", request)
+        underlying.error_code = code
     # Keep every public API error in one envelope so clients can reliably inspect
     # error.code, error.message, error.details, and error.request_id regardless of
     # whether the error came from DRF or Octonomy domain validation.

@@ -5,8 +5,9 @@ from rest_framework import serializers
 
 from octonomy.audit.services import create_audit_log, tag_alias_snapshot
 from octonomy.core.audit import AuditContext
-from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
+from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, guard_namespace_write_enabled
 from octonomy.core.errors import ApplicationMismatchError, ConflictError, DomainError
+from octonomy.core.metrics import emit_namespace_conflict
 from octonomy.core.selectors import (
     namespace_fields,
     row_matches_scope,
@@ -100,44 +101,50 @@ def create_tag_alias(
 ) -> TagAlias:
     data["tenant_id"] = tenant_id
     validate_metadata(data.get("metadata", {}))
-    try:
-        with transaction.atomic():
-            data["tag"] = Tag.objects.select_for_update().get(id=data["tag"].id)
-            validate_alias_tag(
-                tenant_id,
-                data.get("application_id"),
-                data["tag"],
-                alias_scope_context(data),
-            )
-            alias = TagAlias.objects.create(**data)
-            create_audit_log(
-                tenant_id=tenant_id,
-                application_id=alias.application_id,
-                **namespace_fields(alias),
-                action="tag_alias.created",
-                entity_type="tag_alias",
-                entity_id=str(alias.id),
-                tag_id=alias.tag_id,
-                audit_context=audit_context,
-                changes={"after": tag_alias_snapshot(alias)},
-            )
-            create_outbox_event(
-                tenant_id=tenant_id,
-                application_id=alias.application_id,
-                **namespace_fields(alias),
-                event_type="tag_alias.created",
-                aggregate_type="tag_alias",
-                aggregate_id=str(alias.id),
-                tag_id=alias.tag_id,
-                audit_context=audit_context,
-                payload={"after": tag_alias_snapshot(alias)},
-            )
-            return alias
-    except IntegrityError:
-        raise ConflictError(
-            "An active tag alias with this tenant, application, and slug already exists.",
-            {"slug": ["Duplicate active alias slug."]},
+    scope_context = alias_scope_context(data)
+    guard_namespace_write_enabled(scope_context)
+    with transaction.atomic():
+        data["tag"] = Tag.objects.select_for_update().get(id=data["tag"].id)
+        validate_alias_tag(
+            tenant_id,
+            data.get("application_id"),
+            data["tag"],
+            scope_context,
         )
+        # Only the alias write is translated to a duplicate-slug 409 (and metric);
+        # audit/outbox integrity errors propagate untouched (see create_tag).
+        try:
+            with transaction.atomic():
+                alias = TagAlias.objects.create(**data)
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "tag_alias", scope_context)
+            raise ConflictError(
+                "An active tag alias with this tenant, application, and slug already exists.",
+                {"slug": ["Duplicate active alias slug."]},
+            )
+        create_audit_log(
+            tenant_id=tenant_id,
+            application_id=alias.application_id,
+            **namespace_fields(alias),
+            action="tag_alias.created",
+            entity_type="tag_alias",
+            entity_id=str(alias.id),
+            tag_id=alias.tag_id,
+            audit_context=audit_context,
+            changes={"after": tag_alias_snapshot(alias)},
+        )
+        create_outbox_event(
+            tenant_id=tenant_id,
+            application_id=alias.application_id,
+            **namespace_fields(alias),
+            event_type="tag_alias.created",
+            aggregate_type="tag_alias",
+            aggregate_id=str(alias.id),
+            tag_id=alias.tag_id,
+            audit_context=audit_context,
+            payload={"after": tag_alias_snapshot(alias)},
+        )
+        return alias
 
 
 def update_tag_alias(
@@ -151,6 +158,12 @@ def update_tag_alias(
         namespace_type=data.get("namespace_type", alias.namespace_type),
         namespace_id=data.get("namespace_id", alias.namespace_id),
     )
+    # Guard the current scope as well as the destination so a namespaced->global
+    # move cannot slip past the kill-switch (see update_tag).
+    guard_namespace_write_enabled(
+        scope_context_from_values(alias.namespace_type, alias.namespace_id)
+    )
+    guard_namespace_write_enabled(scope_context)
     validate_alias_tag(alias.tenant_id, application_id, tag, scope_context)
     if "metadata" in data:
         validate_metadata(data["metadata"])
@@ -169,43 +182,50 @@ def update_tag_alias(
     if not changed_before:
         return alias
 
-    try:
-        with transaction.atomic():
-            locked_tag = Tag.objects.select_for_update().get(id=tag.id)
-            validate_alias_tag(alias.tenant_id, application_id, locked_tag, scope_context)
-            alias.tag = locked_tag
-            alias.save()
-            create_audit_log(
-                tenant_id=alias.tenant_id,
-                application_id=alias.application_id,
-                **namespace_fields(alias),
-                action="tag_alias.updated",
-                entity_type="tag_alias",
-                entity_id=str(alias.id),
-                tag_id=alias.tag_id,
-                audit_context=audit_context,
-                changes={"before": changed_before, "after": changed_after},
+    with transaction.atomic():
+        locked_tag = Tag.objects.select_for_update().get(id=tag.id)
+        validate_alias_tag(alias.tenant_id, application_id, locked_tag, scope_context)
+        alias.tag = locked_tag
+        # Only the alias write is translated to a duplicate-slug 409 (and metric);
+        # audit/outbox integrity errors propagate untouched (see create_tag).
+        try:
+            with transaction.atomic():
+                alias.save()
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "tag_alias", scope_context)
+            raise ConflictError(
+                "An active tag alias with this tenant, application, and slug already exists.",
+                {"slug": ["Duplicate active alias slug."]},
             )
-            create_outbox_event(
-                tenant_id=alias.tenant_id,
-                application_id=alias.application_id,
-                **namespace_fields(alias),
-                event_type="tag_alias.updated",
-                aggregate_type="tag_alias",
-                aggregate_id=str(alias.id),
-                tag_id=alias.tag_id,
-                audit_context=audit_context,
-                payload={"before": changed_before, "after": changed_after},
-            )
-    except IntegrityError:
-        raise ConflictError(
-            "An active tag alias with this tenant, application, and slug already exists.",
-            {"slug": ["Duplicate active alias slug."]},
+        create_audit_log(
+            tenant_id=alias.tenant_id,
+            application_id=alias.application_id,
+            **namespace_fields(alias),
+            action="tag_alias.updated",
+            entity_type="tag_alias",
+            entity_id=str(alias.id),
+            tag_id=alias.tag_id,
+            audit_context=audit_context,
+            changes={"before": changed_before, "after": changed_after},
+        )
+        create_outbox_event(
+            tenant_id=alias.tenant_id,
+            application_id=alias.application_id,
+            **namespace_fields(alias),
+            event_type="tag_alias.updated",
+            aggregate_type="tag_alias",
+            aggregate_id=str(alias.id),
+            tag_id=alias.tag_id,
+            audit_context=audit_context,
+            payload={"before": changed_before, "after": changed_after},
         )
     return alias
 
 
 def deactivate_tag_alias(alias: TagAlias, audit_context: AuditContext | None = None) -> bool:
+    guard_namespace_write_enabled(
+        scope_context_from_values(alias.namespace_type, alias.namespace_id)
+    )
     if not alias.is_active:
         return False
 

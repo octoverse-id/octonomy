@@ -139,11 +139,33 @@ if DEBUG and not SERVICE_TOKEN_PEPPER:
 MAX_BULK_TAGS = int(os.getenv("MAX_BULK_TAGS", "200"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-# Kill-switch for namespaced (merchant/sub-tenant) writes. Defaults off: v2 reads
-# are namespace-aware, but persisting namespaced rows is disabled until audit and
-# outbox propagate namespace (S5) and the rollout/system-check machinery lands
-# (S7). While off, v2 writes carrying a namespace scope are rejected; global
+# Namespace rollout control plane (S7, issue #45). Env-backed Django settings; a
+# toggle takes effect on restart/redeploy, so rollback latency == deploy latency.
+# A Django system check (octonomy.core.checks) enforces the dependency contract
+# between these so an invalid combination — notably v2 accepting namespaced writes
+# that no read path can return — refuses to boot. Rollout enables SCHEMA -> READ ->
+# AUTH -> V2_API -> WRITE; rollback disables V2_API -> AUTH -> WRITE -> READ
+# (columns/SCHEMA stay). See docs/operations.md "Namespace Rollout & Operations".
+#
+# The read/auth machinery shipped in S2-S6 is always fail-closed; SCHEMA/READ/AUTH
+# are rollout-phase assertions the system check orders. NAMESPACE_V2_API_ENABLED is
+# the one flag that gates the edge: when off, namespaced /api/v2 requests are
+# refused (the first rollback step) while global v1/v2 traffic continues.
+NAMESPACE_SCHEMA_ENABLED = env_bool("OCTONOMY_NAMESPACE_SCHEMA_ENABLED", True)
+NAMESPACE_READ_ENABLED = env_bool("OCTONOMY_NAMESPACE_READ_ENABLED", True)
+NAMESPACE_AUTH_ENFORCED = env_bool("OCTONOMY_NAMESPACE_AUTH_ENFORCED", True)
+NAMESPACE_V2_API_ENABLED = env_bool("OCTONOMY_NAMESPACE_V2_API_ENABLED", True)
+
+# Kill-switch for namespaced (merchant/sub-tenant) writes. Defaults off and flips
+# LAST in the rollout: persisting namespaced rows stays disabled until reads, auth,
+# metrics, and the system check are all in place. While off, writes carrying a
+# namespace scope are rejected on every path (HTTP and service layer); global
 # writes (v1 and v2-global) are unaffected.
+#
+# Parsed strictly (only the literal "true" enables it), NOT via env_bool: this flag
+# predates S7, so broadening its truthy set to include "1"/"yes"/"on" could silently
+# enable namespaced writes on upgrade for a deployment already using one of those
+# values. The kill-switch must never activate implicitly.
 NAMESPACE_WRITE_ENABLED = os.getenv("OCTONOMY_NAMESPACE_WRITE_ENABLED", "false").lower() == "true"
 
 OUTBOX_TRANSPORT = os.getenv("OCTONOMY_OUTBOX_TRANSPORT", "logging")

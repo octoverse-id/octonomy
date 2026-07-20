@@ -87,6 +87,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/AuditLog'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v2/resources/{resource_type}/{resource_id}/audit-logs:
     get:
       operationId: api_v2_resources_audit_logs_list
@@ -160,6 +169,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/AuditLog'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v2/resources/{resource_type}/{resource_id}/tags:
     get:
       operationId: api_v2_resources_tags_list
@@ -230,6 +248,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/ResourceTag'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     post:
       operationId: api_v2_resources_tags_create
       parameters:
@@ -289,6 +316,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/ResourceTag'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v2/tag-aliases:
     get:
       operationId: api_v2_tag_aliases_list
@@ -360,6 +396,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/TagAlias'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     post:
       operationId: api_v2_tag_aliases_create
       tags:
@@ -383,6 +428,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/TagAlias'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
       parameters:
       - name: X-Namespace-Type
         in: header
@@ -458,6 +512,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/TagAlias'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     patch:
       operationId: api_v2_tag_aliases_partial_update
       parameters:
@@ -510,6 +573,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/TagAlias'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
       operationId: api_v2_tag_aliases_destroy
       parameters:
@@ -547,6 +619,15 @@ paths:
       responses:
         '204':
           description: No response body
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v2/tag-assignments:
     post:
       operationId: api_v2_tag_assignments_create
@@ -577,6 +658,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/Assignment'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
       parameters:
       - name: X-Namespace-Type
         in: header
@@ -608,6 +698,15 @@ paths:
       responses:
         '204':
           description: No response body
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
       parameters:
       - name: X-Namespace-Type
         in: header
@@ -658,6 +757,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/Assignment'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
       parameters:
       - name: X-Namespace-Type
         in: header
@@ -702,6 +810,15 @@ paths:
       responses:
         '200':
           description: Bulk remove summary.
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
       parameters:
       - name: X-Namespace-Type
         in: header
@@ -780,6 +897,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/TagResolution'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v2/tags:
     get:
       operationId: api_v2_tags_list
@@ -859,6 +985,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/Tag'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     post:
       operationId: api_v2_tags_create
       tags:
@@ -882,6 +1017,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/Tag'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
       parameters:
       - name: X-Namespace-Type
         in: header
@@ -957,6 +1101,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/Tag'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     patch:
       operationId: api_v2_tags_partial_update
       parameters:
@@ -1009,6 +1162,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/Tag'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
       operationId: api_v2_tags_destroy
       parameters:
@@ -1046,6 +1208,15 @@ paths:
       responses:
         '204':
           description: No response body
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v2/tags/{tag_id}/aliases:
     get:
       operationId: api_v2_tags_aliases_list
@@ -1111,6 +1282,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/TagAlias'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v2/tags/{tag_id}/audit-logs:
     get:
       operationId: api_v2_tags_audit_logs_list
@@ -1184,6 +1364,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/AuditLog'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v2/tags/{tag_id}/resources:
     get:
       operationId: api_v2_tags_resources_list
@@ -1245,6 +1434,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/TagResource'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/v2/vocabularies:
     get:
       operationId: api_v2_vocabularies_list
@@ -1312,6 +1510,15 @@ paths:
                 items:
                   $ref: '#/components/schemas/Vocabulary'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     post:
       operationId: api_v2_vocabularies_create
       tags:
@@ -1335,6 +1542,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/Vocabulary'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
       parameters:
       - name: X-Namespace-Type
         in: header
@@ -1410,6 +1626,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/Vocabulary'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     patch:
       operationId: api_v2_vocabularies_partial_update
       parameters:
@@ -1462,6 +1687,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/Vocabulary'
           description: ''
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
       operationId: api_v2_vocabularies_destroy
       parameters:
@@ -1499,6 +1733,15 @@ paths:
       responses:
         '204':
           description: No response body
+        '503':
+          description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
+            Returned for a request carrying X-Namespace-* headers while the flag is
+            off (rollback step 1); global v1/v2 traffic is unaffected. The error envelope
+            carries code namespace_api_disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /health/live:
     get:
       operationId: health_live_retrieve
@@ -2154,3 +2397,24 @@ components:
       required:
       - name
       - slug
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+            request_id:
+              type: string
+              nullable: true
+          required:
+          - code
+          - message
+      required:
+      - error

@@ -10,6 +10,7 @@ from urllib import error as urllib_error
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
+from django.test import override_settings
 from django.utils import timezone
 
 from octonomy.events.dispatch import (
@@ -24,15 +25,26 @@ from octonomy.events.models import OutboxEvent
 pytestmark = pytest.mark.django_db
 
 
-def make_event(event_type: str = "tag.created") -> OutboxEvent:
-    return OutboxEvent.objects.create(
-        tenant_id="tenant_a",
-        event_type=event_type,
-        aggregate_type="tag",
-        aggregate_id="tag-123",
-        payload={"after": {"id": "tag-123"}},
-        metadata={},
-        request_id="req_test",
+def make_event(event_type: str = "tag.created", **overrides) -> OutboxEvent:
+    defaults = {
+        "tenant_id": "tenant_a",
+        "event_type": event_type,
+        "aggregate_type": "tag",
+        "aggregate_id": "tag-123",
+        "payload": {"after": {"id": "tag-123"}},
+        "metadata": {},
+        "request_id": "req_test",
+    }
+    defaults.update(overrides)
+    return OutboxEvent.objects.create(**defaults)
+
+
+def make_namespaced_event(**overrides) -> OutboxEvent:
+    return make_event(
+        application_id="commerce",
+        namespace_type="merchant",
+        namespace_id="merchant_a",
+        **overrides,
     )
 
 
@@ -451,3 +463,75 @@ def test_webhook_timeout_marks_event_failed():
     assert summary == {"published": 0, "failed": 1, "dead_lettered": 0, "recovered": 0}
     assert event.status == OutboxEvent.Status.FAILED
     assert "timed out" in event.last_error
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=False)
+def test_dispatcher_pauses_namespaced_events_while_write_disabled():
+    # The write kill-switch gates the dispatcher too: while off, global events are
+    # delivered but namespaced events stay pending (never claimed or published).
+    global_event = make_event()
+    namespaced_event = make_namespaced_event()
+    transport = RecordingTransport()
+
+    dispatch_outbox_events(limit=10, transport=transport)
+
+    assert global_event.id in transport.events
+    assert namespaced_event.id not in transport.events
+    global_event.refresh_from_db()
+    namespaced_event.refresh_from_db()
+    assert global_event.status == OutboxEvent.Status.PUBLISHED
+    assert namespaced_event.status == OutboxEvent.Status.PENDING
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_dispatcher_delivers_namespaced_events_when_write_enabled():
+    namespaced_event = make_namespaced_event()
+    transport = RecordingTransport()
+
+    dispatch_outbox_events(limit=10, transport=transport)
+
+    namespaced_event.refresh_from_db()
+    assert namespaced_event.id in transport.events
+    assert namespaced_event.status == OutboxEvent.Status.PUBLISHED
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=False)
+def test_dispatcher_skips_namespaced_expired_claim_recovery_while_write_disabled():
+    # Expired-claim recovery is gated too: a namespaced processing row with an
+    # expired claim is not recovered while writes are off (its row stays untouched).
+    now = timezone.now()
+    namespaced_event = make_namespaced_event(
+        status=OutboxEvent.Status.PROCESSING,
+        claim_id=uuid.uuid4(),
+        claimed_at=now - timezone.timedelta(seconds=120),
+        claim_expires_at=now - timezone.timedelta(seconds=60),
+    )
+
+    summary = dispatch_outbox_events(limit=10, transport=RecordingTransport())
+
+    assert summary["recovered"] == 0
+    namespaced_event.refresh_from_db()
+    assert namespaced_event.status == OutboxEvent.Status.PROCESSING
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=False)
+def test_gated_expired_processing_row_stays_visible_in_lag_metric(caplog):
+    # A namespaced event stuck in processing (claim expired, recovery gated off) must
+    # still appear in lag_by_namespace_type — the gated backlog does not disappear.
+    now = timezone.now()
+    make_namespaced_event(
+        status=OutboxEvent.Status.PROCESSING,
+        claim_id=uuid.uuid4(),
+        claimed_at=now - timezone.timedelta(seconds=120),
+        claim_expires_at=now - timezone.timedelta(seconds=60),
+    )
+
+    caplog.set_level(logging.INFO, logger="octonomy.metrics")
+    dispatch_outbox_events(limit=10, transport=RecordingTransport())
+
+    summaries = [
+        r for r in caplog.records if getattr(r, "metric", None) == "outbox_dispatch_summary"
+    ]
+    assert summaries
+    lag = summaries[-1].metric_fields["lag_by_namespace_type"]
+    assert lag.get("merchant", {}).get("backlog") == 1

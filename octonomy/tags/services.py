@@ -6,8 +6,9 @@ from rest_framework import serializers
 
 from octonomy.audit.services import create_audit_log, tag_snapshot
 from octonomy.core.audit import AuditContext
-from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
+from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, guard_namespace_write_enabled
 from octonomy.core.errors import ConflictError, DomainError
+from octonomy.core.metrics import emit_namespace_conflict
 from octonomy.core.selectors import (
     namespace_changed,
     namespace_fields,
@@ -157,6 +158,7 @@ def create_tag(
 ) -> Tag:
     data["tenant_id"] = tenant_id
     scope_context = scope_context_from_create_data(data)
+    guard_namespace_write_enabled(scope_context)
     validate_tag_parent(tenant_id, data.get("application_id"), data.get("parent"), scope_context)
     validate_tag_vocabulary(
         tenant_id,
@@ -164,37 +166,43 @@ def create_tag(
         data.get("vocabulary"),
         scope_context,
     )
-    try:
-        with transaction.atomic():
-            tag = Tag.objects.create(**data)
-            create_audit_log(
-                tenant_id=tenant_id,
-                application_id=tag.application_id,
-                **namespace_fields(tag),
-                action="tag.created",
-                entity_type="tag",
-                entity_id=str(tag.id),
-                tag_id=tag.id,
-                audit_context=audit_context,
-                changes={"after": tag_snapshot(tag)},
+    with transaction.atomic():
+        # Scope the IntegrityError -> duplicate-slug translation (and the metric) to the
+        # entity write only, via a savepoint. An integrity error from the audit/outbox
+        # writes below is not a slug collision, so it must propagate rather than be
+        # mislabelled as a 409 (and must not emit the duplicate-key metric).
+        try:
+            with transaction.atomic():
+                tag = Tag.objects.create(**data)
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "tag", scope_context)
+            raise ConflictError(
+                "An active tag with this tenant, application, type, and slug already exists.",
+                {"slug": ["Duplicate active tag slug."]},
             )
-            create_outbox_event(
-                tenant_id=tenant_id,
-                application_id=tag.application_id,
-                **namespace_fields(tag),
-                event_type="tag.created",
-                aggregate_type="tag",
-                aggregate_id=str(tag.id),
-                tag_id=tag.id,
-                audit_context=audit_context,
-                payload={"after": tag_snapshot(tag)},
-            )
-            return tag
-    except IntegrityError:
-        raise ConflictError(
-            "An active tag with this tenant, application, type, and slug already exists.",
-            {"slug": ["Duplicate active tag slug."]},
+        create_audit_log(
+            tenant_id=tenant_id,
+            application_id=tag.application_id,
+            **namespace_fields(tag),
+            action="tag.created",
+            entity_type="tag",
+            entity_id=str(tag.id),
+            tag_id=tag.id,
+            audit_context=audit_context,
+            changes={"after": tag_snapshot(tag)},
         )
+        create_outbox_event(
+            tenant_id=tenant_id,
+            application_id=tag.application_id,
+            **namespace_fields(tag),
+            event_type="tag.created",
+            aggregate_type="tag",
+            aggregate_id=str(tag.id),
+            tag_id=tag.id,
+            audit_context=audit_context,
+            payload={"after": tag_snapshot(tag)},
+        )
+        return tag
 
 
 def update_tag(
@@ -204,6 +212,11 @@ def update_tag(
 ) -> Tag:
     application_id = data.get("application_id", tag.application_id)
     scope_context = scope_context_from_instance_data(tag, data)
+    # Guard both the current scope and the resulting scope: a namespaced->global move
+    # mutates a namespaced row (and would expose it to global reads), so it must be
+    # blocked while the kill-switch is off even though its destination is global.
+    guard_namespace_write_enabled(scope_context_from_values(tag.namespace_type, tag.namespace_id))
+    guard_namespace_write_enabled(scope_context)
     parent = data.get("parent", tag.parent)
     vocabulary = data.get("vocabulary", tag.vocabulary)
     vocabulary_changed = "vocabulary" in data and data["vocabulary"] != tag.vocabulary
@@ -236,40 +249,45 @@ def update_tag(
     if not changed_before:
         return tag
 
-    try:
-        with transaction.atomic():
-            tag.save()
-            create_audit_log(
-                tenant_id=tag.tenant_id,
-                application_id=tag.application_id,
-                **namespace_fields(tag),
-                action="tag.updated",
-                entity_type="tag",
-                entity_id=str(tag.id),
-                tag_id=tag.id,
-                audit_context=audit_context,
-                changes={"before": changed_before, "after": changed_after},
+    with transaction.atomic():
+        # See create_tag: only the entity write is translated to a duplicate-slug 409
+        # (and metric); audit/outbox integrity errors propagate untouched.
+        try:
+            with transaction.atomic():
+                tag.save()
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "tag", scope_context)
+            raise ConflictError(
+                "An active tag with this tenant, application, type, and slug already exists.",
+                {"slug": ["Duplicate active tag slug."]},
             )
-            create_outbox_event(
-                tenant_id=tag.tenant_id,
-                application_id=tag.application_id,
-                **namespace_fields(tag),
-                event_type="tag.updated",
-                aggregate_type="tag",
-                aggregate_id=str(tag.id),
-                tag_id=tag.id,
-                audit_context=audit_context,
-                payload={"before": changed_before, "after": changed_after},
-            )
-    except IntegrityError:
-        raise ConflictError(
-            "An active tag with this tenant, application, type, and slug already exists.",
-            {"slug": ["Duplicate active tag slug."]},
+        create_audit_log(
+            tenant_id=tag.tenant_id,
+            application_id=tag.application_id,
+            **namespace_fields(tag),
+            action="tag.updated",
+            entity_type="tag",
+            entity_id=str(tag.id),
+            tag_id=tag.id,
+            audit_context=audit_context,
+            changes={"before": changed_before, "after": changed_after},
+        )
+        create_outbox_event(
+            tenant_id=tag.tenant_id,
+            application_id=tag.application_id,
+            **namespace_fields(tag),
+            event_type="tag.updated",
+            aggregate_type="tag",
+            aggregate_id=str(tag.id),
+            tag_id=tag.id,
+            audit_context=audit_context,
+            payload={"before": changed_before, "after": changed_after},
         )
     return tag
 
 
 def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
+    guard_namespace_write_enabled(scope_context_from_values(tag.namespace_type, tag.namespace_id))
     with transaction.atomic():
         # Product deletion is soft deletion. Lock the row so concurrent deletes
         # observe one state transition and produce at most one deactivation audit
@@ -289,6 +307,15 @@ def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:
                 is_active=True,
             )
         )
+        # The cascade below mutates every active alias for this tag, including
+        # namespaced aliases that point at a global tag. Deactivating a global tag
+        # therefore writes namespaced rows, so the kill-switch must gate the cascade
+        # too — the tag's own scope guard above does not cover it. A namespaced alias
+        # while writes are off rejects the whole (atomic) deactivation.
+        for alias in active_aliases:
+            guard_namespace_write_enabled(
+                scope_context_from_values(alias.namespace_type, alias.namespace_id)
+            )
         # A deactivated canonical tag cannot have assignable aliases left behind;
         # cascade by deactivation rather than hard delete so alias history remains
         # visible in audit trails and outbox events can describe the cascade.

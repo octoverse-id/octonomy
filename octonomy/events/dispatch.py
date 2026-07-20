@@ -12,8 +12,10 @@ from urllib import request as urllib_request
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
+from django.db.models import Count, Min, Q
 from django.utils import timezone
 
+from octonomy.core.metrics import OUTBOX_DISPATCH_SUMMARY, emit_metric
 from octonomy.events.models import OutboxEvent
 
 logger = logging.getLogger(__name__)
@@ -219,7 +221,50 @@ def dispatch_outbox_events(
     # failure, so it counts only under "recovered" — never conflated into "failed".
     summary["recovered"] += recovery_summary["recovered"]
 
+    _emit_dispatch_metric(summary)
     return summary
+
+
+def _emit_dispatch_metric(summary: dict[str, int]) -> None:
+    """Structured heartbeat: run totals plus deliverable backlog lag per namespace.
+
+    Emitted once per run (no request to ride on). ``lag_by_namespace_type`` reports,
+    for each namespace type with a due backlog, how many events are waiting and how
+    long the oldest has been due — the "outbox lag by namespace type" signal that
+    flags a merchant namespace falling behind independently of global traffic.
+
+    The backlog also counts rows stuck in ``processing`` with an expired claim: while
+    the kill-switch is off, namespaced expired claims are deliberately not recovered
+    (they stay ``processing``), so counting them here is what keeps that gated backlog
+    visible in the metric instead of vanishing until writes are re-enabled.
+    """
+
+    now = timezone.now()
+    deliverable = Q(
+        status__in=[OutboxEvent.Status.PENDING, OutboxEvent.Status.FAILED],
+        available_at__lte=now,
+    )
+    stuck = Q(status=OutboxEvent.Status.PROCESSING, claim_expires_at__lte=now)
+    rows = (
+        OutboxEvent.objects.filter(deliverable | stuck)
+        .values("namespace_type")
+        .annotate(backlog=Count("id"), oldest=Min("available_at"))
+    )
+    lag = {
+        (row["namespace_type"] or "global"): {
+            "backlog": row["backlog"],
+            "oldest_pending_seconds": round((now - row["oldest"]).total_seconds(), 2),
+        }
+        for row in rows
+    }
+    emit_metric(
+        OUTBOX_DISPATCH_SUMMARY,
+        published=summary["published"],
+        failed=summary["failed"],
+        dead_lettered=summary["dead_lettered"],
+        recovered=summary["recovered"],
+        lag_by_namespace_type=lag,
+    )
 
 
 def _recover_expired_claims(
@@ -246,10 +291,28 @@ def _recover_expired_claims(
     return summary
 
 
+def _gate_namespaced_dispatch(queryset):
+    """Apply the write kill-switch to the background dispatcher (issue #45/#36).
+
+    ``NAMESPACE_WRITE_ENABLED`` gates the outbox dispatcher too, not just HTTP
+    routing: while it is off, only global outbox rows (``namespace_type IS NULL``)
+    are claimed and recovered, so global delivery continues while namespaced events
+    stay pending — never claimed, published, or mutated — until writes are
+    re-enabled. They are not lost (at-least-once delivery); they wait, and the
+    per-namespace lag metric surfaces the growing backlog.
+    """
+
+    if getattr(settings, "NAMESPACE_WRITE_ENABLED", False):
+        return queryset
+    return queryset.filter(namespace_type__isnull=True)
+
+
 def _next_expired_claim() -> OutboxEvent | None:
-    queryset = OutboxEvent.objects.filter(
-        status=OutboxEvent.Status.PROCESSING,
-        claim_expires_at__lte=timezone.now(),
+    queryset = _gate_namespaced_dispatch(
+        OutboxEvent.objects.filter(
+            status=OutboxEvent.Status.PROCESSING,
+            claim_expires_at__lte=timezone.now(),
+        )
     ).order_by("claim_expires_at", "created_at", "id")
     if getattr(connection.features, "has_select_for_update_skip_locked", False):
         queryset = queryset.select_for_update(skip_locked=True)
@@ -335,8 +398,8 @@ def _next_event(*, retry_failed: bool) -> OutboxEvent | None:
     if retry_failed:
         statuses.append(OutboxEvent.Status.FAILED)
 
-    queryset = OutboxEvent.objects.filter(
-        status__in=statuses, available_at__lte=timezone.now()
+    queryset = _gate_namespaced_dispatch(
+        OutboxEvent.objects.filter(status__in=statuses, available_at__lte=timezone.now())
     ).order_by("available_at", "created_at", "id")
     if getattr(connection.features, "has_select_for_update_skip_locked", False):
         queryset = queryset.select_for_update(skip_locked=True)
