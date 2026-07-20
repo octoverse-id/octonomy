@@ -512,3 +512,26 @@ def test_dispatcher_skips_namespaced_expired_claim_recovery_while_write_disabled
     assert summary["recovered"] == 0
     namespaced_event.refresh_from_db()
     assert namespaced_event.status == OutboxEvent.Status.PROCESSING
+
+
+@override_settings(NAMESPACE_WRITE_ENABLED=False)
+def test_gated_expired_processing_row_stays_visible_in_lag_metric(caplog):
+    # A namespaced event stuck in processing (claim expired, recovery gated off) must
+    # still appear in lag_by_namespace_type — the gated backlog does not disappear.
+    now = timezone.now()
+    make_namespaced_event(
+        status=OutboxEvent.Status.PROCESSING,
+        claim_id=uuid.uuid4(),
+        claimed_at=now - timezone.timedelta(seconds=120),
+        claim_expires_at=now - timezone.timedelta(seconds=60),
+    )
+
+    caplog.set_level(logging.INFO, logger="octonomy.metrics")
+    dispatch_outbox_events(limit=10, transport=RecordingTransport())
+
+    summaries = [
+        r for r in caplog.records if getattr(r, "metric", None) == "outbox_dispatch_summary"
+    ]
+    assert summaries
+    lag = summaries[-1].metric_fields["lag_by_namespace_type"]
+    assert lag.get("merchant", {}).get("backlog") == 1

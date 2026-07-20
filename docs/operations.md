@@ -168,7 +168,9 @@ aggregating these fields in the log pipeline:
   `namespace_id` are the *resolved* scope for a served request and the *requested* (raw, truncated)
   namespace for one rejected during scope resolution (a v1 request carrying namespace headers, or a
   malformed v2 pair) — so mismatch/format rejects still carry their namespace and stay on the
-  dashboards. This single line covers most required signals:
+  dashboards. `namespace_requested` is `true` whenever the client sent *either* `X-Namespace-*`
+  header, so a malformed reject that supplies only an id (leaving `namespace_type` null) is still
+  counted. This single line covers most required signals:
   - *requests by version + namespace type* — group by `version`, `namespace_type`.
   - *endpoint latency* — `duration_ms` by `path`/`version`.
   - *4xx by mismatch reason* / *auth-deny reasons* — group by `error_code` (e.g.
@@ -190,8 +192,10 @@ aggregating these fields in the log pipeline:
   (existing rows are already global). Use `python manage.py verify_namespace_scope` for
   scope-invariant row counts.
 
-Example (log pipeline, pseudo-query): count namespaced 4xx by reason —
-`filter message=request_completed AND namespace_type!=null AND status_code>=400 | count by error_code`.
+Example (log pipeline, pseudo-query): count namespace-related 4xx by reason —
+`filter message=request_completed AND namespace_requested=true AND status_code>=400 | count by error_code`
+(`namespace_requested` rather than `namespace_type!=null`, so type-only *and* id-only malformed
+rejects are both counted).
 
 ### `namespace_mismatch` spike response
 

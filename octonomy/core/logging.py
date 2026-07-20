@@ -12,6 +12,7 @@ CONTEXT_FIELDS = (
     "operation_id",
     "tenant_id",
     "version",
+    "namespace_requested",
     "namespace_type",
     "namespace_id",
     "method",

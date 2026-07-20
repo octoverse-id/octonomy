@@ -62,11 +62,15 @@ def resolve_scope_context(request, version: str) -> None:
     # carries its namespace dimension into the request log — the mismatch/format
     # rejects the namespace_mismatch runbook counts would otherwise log a null
     # namespace and drop out of the dashboards. Truncated so a garbage/overlong header
-    # cannot bloat the log line.
+    # cannot bloat the log line. namespace_requested is the presence classification the
+    # spike query filters on: it is true whenever *either* header is sent, so an
+    # id-only (or type-only) malformed reject — where the resolved/requested type is
+    # null — is still counted.
     _mirror_to_http_request(
         request,
         requested_namespace_type=_truncate_requested(namespace_type),
         requested_namespace_id=_truncate_requested(namespace_id),
+        namespace_requested=(namespace_type is not None or namespace_id is not None) or None,
     )
 
     if version != "v2":

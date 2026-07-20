@@ -95,6 +95,22 @@ def test_requested_namespace_is_truncated_for_logging():
     assert request._request.requested_namespace_type == "m" * 100  # capped at column width
 
 
+def test_id_only_reject_still_flags_namespace_requested():
+    # An id-only malformed pair leaves both the resolved and requested type null, so
+    # namespace_requested is the classification that keeps it on the dashboard.
+    request = make_request(HTTP_X_NAMESPACE_ID="merchant_a")
+    with pytest.raises(NamespaceHeaderError):
+        resolve_scope_context(request, "v2")
+    assert request._request.requested_namespace_type is None
+    assert request._request.namespace_requested is True
+
+
+def test_global_request_does_not_flag_namespace_requested():
+    request = make_request()
+    resolve_scope_context(request, "v2")
+    assert getattr(request._request, "namespace_requested", None) is None
+
+
 def test_v2_reserved_global_type_is_rejected():
     request = make_request(HTTP_X_NAMESPACE_TYPE="global", HTTP_X_NAMESPACE_ID="merchant_a")
     with pytest.raises(NamespaceHeaderError):

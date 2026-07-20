@@ -49,6 +49,7 @@ class RequestContextMiddleware:
                 "request_id": request.request_id,
                 "tenant_id": request.tenant_id,
                 "version": getattr(request, "api_version", None),
+                "namespace_requested": getattr(request, "namespace_requested", None),
                 "namespace_type": namespace_type,
                 "namespace_id": namespace_id,
                 "method": request.method,

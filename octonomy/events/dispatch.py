@@ -12,7 +12,7 @@ from urllib import request as urllib_request
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
-from django.db.models import Count, Min
+from django.db.models import Count, Min, Q
 from django.utils import timezone
 
 from octonomy.core.metrics import OUTBOX_DISPATCH_SUMMARY, emit_metric
@@ -232,14 +232,21 @@ def _emit_dispatch_metric(summary: dict[str, int]) -> None:
     for each namespace type with a due backlog, how many events are waiting and how
     long the oldest has been due — the "outbox lag by namespace type" signal that
     flags a merchant namespace falling behind independently of global traffic.
+
+    The backlog also counts rows stuck in ``processing`` with an expired claim: while
+    the kill-switch is off, namespaced expired claims are deliberately not recovered
+    (they stay ``processing``), so counting them here is what keeps that gated backlog
+    visible in the metric instead of vanishing until writes are re-enabled.
     """
 
     now = timezone.now()
+    deliverable = Q(
+        status__in=[OutboxEvent.Status.PENDING, OutboxEvent.Status.FAILED],
+        available_at__lte=now,
+    )
+    stuck = Q(status=OutboxEvent.Status.PROCESSING, claim_expires_at__lte=now)
     rows = (
-        OutboxEvent.objects.filter(
-            status__in=[OutboxEvent.Status.PENDING, OutboxEvent.Status.FAILED],
-            available_at__lte=now,
-        )
+        OutboxEvent.objects.filter(deliverable | stuck)
         .values("namespace_type")
         .annotate(backlog=Count("id"), oldest=Min("available_at"))
     )
