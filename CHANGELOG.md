@@ -38,10 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no read path can return (`WRITE` on with `READ` off) — refuses to start. The `WRITE`-requires-swap
   gate (E016) is deploy-tagged so it never blocks `manage.py migrate`.
 - `NAMESPACE_V2_API_ENABLED=false` (rollback step 1) refuses namespaced v2 requests with
-  `503 namespace_api_disabled` while global v1/v2 traffic continues.
+  `503 namespace_api_disabled` while global v1/v2 traffic continues; the 503 and its shared
+  `ErrorResponse` envelope are documented on every namespaced v2 operation in `docs/openapi-v2.yaml`.
 - Namespace observability via structured logs: `request_completed` now carries `version`,
   `namespace_type`/`namespace_id`, `error_code`, and `duration_ms` (requests by version + namespace,
-  endpoint latency, 4xx/deny reasons). A dedicated `namespace_conflict` metric counts duplicate-key
+  endpoint latency, 4xx/deny reasons). Requests rejected during scope resolution (namespace headers
+  on v1, a malformed v2 pair) log the *requested* namespace, so mismatch/format rejects stay on the
+  namespace dashboards instead of logging a null scope. A dedicated `namespace_conflict` metric counts duplicate-key
   collisions on the namespace-aware unique constraints (entity + namespace, emitted only from the
   actual uniqueness branches), and the outbox dispatcher emits an `outbox_dispatch_summary` metric
   with run totals and `lag_by_namespace_type`.
@@ -69,7 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `403 namespaced_writes_disabled` until the flag is enabled. Global writes are unaffected. The kill
   switch is now enforced in the domain-service layer as well as HTTP routing, so management commands
   and any programmatic writer are gated too (raw ORM writes — test factories, data migrations — are
-  intentionally not gated).
+  intentionally not gated). The outbox dispatcher is gated as well: while writes are off it claims,
+  publishes, and recovers global outbox rows only, so namespaced events stay `pending` (never lost)
+  until writes are re-enabled while global delivery continues.
 - Outbox dispatch now claims rows before publishing so network delivery happens outside the
   row-locking transaction.
 

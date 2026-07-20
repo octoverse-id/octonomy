@@ -106,7 +106,10 @@ The read/auth machinery is always fail-closed; `SCHEMA`/`READ`/`AUTH` are rollou
 the dependency check orders. `NAMESPACE_V2_API_ENABLED` is the only flag that gates the edge: when
 off, a **namespaced** v2 request is refused with `503 namespace_api_disabled` while global v1/v2
 traffic continues. `NAMESPACE_WRITE_ENABLED` is enforced on **every** write path — HTTP, management
-commands, and any background writer — not only HTTP routing.
+commands, and the outbox dispatcher — not only HTTP routing. While it is off, the dispatcher claims,
+publishes, and recovers **global** outbox rows only; namespaced events stay `pending` (never claimed
+or mutated) until writes are re-enabled, so global delivery continues and no merchant event is lost —
+the per-namespace lag metric surfaces the paused backlog.
 
 ### Dependency contract (enforced at boot)
 
@@ -161,8 +164,11 @@ Observability is structured JSON logs (no separate metrics backend). Build dashb
 aggregating these fields in the log pipeline:
 
 - **`request_completed`** (logger `octonomy.requests`), one line per request, carries: `version`,
-  `namespace_type`, `namespace_id`, `status_code`, `error_code`, `duration_ms`. This single line
-  covers most required signals:
+  `namespace_type`, `namespace_id`, `status_code`, `error_code`, `duration_ms`. `namespace_type`/
+  `namespace_id` are the *resolved* scope for a served request and the *requested* (raw, truncated)
+  namespace for one rejected during scope resolution (a v1 request carrying namespace headers, or a
+  malformed v2 pair) — so mismatch/format rejects still carry their namespace and stay on the
+  dashboards. This single line covers most required signals:
   - *requests by version + namespace type* — group by `version`, `namespace_type`.
   - *endpoint latency* — `duration_ms` by `path`/`version`.
   - *4xx by mismatch reason* / *auth-deny reasons* — group by `error_code` (e.g.

@@ -109,6 +109,20 @@ def test_namespace_identity_is_documented_on_v2_responses_only(v1_schema, v2_sch
         assert "namespace_id" in v2_properties, name
 
 
+def test_rollback_503_is_documented_on_v2_operations_only(v1_schema, v2_schema):
+    # NAMESPACE_V2_API_ENABLED=false makes namespaced v2 operations return
+    # 503 namespace_api_disabled; that public rollback contract is documented on
+    # every namespaced v2 operation and never on v1.
+    v2_ops = list(api_operations(v2_schema))
+    assert v2_ops and all("503" in op["responses"] for *_, op in v2_ops)
+    assert not any("503" in op["responses"] for *_, op in api_operations(v1_schema))
+
+    schema_ref = v2_ops[0][2]["responses"]["503"]["content"]["application/json"]["schema"]["$ref"]
+    assert schema_ref == "#/components/schemas/ErrorResponse"
+    assert "ErrorResponse" in v2_schema["components"]["schemas"]
+    assert "ErrorResponse" not in v1_schema.get("components", {}).get("schemas", {})
+
+
 @pytest.mark.parametrize("version", ["v1", "v2"])
 def test_operation_ids_are_unique(version):
     schema = generate(version)

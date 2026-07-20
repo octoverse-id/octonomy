@@ -68,6 +68,33 @@ def test_v2_id_without_type_is_rejected():
         resolve_scope_context(request, "v2")
 
 
+def test_v1_namespace_reject_records_requested_namespace_for_logging():
+    # A v1 request carrying namespace headers is rejected before scope resolution,
+    # but the request must still carry the requested namespace so the reject stays
+    # on the namespace dashboards.
+    request = make_request(
+        path="/api/v1/tags", HTTP_X_NAMESPACE_TYPE="merchant", HTTP_X_NAMESPACE_ID="merchant_a"
+    )
+    with pytest.raises(NamespaceNotSupportedError):
+        resolve_scope_context(request, "v1")
+    assert request._request.requested_namespace_type == "merchant"
+    assert request._request.requested_namespace_id == "merchant_a"
+
+
+def test_v2_malformed_reject_records_requested_namespace_for_logging():
+    request = make_request(HTTP_X_NAMESPACE_TYPE="merchant")  # id missing -> rejected
+    with pytest.raises(NamespaceHeaderError):
+        resolve_scope_context(request, "v2")
+    assert request._request.requested_namespace_type == "merchant"
+
+
+def test_requested_namespace_is_truncated_for_logging():
+    request = make_request(HTTP_X_NAMESPACE_TYPE="m" * 200, HTTP_X_NAMESPACE_ID="merchant_a")
+    with pytest.raises(NamespaceHeaderError):  # overlong -> rejected
+        resolve_scope_context(request, "v2")
+    assert request._request.requested_namespace_type == "m" * 100  # capped at column width
+
+
 def test_v2_reserved_global_type_is_rejected():
     request = make_request(HTTP_X_NAMESPACE_TYPE="global", HTTP_X_NAMESPACE_ID="merchant_a")
     with pytest.raises(NamespaceHeaderError):

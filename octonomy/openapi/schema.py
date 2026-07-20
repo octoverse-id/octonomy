@@ -68,6 +68,38 @@ _NAMESPACE_RESPONSE_SCHEMAS = {
     "Vocabulary",
 }
 
+# The shared Octonomy error envelope (core/errors.py error_response). Documented on
+# v2 as the body of the rollback 503 so generated clients can parse error.code.
+ERROR_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "error": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string"},
+                "message": {"type": "string"},
+                "details": {"type": "object", "additionalProperties": True},
+                "request_id": {"type": "string", "nullable": True},
+            },
+            "required": ["code", "message"],
+        }
+    },
+    "required": ["error"],
+}
+
+# The rollback edge gate: NAMESPACE_V2_API_ENABLED=false makes every namespaced v2
+# operation return 503 namespace_api_disabled. Part of the public rollback contract,
+# so it is documented on the v2 operations that accept X-Namespace-* headers.
+NAMESPACE_API_DISABLED_RESPONSE = {
+    "description": (
+        "The namespaced v2 API is disabled on this deployment "
+        "(NAMESPACE_V2_API_ENABLED=false). Returned for a request carrying "
+        "X-Namespace-* headers while the flag is off (rollback step 1); global v1/v2 "
+        "traffic is unaffected. The error envelope carries code namespace_api_disabled."
+    ),
+    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+}
+
 
 def add_namespace_parameters(result, generator, request, public, **kwargs):
     # Both versions mirror the package version (versioning.md); the URL prefix
@@ -95,6 +127,7 @@ def add_namespace_parameters(result, generator, request, public, **kwargs):
     # routes (e.g. /health/live, /health/ready) appear in every schema and must
     # not advertise X-Namespace-* / include_global.
     version_prefix = f"/api/{api_version}/"
+    documented_disabled_response = False
     for path, path_item in result.get("paths", {}).items():
         if not path.startswith(version_prefix):
             continue
@@ -110,6 +143,14 @@ def add_namespace_parameters(result, generator, request, public, **kwargs):
             _add_parameter(parameters, APPLICATION_ID_PARAMETER)
             if method.lower() in _SAFE_METHODS:
                 _add_parameter(parameters, INCLUDE_GLOBAL_PARAMETER)
+            # Document the rollback 503 on every namespaced v2 operation.
+            operation["responses"].setdefault("503", dict(NAMESPACE_API_DISABLED_RESPONSE))
+            documented_disabled_response = True
+
+    if documented_disabled_response:
+        result.setdefault("components", {}).setdefault("schemas", {}).setdefault(
+            "ErrorResponse", dict(ERROR_RESPONSE_SCHEMA)
+        )
 
     return result
 

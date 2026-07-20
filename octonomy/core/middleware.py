@@ -33,15 +33,24 @@ class RequestContextMiddleware:
         # version + error_code turn this one structured line into the primary
         # dashboard source: requests by version and namespace type, endpoint
         # latency (duration_ms), and 4xx/deny reasons (error_code, stamped by the
-        # error envelope). Namespaced fields are null for global/v1 traffic.
+        # error envelope). Namespaced fields are null for global/v1 traffic. When
+        # scope resolution rejects the request (namespace headers on v1, malformed v2
+        # pair), no scope is resolved, so fall back to the raw *requested* namespace
+        # — otherwise the mismatch/format rejects drop off the namespace dashboards.
+        namespace_type = getattr(scope_context, "namespace_type", None) or getattr(
+            request, "requested_namespace_type", None
+        )
+        namespace_id = getattr(scope_context, "namespace_id", None) or getattr(
+            request, "requested_namespace_id", None
+        )
         logger.info(
             "request_completed",
             extra={
                 "request_id": request.request_id,
                 "tenant_id": request.tenant_id,
                 "version": getattr(request, "api_version", None),
-                "namespace_type": getattr(scope_context, "namespace_type", None),
-                "namespace_id": getattr(scope_context, "namespace_id", None),
+                "namespace_type": namespace_type,
+                "namespace_id": namespace_id,
                 "method": request.method,
                 "path": request.path,
                 "status_code": response.status_code,

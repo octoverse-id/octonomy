@@ -57,6 +57,18 @@ def resolve_scope_context(request, version: str) -> None:
     namespace_type = request.headers.get(NAMESPACE_TYPE_HEADER)
     namespace_id = request.headers.get(NAMESPACE_ID_HEADER)
 
+    # Mirror what the client *requested* before any validation, so a request rejected
+    # during scope resolution (namespace headers on v1, or a malformed v2 pair) still
+    # carries its namespace dimension into the request log — the mismatch/format
+    # rejects the namespace_mismatch runbook counts would otherwise log a null
+    # namespace and drop out of the dashboards. Truncated so a garbage/overlong header
+    # cannot bloat the log line.
+    _mirror_to_http_request(
+        request,
+        requested_namespace_type=_truncate_requested(namespace_type),
+        requested_namespace_id=_truncate_requested(namespace_id),
+    )
+
     if version != "v2":
         if namespace_type is not None or namespace_id is not None:
             raise NamespaceNotSupportedError(
@@ -197,6 +209,20 @@ def _set(request, scope_context, *, include_global: bool) -> None:
         request.requested_scope_contexts = (scope_context, GLOBAL_SCOPE)
     else:
         request.requested_scope_contexts = (scope_context,)
+
+
+def _truncate_requested(value: str | None) -> str | None:
+    """Cap a raw requested namespace header for logging.
+
+    The value may be invalid (that is what the validators reject), so bound it to
+    the namespace column width before it reaches the request log.
+    """
+
+    from octonomy.core.models import NAMESPACE_FIELD_MAX_LENGTH
+
+    if value is None:
+        return None
+    return value[:NAMESPACE_FIELD_MAX_LENGTH]
 
 
 def _mirror_to_http_request(request, **attrs) -> None:

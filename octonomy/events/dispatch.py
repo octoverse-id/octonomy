@@ -284,10 +284,28 @@ def _recover_expired_claims(
     return summary
 
 
+def _gate_namespaced_dispatch(queryset):
+    """Apply the write kill-switch to the background dispatcher (issue #45/#36).
+
+    ``NAMESPACE_WRITE_ENABLED`` gates the outbox dispatcher too, not just HTTP
+    routing: while it is off, only global outbox rows (``namespace_type IS NULL``)
+    are claimed and recovered, so global delivery continues while namespaced events
+    stay pending — never claimed, published, or mutated — until writes are
+    re-enabled. They are not lost (at-least-once delivery); they wait, and the
+    per-namespace lag metric surfaces the growing backlog.
+    """
+
+    if getattr(settings, "NAMESPACE_WRITE_ENABLED", False):
+        return queryset
+    return queryset.filter(namespace_type__isnull=True)
+
+
 def _next_expired_claim() -> OutboxEvent | None:
-    queryset = OutboxEvent.objects.filter(
-        status=OutboxEvent.Status.PROCESSING,
-        claim_expires_at__lte=timezone.now(),
+    queryset = _gate_namespaced_dispatch(
+        OutboxEvent.objects.filter(
+            status=OutboxEvent.Status.PROCESSING,
+            claim_expires_at__lte=timezone.now(),
+        )
     ).order_by("claim_expires_at", "created_at", "id")
     if getattr(connection.features, "has_select_for_update_skip_locked", False):
         queryset = queryset.select_for_update(skip_locked=True)
@@ -373,8 +391,8 @@ def _next_event(*, retry_failed: bool) -> OutboxEvent | None:
     if retry_failed:
         statuses.append(OutboxEvent.Status.FAILED)
 
-    queryset = OutboxEvent.objects.filter(
-        status__in=statuses, available_at__lte=timezone.now()
+    queryset = _gate_namespaced_dispatch(
+        OutboxEvent.objects.filter(status__in=statuses, available_at__lte=timezone.now())
     ).order_by("available_at", "created_at", "id")
     if getattr(connection.features, "has_select_for_update_skip_locked", False):
         queryset = queryset.select_for_update(skip_locked=True)
