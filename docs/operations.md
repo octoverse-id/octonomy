@@ -80,11 +80,95 @@ Verify row counts and scope-invariant violations after migration:
 python manage.py verify_namespace_scope
 ```
 
-The uniqueness constraint swap is atomic and non-concurrent. Schedule a brief maintenance window
-for production-sized tables, and measure row counts on `tag_assignments`, `audit_logs`, and
-`outbox_events` before deployment. The down migration is cleanly reversible only while no
-merchant-namespace rows exist; after merchant writes, rollback should use the namespace feature
-flags rather than restoring the old global-only uniqueness constraints.
+The uniqueness constraint swap is atomic and non-concurrent, so it takes a table lock while it runs.
+Size that lock window before deploying — see **Constraint-swap lock window (NS-6)** below. The down
+migration is cleanly reversible only while no merchant-namespace rows exist; after merchant writes,
+rollback should use the namespace feature flags rather than restoring the old global-only uniqueness
+constraints.
+
+### Constraint-swap lock window (NS-6)
+
+Each affected app's swap migration runs in **one transaction** (Django's default), so its locks
+accumulate and are all released together at commit. Per operation:
+
+| Swap operation | Lock | Blocks | Cost |
+| --- | --- | --- | --- |
+| Drop old unique constraints | `ACCESS EXCLUSIVE` | reads + writes | instant (catalog only) |
+| Add nullable namespace columns | `ACCESS EXCLUSIVE` | reads + writes | instant (no default, no rewrite) |
+| Build plain indexes | `SHARE` | writes | full-table sort |
+| Add check constraint | `ACCESS EXCLUSIVE` | reads + writes | full-table validate scan |
+| Build partial-unique indexes | `SHARE` | writes | full-table sort |
+
+The whole per-table transaction is a **read + write lock** window. The migration's *first* statement
+drops the old unique constraint, taking `ACCESS EXCLUSIVE`; because that lock is held until commit,
+every later operation runs under it too — the per-operation `SHARE` locks never actually open a read
+window. So treat the entire per-table swap as blocking reads and writes, not just writes. Total time
+is dominated by the index-build sorts, so it scales with row count and with
+`maintenance_work_mem`/hardware, not with the number of constraints.
+
+The three high-volume append tables carry the cost (op counts = full-table operations per table):
+
+| Table | Full-table ops | Notes |
+| --- | --- | --- |
+| `tag_assignments` | 5 | heaviest: 2 plain + 2 partial-unique index builds + 1 check |
+| `audit_logs` | 3 | 2 plain index builds + 1 check |
+| `outbox_events` | 3 | 2 plain index builds + 1 check |
+
+`tags`/`tag_aliases`/`vocabularies` (6 each) and `service_client_grants` (9) are metadata-sized and
+not a concern.
+
+**Measure it.** `estimate_namespace_swap_lock` reports row counts + on-disk sizes and, with
+`--rehearse`, times the swap operations on a throwaway synthetic `tag_assignments`-shaped table
+(all-global rows, matching the pre-swap state), then drops it. It uses a **permanent** throwaway
+table with a unique name (not a `TEMPORARY` one — temp tables skip WAL and would understate real
+index-build time), so a crashed run may leave a `_ns_swap_rehearsal_*` table to drop by hand. It is
+PostgreSQL-only; run it on a restored clone, not production.
+
+```bash
+# 1. Capture current row counts + sizes (safe on a read replica).
+python manage.py estimate_namespace_swap_lock
+
+# 2. On a RESTORED PROD-SIZED CLONE, time the swap at real scale (pick N ≈ real tag_assignments rows).
+python manage.py estimate_namespace_swap_lock --rehearse --rows 20000000
+```
+
+The rehearsal reproduces the real migration faithfully: it builds the pre-swap table shape (UUID PK,
+the old plain unique constraint, no namespace columns) and runs all eight operations in one
+transaction — drop the old constraint, add the two namespace columns, build the indexes, add the
+check, build the partial-unique indexes — starting with the constraint drop, so the measured
+`table_locked_seconds` is the real read+write **hold** window (lock-acquisition wait on a busy table
+is extra — see _Lock acquisition and contention_ below). It also prints per-operation seconds and an
+`assignments_swap` figure in seconds per 1M rows.
+`audit_logs`/`outbox_events` are lighter at equal row count (no unique-index sort); treat the
+`tag_assignments` figure as the upper bound.
+
+**Measured anchor (record real prod numbers before deploy).** Local PostgreSQL 16 in Docker on WSL2,
+default `maintenance_work_mem` (64MB) — a modest, IO-contended host, so treat these as a loose
+upper-bound shape, not a prod prediction:
+
+| `tag_assignments` rows | table-locked (reads + writes) |
+| --- | --- |
+| 200k | ~5s |
+| 500k | ~27s |
+| 1M | ~35s |
+| _prod (fill in on clone)_ | _TBD_ |
+
+Guidance: at ~1M assignment rows this untuned host holds a ~35s lock that blocks both reads and
+writes. Real production with a larger `maintenance_work_mem` builds indexes faster, but row counts
+are higher — so **rehearse on a clone at the real count** and, if the window is not acceptably brief,
+raise `maintenance_work_mem` for the migration session and/or schedule an explicit maintenance
+window. Re-run after the swap with `python manage.py verify_namespace_scope` to confirm zero
+scope-invariant violations.
+
+**Lock acquisition and contention.** `table_locked_seconds` is the time the swap *holds* the lock on
+an idle clone; it is a floor, not the full interruption. In production the migration's
+`ACCESS EXCLUSIVE` request must first wait for in-flight readers/writers to finish, and while it waits
+every new query queues **behind** it (head-of-line blocking) — so the real service interruption is
+acquisition-wait + hold-time and begins before the lock is even granted. A rehearsal on a quiet clone
+cannot measure this. Budget for it: set a short `lock_timeout` (e.g. `SET lock_timeout = '3s'`) on the
+migration session so a blocked swap fails fast and drains the queue instead of stalling behind a long
+transaction; drain or kill long-running transactions first (check `pg_stat_activity`); retry during a
+quiet window; and schedule the maintenance window with headroom above the measured hold time.
 
 ## Namespace Rollout & Operations
 
