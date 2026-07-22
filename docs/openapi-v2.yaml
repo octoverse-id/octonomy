@@ -573,6 +573,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/TagAlias'
           description: ''
+        '409':
+          description: The request tried to change a row's application_id, namespace_type,
+            or namespace_id. Scope is fixed at creation (NS-1); the error envelope
+            carries code scope_immutable. Re-create the row in the target scope instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
             Returned for a request carrying X-Namespace-* headers while the flag is
@@ -1162,6 +1170,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/Tag'
           description: ''
+        '409':
+          description: The request tried to change a row's application_id, namespace_type,
+            or namespace_id. Scope is fixed at creation (NS-1); the error envelope
+            carries code scope_immutable. Re-create the row in the target scope instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
             Returned for a request carrying X-Namespace-* headers while the flag is
@@ -1687,6 +1703,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/Vocabulary'
           description: ''
+        '409':
+          description: The request tried to change a row's application_id, namespace_type,
+            or namespace_id. Scope is fixed at creation (NS-1); the error envelope
+            carries code scope_immutable. Re-create the row in the target scope instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: The namespaced v2 API is disabled on this deployment (NAMESPACE_V2_API_ENABLED=false).
             Returned for a request carrying X-Namespace-* headers while the flag is
