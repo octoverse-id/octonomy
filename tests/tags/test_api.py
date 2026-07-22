@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.factories import make_tag
+from tests.factories import make_tag, make_vocabulary
 
 pytestmark = pytest.mark.django_db
 
@@ -94,5 +94,25 @@ def test_patch_cannot_move_tag_between_applications(api_client):
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "scope_immutable"
     assert "application_id" in response.json()["error"]["details"]
+    tag.refresh_from_db()
+    assert tag.application_id == "commerce"
+
+
+def test_scope_change_returns_immutable_even_with_app_scoped_relations(api_client):
+    # The immutability guard runs BEFORE parent/vocabulary compatibility validation:
+    # otherwise checking the existing (commerce) vocabulary against the destination
+    # (cms) application would 400 first, so the response would depend on attached
+    # relations. A scope-changing PATCH must always return 409 scope_immutable.
+    vocab = make_vocabulary(application_id="commerce", slug="labels")
+    tag = make_tag(application_id="commerce", slug="featured", vocabulary=vocab)
+
+    response = api_client.patch(
+        f"/api/v1/tags/{tag.id}",
+        {"application_id": "cms"},
+        format="json",
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "scope_immutable"
     tag.refresh_from_db()
     assert tag.application_id == "commerce"

@@ -193,6 +193,13 @@ def update_tag(
     # blocked while the kill-switch is off even though its destination is global.
     guard_namespace_write_enabled(scope_context_from_values(tag.namespace_type, tag.namespace_id))
     guard_namespace_write_enabled(scope_context)
+    # Scope (application_id/namespace) is immutable: moving a tag would orphan its
+    # assignments, aliases, and child links (legal in the old scope, illegal in the
+    # new one) and can silently reassign merchant data (NS-1). Reject the move BEFORE
+    # validating relations, so a scope-changing PATCH always returns 409
+    # scope_immutable rather than a 400 from checking an existing parent/vocabulary
+    # against the destination scope. Re-create in the target scope instead.
+    guard_scope_immutable(tag, data)
     parent = data.get("parent", tag.parent)
     vocabulary = data.get("vocabulary", tag.vocabulary)
     vocabulary_changed = "vocabulary" in data and data["vocabulary"] != tag.vocabulary
@@ -204,11 +211,6 @@ def update_tag(
         scope_context,
         require_active=vocabulary_changed,
     )
-
-    # Scope (application_id/namespace) is immutable: moving a tag would orphan its
-    # assignments, aliases, and child links (legal in the old scope, illegal in the
-    # new one) and can silently reassign merchant data (NS-1). Re-create instead.
-    guard_scope_immutable(tag, data)
 
     changed_before = {}
     changed_after = {}
