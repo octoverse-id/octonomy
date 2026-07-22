@@ -136,7 +136,8 @@ The rehearsal reproduces the real migration faithfully: it builds the pre-swap t
 the old plain unique constraint, no namespace columns) and runs all eight operations in one
 transaction — drop the old constraint, add the two namespace columns, build the indexes, add the
 check, build the partial-unique indexes — starting with the constraint drop, so the measured
-`table_locked_seconds` is the real read+write window. It also prints per-operation seconds and an
+`table_locked_seconds` is the real read+write **hold** window (lock-acquisition wait on a busy table
+is extra — see _Lock acquisition and contention_ below). It also prints per-operation seconds and an
 `assignments_swap` figure in seconds per 1M rows.
 `audit_logs`/`outbox_events` are lighter at equal row count (no unique-index sort); treat the
 `tag_assignments` figure as the upper bound.
@@ -158,6 +159,16 @@ are higher — so **rehearse on a clone at the real count** and, if the window i
 raise `maintenance_work_mem` for the migration session and/or schedule an explicit maintenance
 window. Re-run after the swap with `python manage.py verify_namespace_scope` to confirm zero
 scope-invariant violations.
+
+**Lock acquisition and contention.** `table_locked_seconds` is the time the swap *holds* the lock on
+an idle clone; it is a floor, not the full interruption. In production the migration's
+`ACCESS EXCLUSIVE` request must first wait for in-flight readers/writers to finish, and while it waits
+every new query queues **behind** it (head-of-line blocking) — so the real service interruption is
+acquisition-wait + hold-time and begins before the lock is even granted. A rehearsal on a quiet clone
+cannot measure this. Budget for it: set a short `lock_timeout` (e.g. `SET lock_timeout = '3s'`) on the
+migration session so a blocked swap fails fast and drains the queue instead of stalling behind a long
+transaction; drain or kill long-running transactions first (check `pg_stat_activity`); retry during a
+quiet window; and schedule the maintenance window with headroom above the measured hold time.
 
 ## Namespace Rollout & Operations
 
