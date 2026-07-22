@@ -8,7 +8,7 @@ from octonomy.core.auth import guard_namespace_write_enabled
 from octonomy.core.errors import ConflictError
 from octonomy.core.metrics import emit_namespace_conflict
 from octonomy.core.selectors import (
-    namespace_changed,
+    guard_scope_immutable,
     namespace_fields,
     scope_context_from_instance_data,
     scope_context_from_values,
@@ -78,21 +78,10 @@ def update_vocabulary(
     )
     guard_namespace_write_enabled(scope_context)
 
-    application_changed = (
-        "application_id" in data and data["application_id"] != vocabulary.application_id
-    )
-    scope_changed = namespace_changed(vocabulary, data)
-    if application_changed or scope_changed:
-        if vocabulary.tags.exists():
-            if application_changed and not scope_changed:
-                raise ConflictError(
-                    "Cannot change application_id for a vocabulary with tags.",
-                    {"application_id": ["Remove tags before changing application scope."]},
-                )
-            raise ConflictError(
-                "Cannot change scope for a vocabulary with tags.",
-                {"application_id": ["Remove tags before changing vocabulary scope."]},
-            )
+    # Scope (application_id/namespace) is immutable: moving a vocabulary would orphan
+    # the tags that reference it (legal in the old scope, illegal in the new one) and
+    # can silently reassign merchant data (NS-1). Re-create in the target scope.
+    guard_scope_immutable(vocabulary, data)
 
     changed_before = {}
     changed_after = {}

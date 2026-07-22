@@ -100,6 +100,7 @@ X-Namespace-ID: merchant_a
 | `namespace_invalid` | 400 | Reserved `global`, type without id (or id without type), or a folded/repeated header. |
 | `validation_error` | 400 | Blank/whitespace namespace value (field-level detail). |
 | `namespaced_writes_disabled` | 403 | A namespaced write while `NAMESPACE_WRITE_ENABLED` is off (see below). |
+| `scope_immutable` | 409 | A PATCH that changes a row's `application_id`/`namespace_type`/`namespace_id`. Scope is fixed at creation (v1 and v2); re-create in the target scope instead. |
 | `namespace_mismatch` | — | Reserved for visible-object cases only. Cross-namespace object lookups return `404` (no existence disclosure), never `namespace_mismatch`. |
 
 ### Merchant reads, global rows, and discovery

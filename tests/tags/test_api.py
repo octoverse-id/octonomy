@@ -79,10 +79,10 @@ def test_missing_tenant_uses_error_envelope(client, service_token):
     assert response.json()["error"]["code"] == "validation_error"
 
 
-def test_patch_can_move_tag_between_applications(api_client):
-    # The application filter on detail lookups is bound to the caller's authorized
-    # applications, not the request body, so a tenant-wide grant can still fetch a
-    # tag it is moving to another application (the body names the destination).
+def test_patch_cannot_move_tag_between_applications(api_client):
+    # The detail lookup is still bound to the caller's authorized applications, so
+    # the tag is found (not 404) even though the body names a different application —
+    # but scope is immutable (NS-1), so the move is rejected, not applied.
     tag = make_tag(application_id="commerce", slug="movable")
 
     response = api_client.patch(
@@ -91,5 +91,8 @@ def test_patch_can_move_tag_between_applications(api_client):
         format="json",
     )
 
-    assert response.status_code == 200
-    assert response.json()["data"]["application_id"] == "cms"
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "scope_immutable"
+    assert "application_id" in response.json()["error"]["details"]
+    tag.refresh_from_db()
+    assert tag.application_id == "commerce"

@@ -9,6 +9,7 @@ from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, guard_namespace_write
 from octonomy.core.errors import ApplicationMismatchError, ConflictError, DomainError
 from octonomy.core.metrics import emit_namespace_conflict
 from octonomy.core.selectors import (
+    guard_scope_immutable,
     namespace_fields,
     row_matches_scope,
     scope_context_from_values,
@@ -164,6 +165,10 @@ def update_tag_alias(
         scope_context_from_values(alias.namespace_type, alias.namespace_id)
     )
     guard_namespace_write_enabled(scope_context)
+    # Scope (application_id/namespace) is immutable: an alias may be re-pointed to a
+    # different tag within its scope, but moving the alias itself between scopes can
+    # silently reassign merchant data (NS-1). Re-create in the target scope instead.
+    guard_scope_immutable(alias, data)
     validate_alias_tag(alias.tenant_id, application_id, tag, scope_context)
     if "metadata" in data:
         validate_metadata(data["metadata"])

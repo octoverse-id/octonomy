@@ -9,6 +9,11 @@ from octonomy.core.auth import (
     application_ids_from_request,
     authorized_application_ids,
 )
+from octonomy.core.errors import ScopeImmutableError
+
+# The fields that define a row's isolation scope. They are set at creation and are
+# immutable thereafter (NS-1) — see guard_scope_immutable.
+SCOPE_FIELDS = ("application_id", "namespace_type", "namespace_id")
 
 # Only a move-capable method (PATCH) may look up a row outside the request-named
 # application: its body names the *destination* app, so the source row must be
@@ -205,3 +210,33 @@ def namespace_changed(instance, data: dict) -> bool:
         or "namespace_id" in data
         and data["namespace_id"] != instance.namespace_id
     )
+
+
+def scope_changed_fields(instance, data: dict) -> list[str]:
+    """Scope fields whose update payload differs from the row's current value."""
+
+    return [
+        field for field in SCOPE_FIELDS if field in data and data[field] != getattr(instance, field)
+    ]
+
+
+def guard_scope_immutable(instance, data: dict) -> None:
+    """Reject any change to a row's scope fields after creation (NS-1).
+
+    ``application_id``/``namespace_type``/``namespace_id`` are fixed at creation:
+    moving a row between scopes would orphan attached assignments, child tags,
+    aliases, and vocabulary references, and can silently reassign merchant-private
+    data. Callers must re-create the row in the target scope instead of mutating it.
+    One shared guard keeps the rule identical across tags, vocabularies, and aliases
+    (epic decision #10 — no per-module copies).
+    """
+
+    changed = scope_changed_fields(instance, data)
+    if changed:
+        raise ScopeImmutableError(
+            "Scope fields cannot be changed after creation.",
+            {
+                field: ["This field is immutable; re-create the row in the target scope."]
+                for field in changed
+            },
+        )

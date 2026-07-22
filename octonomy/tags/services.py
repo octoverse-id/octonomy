@@ -10,7 +10,7 @@ from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, guard_namespace_write
 from octonomy.core.errors import ConflictError, DomainError
 from octonomy.core.metrics import emit_namespace_conflict
 from octonomy.core.selectors import (
-    namespace_changed,
+    guard_scope_immutable,
     namespace_fields,
     row_matches_scope,
     scope_context_from_instance_data,
@@ -121,30 +121,6 @@ def scope_context_from_create_data(data: dict) -> ScopeContext:
     return scope_context_from_values(data.get("namespace_type"), data.get("namespace_id"))
 
 
-def namespace_or_application_changed(tag: Tag, data: dict) -> bool:
-    return (
-        "application_id" in data and data["application_id"] != tag.application_id
-    ) or namespace_changed(tag, data)
-
-
-def block_tag_scope_move_if_attached(tag: Tag) -> None:
-    if tag.assignments.exists():
-        raise ConflictError(
-            "Cannot change scope for a tag with assignments.",
-            {"application_id": ["Remove assignments before changing tag scope."]},
-        )
-    if tag.aliases.exists():
-        raise ConflictError(
-            "Cannot change scope for a tag with aliases.",
-            {"application_id": ["Remove aliases before changing tag scope."]},
-        )
-    if tag.children.exists():
-        raise ConflictError(
-            "Cannot change scope for a tag with child tags.",
-            {"application_id": ["Remove child tags before changing tag scope."]},
-        )
-
-
 def serialize_related_audit_value(field: str, value):
     if field in {"parent", "vocabulary"} and value:
         return str(value.id)
@@ -229,11 +205,10 @@ def update_tag(
         require_active=vocabulary_changed,
     )
 
-    if namespace_or_application_changed(tag, data):
-        # Assignments, aliases, and child links all encode the current tag
-        # scope. Moving the tag would leave attached rows legal in the old scope
-        # but illegal for the new one, so callers must detach them first.
-        block_tag_scope_move_if_attached(tag)
+    # Scope (application_id/namespace) is immutable: moving a tag would orphan its
+    # assignments, aliases, and child links (legal in the old scope, illegal in the
+    # new one) and can silently reassign merchant data (NS-1). Re-create instead.
+    guard_scope_immutable(tag, data)
 
     changed_before = {}
     changed_after = {}
