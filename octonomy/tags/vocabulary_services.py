@@ -10,7 +10,6 @@ from octonomy.core.metrics import emit_namespace_conflict
 from octonomy.core.selectors import (
     guard_scope_immutable,
     namespace_fields,
-    scope_context_from_instance_data,
     scope_context_from_values,
 )
 from octonomy.events.services import create_outbox_event
@@ -67,21 +66,17 @@ def update_vocabulary(
     data: dict,
     audit_context: AuditContext | None = None,
 ) -> Vocabulary:
+    # Scope from the vocabulary's own (current) namespace — always well-formed and,
+    # since scope is immutable, also the destination (see update_tag). Write
+    # kill-switch first (403 precedence), then reject any scope change: moving a
+    # vocabulary would orphan the tags that reference it and can silently reassign
+    # merchant data (NS-1). Re-create in the target scope instead.
+    scope_context = scope_context_from_values(vocabulary.namespace_type, vocabulary.namespace_id)
+    guard_namespace_write_enabled(scope_context)
+    guard_scope_immutable(vocabulary, data)
+
     if "metadata" in data:
         validate_metadata(data["metadata"])
-
-    # Guard the current scope as well as the destination so a namespaced->global move
-    # cannot slip past the kill-switch (see update_tag).
-    scope_context = scope_context_from_instance_data(vocabulary, data)
-    guard_namespace_write_enabled(
-        scope_context_from_values(vocabulary.namespace_type, vocabulary.namespace_id)
-    )
-    guard_namespace_write_enabled(scope_context)
-
-    # Scope (application_id/namespace) is immutable: moving a vocabulary would orphan
-    # the tags that reference it (legal in the old scope, illegal in the new one) and
-    # can silently reassign merchant data (NS-1). Re-create in the target scope.
-    guard_scope_immutable(vocabulary, data)
 
     changed_before = {}
     changed_after = {}

@@ -16,6 +16,7 @@ from octonomy.core.selectors import (
     create_payload_with_scope,
     reject_null_namespaced_application_id,
     scoped_create_data,
+    update_data_with_body_scope,
 )
 from octonomy.core.serializers import response_serializer_context
 from octonomy.tags.vocabulary_selectors import filter_vocabularies, vocabularies_for_tenant
@@ -147,7 +148,7 @@ def vocabulary_detail(request, vocabulary_id):
     serializer.is_valid(raise_exception=True)
     vocabulary = update_vocabulary(
         vocabulary,
-        serializer.validated_data,
+        update_data_with_body_scope(request, serializer.validated_data),
         build_audit_context(request),
     )
     return data_response(

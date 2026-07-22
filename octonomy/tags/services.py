@@ -13,7 +13,6 @@ from octonomy.core.selectors import (
     guard_scope_immutable,
     namespace_fields,
     row_matches_scope,
-    scope_context_from_instance_data,
     scope_context_from_values,
 )
 from octonomy.events.services import build_outbox_event, create_outbox_event, create_outbox_events
@@ -186,20 +185,19 @@ def update_tag(
     data: dict,
     audit_context: AuditContext | None = None,
 ) -> Tag:
-    application_id = data.get("application_id", tag.application_id)
-    scope_context = scope_context_from_instance_data(tag, data)
-    # Guard both the current scope and the resulting scope: a namespaced->global move
-    # mutates a namespaced row (and would expose it to global reads), so it must be
-    # blocked while the kill-switch is off even though its destination is global.
-    guard_namespace_write_enabled(scope_context_from_values(tag.namespace_type, tag.namespace_id))
+    # Build scope from the row's own (current) namespace, which is always well-formed.
+    # Scope is immutable, so this is also the destination — no ScopeContext is built
+    # from the request payload, whose one-sided namespace could raise a ValueError.
+    scope_context = scope_context_from_values(tag.namespace_type, tag.namespace_id)
+    # Write kill-switch first: a namespaced row can't be written while writes are off,
+    # so that 403 takes precedence over the scope guard. Then reject any scope change
+    # (application_id or namespace) BEFORE validating relations, so a scope-changing
+    # PATCH is a deterministic 409 scope_immutable regardless of attachments -- moving
+    # a tag would orphan its assignments, aliases, and child links and can silently
+    # reassign merchant data (NS-1). Re-create in the target scope instead.
     guard_namespace_write_enabled(scope_context)
-    # Scope (application_id/namespace) is immutable: moving a tag would orphan its
-    # assignments, aliases, and child links (legal in the old scope, illegal in the
-    # new one) and can silently reassign merchant data (NS-1). Reject the move BEFORE
-    # validating relations, so a scope-changing PATCH always returns 409
-    # scope_immutable rather than a 400 from checking an existing parent/vocabulary
-    # against the destination scope. Re-create in the target scope instead.
     guard_scope_immutable(tag, data)
+    application_id = tag.application_id
     parent = data.get("parent", tag.parent)
     vocabulary = data.get("vocabulary", tag.vocabulary)
     vocabulary_changed = "vocabulary" in data and data["vocabulary"] != tag.vocabulary
