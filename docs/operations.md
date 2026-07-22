@@ -228,19 +228,58 @@ verify before the next:
 
 ### Rollback ladder (disable)
 
-Disable in this order; **columns and `SCHEMA` stay** (no data is removed, no migration is reversed):
+Rollback withdraws the namespace surface with **flags only** — no data is removed, no migration is
+reversed, and `SCHEMA` plus the columns stay. Flags are read at boot, so a change takes effect on
+redeploy (rollback latency = deploy latency). Once merchant writes are live, namespaced rows exist in
+the tables; the ladder makes them *unreachable*, never global.
 
-1. **`OCTONOMY_NAMESPACE_V2_API_ENABLED=false`** — first. Namespaced v2 requests get
-   `503 namespace_api_disabled`; merchant traffic stops immediately while global clients keep
-   working.
-2. **`OCTONOMY_NAMESPACE_AUTH_ENFORCED=false`**.
-3. **`OCTONOMY_NAMESPACE_WRITE_ENABLED=false`** — writes go back to global-only. Must come **before**
-   turning reads off (the E013 check enforces this ordering: writes off before reads off).
-4. **`OCTONOMY_NAMESPACE_READ_ENABLED=false`**.
+**Pick the entry point by incident — you rarely need the whole ladder:**
 
-Never roll back by widening visibility — namespaced rows must never become visible through a global
-(v1) read. Writes-off-first, then withdraw the surface; the data stays partitioned and simply
-becomes unreachable until re-enablement.
+- **Isolation/leak or security incident** → set **both** `OCTONOMY_NAMESPACE_V2_API_ENABLED=false`
+  **and** `OCTONOMY_NAMESPACE_WRITE_ENABLED=false`. `V2_API=false` withdraws only the namespaced v2
+  **HTTP** surface: every namespaced v2 request is refused at the edge with `503
+  namespace_api_disabled` *before* authentication (reads and API writes), while global v1/v2 traffic
+  is untouched. That edge gate does **not** cover non-HTTP writers — management commands, background
+  jobs, and the outbox dispatcher keep mutating namespaced data until `WRITE=false`, the kill-switch
+  enforced on every write path. Use both to fully contain a leak; global traffic keeps working
+  throughout.
+- **Write-path bug, reads healthy** → graceful: set **`OCTONOMY_NAMESPACE_WRITE_ENABLED=false`**
+  first. Namespaced writes get `403 namespaced_writes_disabled` on every path (HTTP, management
+  commands, and the outbox dispatcher — global delivery continues while namespaced events pause as
+  `pending`), while merchant reads keep serving. Escalate to `V2_API=false` only if reads must stop
+  too.
+
+**Full teardown order.** Each step is boot-legal, and the order is *forced* by the dependency check
+(`manage.py check`) — you cannot disable a prerequisite while something above still depends on it:
+
+1. **`OCTONOMY_NAMESPACE_V2_API_ENABLED=false`** — must be first: `V2_API` requires `AUTH` (E015) and
+   `READ` (E014), so neither can go off while v2 is served. Namespaced v2 → `503`; global clients
+   unaffected. This is the HTTP edge only — non-HTTP writers keep mutating until step 3 (`WRITE`),
+   so if writes must halt now, drop `WRITE` immediately rather than waiting.
+2. **`OCTONOMY_NAMESPACE_AUTH_ENFORCED=false`** — legal only once v2 is off (E015).
+3. **`OCTONOMY_NAMESPACE_WRITE_ENABLED=false`** — writes revert to global-only. Must precede
+   reads-off (E013: `WRITE` requires `READ`, whose message reads "disable writes before reads on
+   rollback").
+4. **`OCTONOMY_NAMESPACE_READ_ENABLED=false`** — last; everything above depends on it
+   (E011/E013/E014). `SCHEMA` stays on.
+
+**Never roll back by widening visibility.** Namespaced rows carry `namespace_type`/`namespace_id`, and
+every read path filters them out of v1/global results, so the flags alone can never leak them —
+`READ=false` fails closed to global-only, it does not "show everything." A leak only happens if you
+change *how the rows are read*. During an incident, do **not**:
+
+- deploy an application build older than the namespace-aware read path (pre-S3 selectors) — an old
+  build treats namespaced rows as ordinary rows and serves them to v1/global clients;
+- run a data migration that NULLs or drops `namespace_type`/`namespace_id` — that reclassifies
+  merchant rows as global;
+- disable or bypass the namespace read filter in code.
+
+Use the flags above and leave the rows where they are.
+
+**Re-enablement** walks the rollout sequence forward again, honouring the same dependencies: `READ`
+before `WRITE` (E013) and `AUTH` before `V2_API` (E015). Paused namespaced outbox events resume from
+`pending` once `WRITE` is back on, and the per-namespace lag metric drains. Re-run
+`python manage.py verify_namespace_scope` afterward to confirm zero scope-invariant violations.
 
 ### Dashboards & metrics (must be live before v2 enablement)
 
