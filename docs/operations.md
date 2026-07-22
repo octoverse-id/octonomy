@@ -235,10 +235,14 @@ the tables; the ladder makes them *unreachable*, never global.
 
 **Pick the entry point by incident — you rarely need the whole ladder:**
 
-- **Isolation/leak or security incident** → fastest kill: set
-  **`OCTONOMY_NAMESPACE_V2_API_ENABLED=false`**. Every namespaced v2 request is refused at the edge
-  with `503 namespace_api_disabled` *before* authentication; global v1/v2 traffic is untouched. One
-  flag stops all merchant reads and writes. Stop here unless you must tear down further.
+- **Isolation/leak or security incident** → set **both** `OCTONOMY_NAMESPACE_V2_API_ENABLED=false`
+  **and** `OCTONOMY_NAMESPACE_WRITE_ENABLED=false`. `V2_API=false` withdraws only the namespaced v2
+  **HTTP** surface: every namespaced v2 request is refused at the edge with `503
+  namespace_api_disabled` *before* authentication (reads and API writes), while global v1/v2 traffic
+  is untouched. That edge gate does **not** cover non-HTTP writers — management commands, background
+  jobs, and the outbox dispatcher keep mutating namespaced data until `WRITE=false`, the kill-switch
+  enforced on every write path. Use both to fully contain a leak; global traffic keeps working
+  throughout.
 - **Write-path bug, reads healthy** → graceful: set **`OCTONOMY_NAMESPACE_WRITE_ENABLED=false`**
   first. Namespaced writes get `403 namespaced_writes_disabled` on every path (HTTP, management
   commands, and the outbox dispatcher — global delivery continues while namespaced events pause as
@@ -250,7 +254,8 @@ the tables; the ladder makes them *unreachable*, never global.
 
 1. **`OCTONOMY_NAMESPACE_V2_API_ENABLED=false`** — must be first: `V2_API` requires `AUTH` (E015) and
    `READ` (E014), so neither can go off while v2 is served. Namespaced v2 → `503`; global clients
-   unaffected.
+   unaffected. This is the HTTP edge only — non-HTTP writers keep mutating until step 3 (`WRITE`),
+   so if writes must halt now, drop `WRITE` immediately rather than waiting.
 2. **`OCTONOMY_NAMESPACE_AUTH_ENFORCED=false`** — legal only once v2 is off (E015).
 3. **`OCTONOMY_NAMESPACE_WRITE_ENABLED=false`** — writes revert to global-only. Must precede
    reads-off (E013: `WRITE` requires `READ`, whose message reads "disable writes before reads on
