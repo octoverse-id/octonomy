@@ -100,6 +100,41 @@ NAMESPACE_API_DISABLED_RESPONSE = {
     "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
 }
 
+# Scope immutability (NS-1): a PATCH that changes application_id/namespace_type/
+# namespace_id is rejected on every scoped detail endpoint, on both API versions.
+SCOPE_IMMUTABLE_RESPONSE = {
+    "description": (
+        "The request tried to change a row's application_id, namespace_type, or "
+        "namespace_id. Scope is fixed at creation (NS-1); the error envelope carries "
+        "code scope_immutable. Re-create the row in the target scope instead."
+    ),
+    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}},
+}
+
+
+def _ensure_error_response_component(result) -> None:
+    result.setdefault("components", {}).setdefault("schemas", {}).setdefault(
+        "ErrorResponse", dict(ERROR_RESPONSE_SCHEMA)
+    )
+
+
+def _document_scope_immutable(result) -> bool:
+    """Document 409 scope_immutable on every detail PATCH (both API versions).
+
+    The only PATCH operations under /api/ are the scoped-entity detail endpoints
+    (tags, vocabularies, aliases); assignments and audit expose no PATCH.
+    """
+
+    documented = False
+    for path, path_item in result.get("paths", {}).items():
+        if not path.startswith("/api/") or not isinstance(path_item, dict):
+            continue
+        patch = path_item.get("patch")
+        if isinstance(patch, dict) and "responses" in patch:
+            patch["responses"].setdefault("409", dict(SCOPE_IMMUTABLE_RESPONSE))
+            documented = True
+    return documented
+
 
 def add_namespace_parameters(result, generator, request, public, **kwargs):
     # Both versions mirror the package version (versioning.md); the URL prefix
@@ -108,8 +143,13 @@ def add_namespace_parameters(result, generator, request, public, **kwargs):
     if spectacular_settings.VERSION:
         result.setdefault("info", {})["version"] = spectacular_settings.VERSION
 
+    # scope_immutable (NS-1) is a PATCH contract on both API versions.
+    documented_scope_immutable = _document_scope_immutable(result)
+
     api_version = getattr(generator, "api_version", None)
     if api_version != "v2":
+        if documented_scope_immutable:
+            _ensure_error_response_component(result)
         # Response serializers declare namespace identity so the v2 schema and
         # runtime payload can expose row ownership. Remove those properties from
         # the shared v1 components to preserve the established v1 contract.
@@ -147,10 +187,8 @@ def add_namespace_parameters(result, generator, request, public, **kwargs):
             operation["responses"].setdefault("503", dict(NAMESPACE_API_DISABLED_RESPONSE))
             documented_disabled_response = True
 
-    if documented_disabled_response:
-        result.setdefault("components", {}).setdefault("schemas", {}).setdefault(
-            "ErrorResponse", dict(ERROR_RESPONSE_SCHEMA)
-        )
+    if documented_disabled_response or documented_scope_immutable:
+        _ensure_error_response_component(result)
 
     return result
 

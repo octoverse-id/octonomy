@@ -9,11 +9,19 @@ from octonomy.core.auth import (
     application_ids_from_request,
     authorized_application_ids,
 )
+from octonomy.core.errors import ScopeImmutableError
 
-# Only a move-capable method (PATCH) may look up a row outside the request-named
-# application: its body names the *destination* app, so the source row must be
-# found by authorized scope. Reads and deletes act on the current row and stay
-# bound to the application the request named, consistent with list filtering.
+# The fields that define a row's isolation scope. They are set at creation and are
+# immutable thereafter (NS-1) — see guard_scope_immutable.
+SCOPE_FIELDS = ("application_id", "namespace_type", "namespace_id")
+
+# PATCH/PUT look a row up by authorized scope rather than the request-named
+# application. Scope is now immutable (NS-1), so a body that names a different
+# application is a rejected move, not a real one — but the row must still be *found*
+# so the guard can answer 409 scope_immutable, instead of a misleading 404 from
+# filtering by the body's destination application. The caller stays bounded by its
+# grant, so this is not extra access. Reads and deletes act on the current row and
+# stay bound to the application the request named, consistent with list filtering.
 _MOVE_CAPABLE_METHODS = frozenset({"PATCH", "PUT"})
 
 
@@ -78,13 +86,16 @@ def apply_application_filter(
 def application_filter_params(request) -> tuple[set[str] | None, bool]:
     """Application scope + ``include_shared`` for an object-by-id lookup.
 
-    Reads and deletes bound the fetched row to the application the request named
+    Reads and deletes bind the fetched row to the application the request named
     (``application_ids_from_request``), staying consistent with list filtering and
     the "namespace below application" contract — a request for ``application_id=cms``
-    must not return a ``commerce`` row. A PATCH may be an application move whose body
-    names the *destination*, so its source lookup uses ``authorized_application_ids``
-    (the apps the grant covers for the namespace) instead. ``None`` means no
-    application filter (a tenant-wide request that named no application).
+    must not return a ``commerce`` row. A PATCH uses the broader
+    ``authorized_application_ids`` (the apps the grant covers): a body naming another
+    application is a scope-move attempt, and since scope is immutable (NS-1) that must
+    surface as a 409 ``scope_immutable`` on the found row rather than a 404 from
+    filtering by the body's destination. The caller is still bounded by its grant, so
+    this grants no extra access. ``None`` means no application filter (a tenant-wide
+    request that named no application).
     """
 
     include_shared = request.query_params.get("include_shared", "true").lower() != "false"
@@ -205,3 +216,54 @@ def namespace_changed(instance, data: dict) -> bool:
         or "namespace_id" in data
         and data["namespace_id"] != instance.namespace_id
     )
+
+
+def scope_changed_fields(instance, data: dict) -> list[str]:
+    """Scope fields whose update payload differs from the row's current value."""
+
+    return [
+        field for field in SCOPE_FIELDS if field in data and data[field] != getattr(instance, field)
+    ]
+
+
+def guard_scope_immutable(instance, data: dict) -> None:
+    """Reject any change to a row's scope fields after creation (NS-1).
+
+    ``application_id``/``namespace_type``/``namespace_id`` are fixed at creation:
+    moving a row between scopes would orphan attached assignments, child tags,
+    aliases, and vocabulary references, and can silently reassign merchant-private
+    data. Callers must re-create the row in the target scope instead of mutating it.
+    One shared guard keeps the rule identical across tags, vocabularies, and aliases
+    (epic decision #10 — no per-module copies).
+    """
+
+    changed = scope_changed_fields(instance, data)
+    if changed:
+        raise ScopeImmutableError(
+            "Scope fields cannot be changed after creation.",
+            {
+                field: ["This field is immutable; re-create the row in the target scope."]
+                for field in changed
+            },
+        )
+
+
+def update_data_with_body_scope(request, validated_data: dict) -> dict:
+    """Fold header-bound namespace fields back into an update payload.
+
+    The write serializers deliberately omit ``namespace_type``/``namespace_id`` —
+    namespace is set from ``X-Namespace-*`` headers, never the body — so DRF drops
+    them from ``validated_data``. Without this, a PATCH body carrying a namespace
+    would be silently ignored (200) instead of rejected by ``guard_scope_immutable``
+    (409), the same "never silently discard namespace intent" the v1 header
+    rejection enforces. ``application_id`` is a real serializer field and already
+    reaches the guard, so it is not folded here.
+    """
+
+    body = getattr(request, "data", None)
+    if not isinstance(body, dict):
+        return validated_data
+    extra = {field: body[field] for field in ("namespace_type", "namespace_id") if field in body}
+    if not extra:
+        return validated_data
+    return {**validated_data, **extra}

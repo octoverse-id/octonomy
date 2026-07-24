@@ -10,10 +10,9 @@ from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, guard_namespace_write
 from octonomy.core.errors import ConflictError, DomainError
 from octonomy.core.metrics import emit_namespace_conflict
 from octonomy.core.selectors import (
-    namespace_changed,
+    guard_scope_immutable,
     namespace_fields,
     row_matches_scope,
-    scope_context_from_instance_data,
     scope_context_from_values,
 )
 from octonomy.events.services import build_outbox_event, create_outbox_event, create_outbox_events
@@ -121,30 +120,6 @@ def scope_context_from_create_data(data: dict) -> ScopeContext:
     return scope_context_from_values(data.get("namespace_type"), data.get("namespace_id"))
 
 
-def namespace_or_application_changed(tag: Tag, data: dict) -> bool:
-    return (
-        "application_id" in data and data["application_id"] != tag.application_id
-    ) or namespace_changed(tag, data)
-
-
-def block_tag_scope_move_if_attached(tag: Tag) -> None:
-    if tag.assignments.exists():
-        raise ConflictError(
-            "Cannot change scope for a tag with assignments.",
-            {"application_id": ["Remove assignments before changing tag scope."]},
-        )
-    if tag.aliases.exists():
-        raise ConflictError(
-            "Cannot change scope for a tag with aliases.",
-            {"application_id": ["Remove aliases before changing tag scope."]},
-        )
-    if tag.children.exists():
-        raise ConflictError(
-            "Cannot change scope for a tag with child tags.",
-            {"application_id": ["Remove child tags before changing tag scope."]},
-        )
-
-
 def serialize_related_audit_value(field: str, value):
     if field in {"parent", "vocabulary"} and value:
         return str(value.id)
@@ -210,13 +185,19 @@ def update_tag(
     data: dict,
     audit_context: AuditContext | None = None,
 ) -> Tag:
-    application_id = data.get("application_id", tag.application_id)
-    scope_context = scope_context_from_instance_data(tag, data)
-    # Guard both the current scope and the resulting scope: a namespaced->global move
-    # mutates a namespaced row (and would expose it to global reads), so it must be
-    # blocked while the kill-switch is off even though its destination is global.
-    guard_namespace_write_enabled(scope_context_from_values(tag.namespace_type, tag.namespace_id))
+    # Build scope from the row's own (current) namespace, which is always well-formed.
+    # Scope is immutable, so this is also the destination — no ScopeContext is built
+    # from the request payload, whose one-sided namespace could raise a ValueError.
+    scope_context = scope_context_from_values(tag.namespace_type, tag.namespace_id)
+    # Write kill-switch first: a namespaced row can't be written while writes are off,
+    # so that 403 takes precedence over the scope guard. Then reject any scope change
+    # (application_id or namespace) BEFORE validating relations, so a scope-changing
+    # PATCH is a deterministic 409 scope_immutable regardless of attachments -- moving
+    # a tag would orphan its assignments, aliases, and child links and can silently
+    # reassign merchant data (NS-1). Re-create in the target scope instead.
     guard_namespace_write_enabled(scope_context)
+    guard_scope_immutable(tag, data)
+    application_id = tag.application_id
     parent = data.get("parent", tag.parent)
     vocabulary = data.get("vocabulary", tag.vocabulary)
     vocabulary_changed = "vocabulary" in data and data["vocabulary"] != tag.vocabulary
@@ -228,12 +209,6 @@ def update_tag(
         scope_context,
         require_active=vocabulary_changed,
     )
-
-    if namespace_or_application_changed(tag, data):
-        # Assignments, aliases, and child links all encode the current tag
-        # scope. Moving the tag would leave attached rows legal in the old scope
-        # but illegal for the new one, so callers must detach them first.
-        block_tag_scope_move_if_attached(tag)
 
     changed_before = {}
     changed_after = {}

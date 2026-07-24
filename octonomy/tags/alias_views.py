@@ -23,6 +23,7 @@ from octonomy.core.selectors import (
     create_payload_with_scope,
     reject_null_namespaced_application_id,
     scoped_create_data,
+    update_data_with_body_scope,
 )
 from octonomy.core.serializers import response_serializer_context
 from octonomy.core.validators import validate_external_id, validate_slug_like
@@ -182,7 +183,11 @@ def alias_detail(request, alias_id):
         },
     )
     serializer.is_valid(raise_exception=True)
-    alias = update_tag_alias(alias, serializer.validated_data, build_audit_context(request))
+    alias = update_tag_alias(
+        alias,
+        update_data_with_body_scope(request, serializer.validated_data),
+        build_audit_context(request),
+    )
     return data_response(
         TagAliasSerializer(alias, context=response_serializer_context(request)).data
     )

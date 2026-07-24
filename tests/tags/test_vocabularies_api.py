@@ -83,9 +83,12 @@ def test_update_vocabulary_and_duplicate_slug_conflict(api_client):
     assert duplicate_response.status_code == 409
 
 
-def test_cannot_change_vocabulary_application_scope_when_tags_exist(api_client):
+def test_cannot_change_vocabulary_application_scope(api_client):
+    # Scope is immutable (NS-1): a vocabulary cannot move applications, whether or
+    # not tags reference it.
     vocabulary = make_vocabulary(slug="labels")
     make_tag(slug="featured", vocabulary=vocabulary)
+    original_application_id = vocabulary.application_id
 
     response = api_client.patch(
         f"/api/v1/vocabularies/{vocabulary.id}",
@@ -94,9 +97,10 @@ def test_cannot_change_vocabulary_application_scope_when_tags_exist(api_client):
     )
 
     assert response.status_code == 409
-    assert response.json()["error"]["details"]["application_id"] == [
-        "Remove tags before changing application scope."
-    ]
+    assert response.json()["error"]["code"] == "scope_immutable"
+    assert "application_id" in response.json()["error"]["details"]
+    vocabulary.refresh_from_db()
+    assert vocabulary.application_id == original_application_id
 
 
 def test_delete_vocabulary_deactivates_without_deactivating_tags(api_client):

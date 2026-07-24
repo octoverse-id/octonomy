@@ -72,6 +72,17 @@ class NamespaceApiDisabledError(DomainError):
     message = "The namespaced v2 API is not enabled on this deployment."
 
 
+class ScopeImmutableError(ConflictError):
+    # NS-1: a row's scope — application_id, namespace_type, namespace_id — is fixed
+    # at creation. Changing it afterwards would orphan attached assignments, child
+    # tags, aliases, and vocabulary references (legal in the old scope, illegal in
+    # the new one) and could silently reassign merchant-private data, so scope moves
+    # are rejected outright. Re-create the row in the target scope instead. 409 keeps
+    # the status of the scope-move rejection this supersedes.
+    code = "scope_immutable"
+    message = "A row's application and namespace scope cannot be changed after creation."
+
+
 def error_response(code: str, message: str, details: Any, request, http_status: int) -> Response:
     request_id = getattr(request, "request_id", None)
     # Stamp the error code onto the underlying HttpRequest so request-completion

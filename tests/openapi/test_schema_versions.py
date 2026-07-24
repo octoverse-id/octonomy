@@ -120,7 +120,25 @@ def test_rollback_503_is_documented_on_v2_operations_only(v1_schema, v2_schema):
     schema_ref = v2_ops[0][2]["responses"]["503"]["content"]["application/json"]["schema"]["$ref"]
     assert schema_ref == "#/components/schemas/ErrorResponse"
     assert "ErrorResponse" in v2_schema["components"]["schemas"]
-    assert "ErrorResponse" not in v1_schema.get("components", {}).get("schemas", {})
+    # v1 also registers ErrorResponse now — for the 409 scope_immutable PATCH contract
+    # (NS-1), not the 503. The 503 above stays v2-only.
+    assert "ErrorResponse" in v1_schema["components"]["schemas"]
+
+
+def test_scope_immutable_409_is_documented_on_detail_patch_both_versions(v1_schema, v2_schema):
+    # NS-1: a scope-changing PATCH returns 409 scope_immutable. That contract is on
+    # both API versions (application_id is writable on v1 too), documented on every
+    # detail PATCH and referencing the shared ErrorResponse envelope.
+    for schema in (v1_schema, v2_schema):
+        patch_ops = [op for _, method, op in api_operations(schema) if method == "patch"]
+        assert patch_ops
+        for op in patch_ops:
+            assert "409" in op["responses"], op.get("operationId")
+            ref = op["responses"]["409"]["content"]["application/json"]["schema"]["$ref"]
+            assert ref == "#/components/schemas/ErrorResponse"
+        # Non-PATCH operations do not carry the scope_immutable 409.
+        get_ops = [op for _, method, op in api_operations(schema) if method == "get"]
+        assert all("409" not in op["responses"] for op in get_ops)
 
 
 @pytest.mark.parametrize("version", ["v1", "v2"])

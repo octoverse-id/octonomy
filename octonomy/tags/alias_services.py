@@ -9,6 +9,7 @@ from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, guard_namespace_write
 from octonomy.core.errors import ApplicationMismatchError, ConflictError, DomainError
 from octonomy.core.metrics import emit_namespace_conflict
 from octonomy.core.selectors import (
+    guard_scope_immutable,
     namespace_fields,
     row_matches_scope,
     scope_context_from_values,
@@ -152,18 +153,16 @@ def update_tag_alias(
     data: dict,
     audit_context: AuditContext | None = None,
 ) -> TagAlias:
-    application_id = data.get("application_id", alias.application_id)
-    tag = data.get("tag", alias.tag)
-    scope_context = ScopeContext(
-        namespace_type=data.get("namespace_type", alias.namespace_type),
-        namespace_id=data.get("namespace_id", alias.namespace_id),
-    )
-    # Guard the current scope as well as the destination so a namespaced->global
-    # move cannot slip past the kill-switch (see update_tag).
-    guard_namespace_write_enabled(
-        scope_context_from_values(alias.namespace_type, alias.namespace_id)
-    )
+    # Scope from the alias's own (current) namespace — always well-formed and, since
+    # scope is immutable, also the destination (see update_tag). Write kill-switch
+    # first (403 precedence), then reject any scope change: an alias may be re-pointed
+    # to a different tag within its scope, but moving the alias itself between scopes
+    # can silently reassign merchant data (NS-1). Re-create in the target scope.
+    scope_context = scope_context_from_values(alias.namespace_type, alias.namespace_id)
     guard_namespace_write_enabled(scope_context)
+    guard_scope_immutable(alias, data)
+    application_id = alias.application_id
+    tag = data.get("tag", alias.tag)
     validate_alias_tag(alias.tenant_id, application_id, tag, scope_context)
     if "metadata" in data:
         validate_metadata(data["metadata"])

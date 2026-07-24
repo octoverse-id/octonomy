@@ -230,6 +230,35 @@ def test_null_body_application_id_on_namespaced_patch_is_rejected(merchant_token
         assert response.json()["error"]["code"] == "validation_error", path
 
 
+@override_settings(NAMESPACE_WRITE_ENABLED=True)
+def test_namespace_in_patch_body_is_rejected_not_silently_ignored(merchant_token):
+    # namespace_type/namespace_id are header-driven and immutable. The write
+    # serializers omit them, so without folding them back a body value would be
+    # silently dropped (200); it must instead be rejected as a scope move (409).
+    client = client_for(merchant_token, namespace_type="merchant", namespace_id="merchant_a")
+    ns = {"namespace_type": "merchant", "namespace_id": "merchant_a"}
+    tag = make_tag(application_id=APP, slug="patchtag", **ns)
+    vocab = make_vocabulary(application_id=APP, slug="patchvocab", **ns)
+    alias = make_alias(tag=tag, application_id=APP, slug="patchalias", **ns)
+
+    for path, body in (
+        (f"/api/v2/tags/{tag.id}", {"namespace_id": "merchant_b"}),
+        (f"/api/v2/vocabularies/{vocab.id}", {"namespace_type": "reseller"}),
+        (f"/api/v2/tag-aliases/{alias.id}", {"namespace_id": "merchant_b"}),
+    ):
+        response = client.patch(f"{path}?application_id={APP}", body, format="json")
+        assert response.status_code == 409, (path, response.data)
+        assert response.json()["error"]["code"] == "scope_immutable", path
+
+    # The rows are untouched.
+    tag.refresh_from_db()
+    vocab.refresh_from_db()
+    alias.refresh_from_db()
+    assert tag.namespace_id == "merchant_a"
+    assert vocab.namespace_type == "merchant"
+    assert alias.namespace_id == "merchant_a"
+
+
 def test_v2_usage_count_stays_within_requested_application(wildcard_token):
     # The namespace layer is below application: a shared tag viewed as
     # application=commerce must not count assignments from another application that

@@ -51,6 +51,26 @@ def test_create_list_get_update_and_delete_alias(api_client):
     ]
 
 
+def test_cannot_move_alias_between_applications(api_client):
+    # Aliases had no scope-move guard before NS-1; scope is now immutable, so a
+    # PATCH changing the alias's own application is rejected (re-pointing the tag
+    # within scope is still allowed).
+    tag = make_tag(application_id="commerce", slug="featured")
+    alias = make_alias(tag=tag, application_id="commerce", slug="promoted")
+
+    response = api_client.patch(
+        f"/api/v1/tag-aliases/{alias.id}",
+        {"application_id": "cms"},
+        format="json",
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "scope_immutable"
+    assert "application_id" in response.json()["error"]["details"]
+    alias.refresh_from_db()
+    assert alias.application_id == "commerce"
+
+
 def test_list_aliases_for_tag(api_client):
     tag = make_tag(slug="featured")
     make_alias(tag=tag, slug="promoted")

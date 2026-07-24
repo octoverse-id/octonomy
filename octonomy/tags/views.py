@@ -22,6 +22,7 @@ from octonomy.core.selectors import (
     create_payload_with_scope,
     reject_null_namespaced_application_id,
     scoped_create_data,
+    update_data_with_body_scope,
 )
 from octonomy.core.serializers import response_serializer_context
 from octonomy.core.versioning import usage_count_mode_for_request
@@ -180,7 +181,11 @@ def tag_detail(request, tag_id):
         },
     )
     serializer.is_valid(raise_exception=True)
-    tag = update_tag(tag, serializer.validated_data, build_audit_context(request))
+    tag = update_tag(
+        tag,
+        update_data_with_body_scope(request, serializer.validated_data),
+        build_audit_context(request),
+    )
     apply_usage_counts(
         [tag],
         scope_context,
