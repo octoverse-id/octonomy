@@ -170,6 +170,25 @@ migration session so a blocked swap fails fast and drains the queue instead of s
 transaction; drain or kill long-running transactions first (check `pg_stat_activity`); retry during a
 quiet window; and schedule the maintenance window with headroom above the measured hold time.
 
+### Read-path query plan (`include_global=true`)
+
+The v2 merchant read with `include_global=true` filters an OR over the nullable namespace columns
+(`(namespace_type, namespace_id) = (…)` OR `namespace IS NULL`) with pagination and ordering. On small
+datasets any plan is fast; on a large tenant the OR-over-nullable filter can degrade into a sequential
+scan plus an external sort if the partial composite indexes are not used. Unit tests cannot catch this
+(they run on tiny data), so verify it per deployment, not in CI:
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS)
+-- the query your busiest merchant issues, e.g. v2 tags list with include_global=true,
+-- at realistic pagination + ordering
+```
+
+Run it against a prod-sized copy of your database and confirm the merchant branch and the global
+branch each use an index (no unexpected seq scan or external sort). If it degrades, add the missing
+per-branch index and re-check before enabling merchant reads at scale. This is an operator step for a
+given deployment's data volume — there is nothing to change in the application to perform it.
+
 ## Namespace Rollout & Operations
 
 The merchant/sub-tenant namespace layer is gated by five env-backed feature flags. They are Django
