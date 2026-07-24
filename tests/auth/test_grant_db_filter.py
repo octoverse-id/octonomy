@@ -66,6 +66,17 @@ def _grant_queries(captured) -> list[dict]:
     return [q for q in captured if "grant" in q["sql"].lower()]
 
 
+def _assert_tenant_predicate(sql: str, tenant_id: str) -> None:
+    # Prove the tenant filter is in the WHERE clause, not merely selected as a
+    # column: the old Python-filter query also SELECTs tenant_id, so a bare
+    # "tenant_id in sql" would pass without any tenant predicate.
+    lowered = sql.lower()
+    parts = lowered.split("where", 1)
+    assert len(parts) == 2, f"no WHERE clause: {sql}"
+    assert "tenant_id" in parts[1], f"tenant_id not filtered in WHERE: {sql}"
+    assert tenant_id in sql, f"tenant value not bound in query: {sql}"
+
+
 def test_tenant_grants_returns_every_shape_for_the_tenant_and_nothing_else():
     client = _multi_shape_client()
 
@@ -88,8 +99,7 @@ def test_tenant_grants_filters_in_sql_not_python():
 
     grant_queries = _grant_queries(ctx.captured_queries)
     assert len(grant_queries) == 1
-    sql = grant_queries[0]["sql"].lower()
-    assert "tenant_id" in sql  # tenant filter pushed to SQL
+    _assert_tenant_predicate(grant_queries[0]["sql"], "tenant_a")
     assert len(grants) == 3
 
 
@@ -171,4 +181,4 @@ def test_authenticated_request_issues_one_tenant_scoped_grant_query():
     assert response.status_code == 200
     grant_queries = _grant_queries(ctx.captured_queries)
     assert len(grant_queries) == 1
-    assert "tenant_id" in grant_queries[0]["sql"].lower()
+    _assert_tenant_predicate(grant_queries[0]["sql"], "tenant_a")
