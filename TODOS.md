@@ -28,19 +28,26 @@ There is nothing to build in the app: it is a per-deployment `EXPLAIN` check. `d
 ("Read-path query plan (`include_global=true`)") tells operators to verify the plan on prod-sized data
 and add a per-branch index if it degrades. Not a maintainer task for a self-hosted product.
 
-### NS-5: Grant matching — DB-filter grant lookup (#63)
-- **Done:** `tenant_grants` filters by `tenant_id` in SQL instead of loading every grant the client
-  holds across all tenants and filtering in Python (`core/auth.py`; cached per request via
+### NS-5: Grant matching — DB-filter grant lookup (issue #63 CLOSED; residual tracked here)
+Issue #63 is closed: its tenant-level half shipped (PR #70), and the remaining per-merchant work is a
+dormant tripwire with no trigger yet, so it lives here rather than as a perpetually-open issue.
+**When the tripwire fires (per-merchant grant issuance enabled at scale), re-open #63 or file a fresh
+issue from this entry.**
+
+- **Done (PR #70):** `tenant_grants` filters by `tenant_id` in SQL instead of loading every grant the
+  client holds across all tenants and filtering in Python (`core/auth.py`; cached per request via
   `request_tenant_grants`). Exact-equivalent result set — no auth decision or error reason changes —
   so a client granted many *tenants* no longer scans them all per request. Uses the existing grant
   indexes; no migration.
-- **Remaining (still a tripwire):** the *single-tenant, many-namespace* fan-out (one grant per
+- **Residual (tripwire, not triggered):** the *single-tenant, many-namespace* fan-out (one grant per
   merchant in one tenant) is NOT reduced. `tenant_grants` intentionally does not narrow by namespace,
   because the permission layer inspects the whole tenant grant set to produce precise
   tenant / namespace / application error reasons — a namespace pre-filter would change which error a
   denied request gets. Reducing the per-merchant scan requires refactoring that error reasoning first
   (compute the denial reason without materialising every grant), then adding a safe-superset namespace
-  filter. **Tripwire:** revisit when per-merchant grant issuance is actually enabled at scale.
+  filter (`Q(namespace_wildcard=True) | Q(global) | Q(exact scope_context)` — proven a safe superset
+  because a request only evaluates grants against its own scope + `GLOBAL_SCOPE`, per
+  `requested_scope_contexts`). **Trigger:** per-merchant grant issuance enabled at scale.
 
 ### NS-6: Constraint-swap lock window — RESOLVED as operator guidance (#58 closed)
 Tooling shipped (`python manage.py estimate_namespace_swap_lock`, PR #64) and documented in
