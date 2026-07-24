@@ -6,7 +6,12 @@ from rest_framework import serializers
 from octonomy.audit.services import create_audit_log, tag_alias_snapshot
 from octonomy.core.audit import AuditContext
 from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext, guard_namespace_write_enabled
-from octonomy.core.errors import ApplicationMismatchError, ConflictError, DomainError
+from octonomy.core.errors import (
+    AmbiguousResolutionError,
+    ApplicationMismatchError,
+    ConflictError,
+    DomainError,
+)
 from octonomy.core.metrics import emit_namespace_conflict
 from octonomy.core.selectors import (
     guard_scope_immutable,
@@ -263,6 +268,70 @@ def most_specific_matches(rows: list) -> list:
     return [row for row in rows if getattr(row, "resolution_priority", None) == first_priority]
 
 
+# NS-2 resolution precedence. A slug resolves against a single scope ladder, most
+# specific first:
+#   1. exact namespace, request application   (app=X, ns=exact)
+#   2. app-global, request application        (app=X, ns=global)
+#   3. tenant-global, shared                  (app=NULL, ns=global)
+# Application specificity dominates namespace specificity (namespace sits *below*
+# application in the hierarchy), and (app=NULL, ns=exact) is impossible — a
+# namespaced row requires a non-null application. Canonical tags are resolved before
+# aliases and win outright for the same slug (a tag shadows an alias regardless of
+# scope); scope specificity only orders within tags and within aliases.
+#
+# Through the HTTP surface the ladder is always a strict total order, so resolution
+# is deterministic: with an application named, each rung holds at most one active
+# row per type (the split unique constraints); and a *namespaced* request without an
+# application is refused at auth (a namespaced request must name its application), so
+# the no-application path only ever runs for a global scope, whose rows are unique
+# per slug. The one reachable multi-match is the *type* axis (same scope, >1 type),
+# resolved by asking for `type`.
+#
+# The helpers below still detect a same-rung tie and raise AmbiguousResolutionError
+# rather than pick an arbitrary (name, id) row. That guards the invariant for direct
+# / internal callers (management commands, future code) and would fire loudly if the
+# namespaced-requires-application auth rule were ever relaxed — instead of silently
+# resolving a slug to whichever application's row sorted first.
+def unique_resolution_match(rows: list, ambiguity_details: dict):
+    """Single most-specific row from an ordered resolution list, or None if empty.
+
+    ``rows`` must already be ordered by ``resolution_priority`` (the selector
+    querysets are). Raises AmbiguousResolutionError when the top rung holds more
+    than one candidate, instead of silently taking the first by arbitrary order.
+    """
+
+    if not rows:
+        return None
+    top = most_specific_matches(rows)
+    if len(top) > 1:
+        raise AmbiguousResolutionError(details=ambiguity_details)
+    return top[0]
+
+
+def raise_canonical_ambiguity(candidate_tags: list, tag_type: str | None) -> None:
+    """Report a residual multi-canonical match on the axis that disambiguates it.
+
+    A leftover tie after narrowing to the top scope rung is either the type axis
+    (same scope, different type; fixable with ``type``) or the application axis (no
+    application named, same slug+type in more than one application; fixable with
+    ``application_id``). Naming the wrong axis — the old code always said "provide
+    type" — sends the caller down a dead end.
+    """
+
+    if tag_type is None and len({tag.type for tag in candidate_tags}) > 1:
+        raise serializers.ValidationError(
+            {"type": ["Multiple canonical tags match this slug; provide type."]}
+        )
+    raise AmbiguousResolutionError(
+        details={
+            "application_id": [
+                "Multiple canonical tags match this slug across applications; "
+                "provide application_id."
+            ]
+        }
+    )
+
+
 def resolve_tag_reference(
     tenant_id: str,
     slug: str,
@@ -296,18 +365,26 @@ def resolve_tag_reference(
                 candidate_tags = app_tags
         candidate_tags = most_specific_matches(candidate_tags)
         if len(candidate_tags) > 1:
-            raise serializers.ValidationError(
-                {"type": ["Multiple canonical tags match this slug; provide type."]}
-            )
+            raise_canonical_ambiguity(candidate_tags, tag_type)
         return {"matched_type": "tag", "matched_alias": None, "tag": candidate_tags[0]}
 
-    alias = active_aliases_for_resolution(
-        tenant_id,
-        slug,
-        application_id,
-        resolved_scope,
-        include_global=include_global,
-    ).first()
+    aliases = list(
+        active_aliases_for_resolution(
+            tenant_id,
+            slug,
+            application_id,
+            resolved_scope,
+            include_global=include_global,
+        )
+    )
+    alias = unique_resolution_match(
+        aliases,
+        {
+            "application_id": [
+                "Multiple aliases match this slug across applications; provide application_id."
+            ]
+        },
+    )
     if alias is None:
         raise serializers.ValidationError({"slug": ["No active tag or alias matched this slug."]})
 
@@ -339,6 +416,9 @@ def resolve_assignable_alias(
         if not row_matches_scope(alias.tag, scope_context, include_global=include_global):
             raise serializers.ValidationError({"alias_id": ["Alias was not found."]})
     else:
+        # application_id is required here, so each scope rung holds at most one active
+        # alias (split unique constraints) and the ladder is a strict total order —
+        # .first() is deterministic, no cross-application tie is possible (NS-2).
         alias = active_aliases_for_resolution(
             tenant_id,
             alias_slug,

@@ -72,6 +72,16 @@ class NamespaceApiDisabledError(DomainError):
     message = "The namespaced v2 API is not enabled on this deployment."
 
 
+class AmbiguousResolutionError(DomainError):
+    # NS-2: two or more equally-specific tags/aliases match a slug at the same
+    # resolution scope rung, so resolution cannot deterministically pick one. This
+    # is caller-resolvable — narrow with application_id, type, or a scope qualifier —
+    # so it is a 400 (like the sibling "provide type" ambiguity), with a distinct
+    # code and a details hint naming the axis that disambiguates.
+    code = "ambiguous_resolution"
+    message = "Multiple equally-specific matches; narrow application_id, type, or scope."
+
+
 class ScopeImmutableError(ConflictError):
     # NS-1: a row's scope — application_id, namespace_type, namespace_id — is fixed
     # at creation. Changing it afterwards would orphan attached assignments, child

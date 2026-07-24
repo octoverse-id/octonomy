@@ -72,6 +72,29 @@ def test_alias_slug_resolves_to_merchant_before_global(wildcard_token):
     assert response.json()["data"]["tag"]["id"] == str(merchant_target.id)
 
 
+def test_global_canonical_tag_shadows_more_specific_merchant_alias(wildcard_token):
+    # NS-2 decision: a canonical tag beats an alias for the same slug regardless of
+    # scope. Here a *global* canonical tag wins over a *merchant* alias even though
+    # the alias is the more scope-specific row — canonical-vs-alias is decided before
+    # scope specificity, which only orders within tags and within aliases.
+    global_canonical = make_tag(application_id=APP, slug="shadowdup", name="Global Canonical")
+    alias_target = make_tag(application_id=APP, slug="shadowdup-alias-target", **NS_A)
+    make_alias(
+        tag=alias_target, application_id=APP, slug="shadowdup", name="Merchant Alias", **NS_A
+    )
+
+    client = _wildcard_a_client(wildcard_token)
+    response = client.get(
+        f"/api/v2/tag-resolution?slug=shadowdup&application_id={APP}&include_global=true"
+    )
+
+    assert response.status_code == 200, response.data
+    body = response.json()["data"]
+    assert body["matched_type"] == "tag"
+    assert body["tag"]["id"] == str(global_canonical.id)
+    assert body["tag"]["id"] != str(alias_target.id)
+
+
 @override_settings(NAMESPACE_WRITE_ENABLED=True)
 def test_bulk_alias_slug_resolves_to_merchant_before_global(wildcard_token):
     global_target = make_tag(application_id=APP, slug="bulk-global-target")

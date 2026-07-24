@@ -157,8 +157,10 @@ def active_aliases_for_resolution(
         queryset = queryset.filter(
             Q(application_id=application_id) | Q(application_id__isnull=True)
         )
-        # Resolution precedence is most-specific first:
-        # (app, namespace) > (app, global namespace) > (tenant shared, global).
+        # Resolution precedence is most-specific first (the NS-2 ladder in
+        # alias_services): (app, exact ns) > (app, global ns) > (tenant shared,
+        # global). (tenant shared, exact ns) is impossible — namespaced rows require
+        # a non-null application — so with an application named each rung is unique.
         if scope_context.is_global:
             return queryset.annotate(
                 resolution_priority=Case(
