@@ -28,14 +28,19 @@ There is nothing to build in the app: it is a per-deployment `EXPLAIN` check. `d
 ("Read-path query plan (`include_global=true`)") tells operators to verify the plan on prod-sized data
 and add a per-branch index if it degrades. Not a maintainer task for a self-hosted product.
 
-### NS-5: Grant matching — DB-filter if per-merchant fan-out grows (OPEN, #63)
-- **What:** Switch `matching_grants` (core/auth.py) from prefetched Python filtering to a DB-filtered
-  query if per-merchant grants are ever issued at scale.
-- **Why:** Today grant counts are small (no per-merchant fan-out at launch), so the O(N) Python scan
-  per request is fine. If a future tier issues one grant per merchant, the scan becomes a per-request
-  latency cost.
-- **Tripwire:** revisit when enabling per-merchant grant issuance. Not production-data dependent, so it
-  stays open as backlog rather than being closed with the rollout items.
+### NS-5: Grant matching — DB-filter grant lookup (#63)
+- **Done:** `tenant_grants` filters by `tenant_id` in SQL instead of loading every grant the client
+  holds across all tenants and filtering in Python (`core/auth.py`; cached per request via
+  `request_tenant_grants`). Exact-equivalent result set — no auth decision or error reason changes —
+  so a client granted many *tenants* no longer scans them all per request. Uses the existing grant
+  indexes; no migration.
+- **Remaining (still a tripwire):** the *single-tenant, many-namespace* fan-out (one grant per
+  merchant in one tenant) is NOT reduced. `tenant_grants` intentionally does not narrow by namespace,
+  because the permission layer inspects the whole tenant grant set to produce precise
+  tenant / namespace / application error reasons — a namespace pre-filter would change which error a
+  denied request gets. Reducing the per-merchant scan requires refactoring that error reasoning first
+  (compute the denial reason without materialising every grant), then adding a safe-superset namespace
+  filter. **Tripwire:** revisit when per-merchant grant issuance is actually enabled at scale.
 
 ### NS-6: Constraint-swap lock window — RESOLVED as operator guidance (#58 closed)
 Tooling shipped (`python manage.py estimate_namespace_swap_lock`, PR #64) and documented in

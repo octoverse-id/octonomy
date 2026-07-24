@@ -233,7 +233,7 @@ def authorized_application_ids(request) -> set[str] | None:
     required_scope = getattr(request, "required_scope", None)
 
     application_ids: set[str] = set()
-    for grant in tenant_grants(client, tenant_id):
+    for grant in request_tenant_grants(request, client, tenant_id):
         if required_scope and not grant.has_scope(required_scope):
             continue
         if not grant_matches_namespace(grant, scope_context):
@@ -277,8 +277,45 @@ def grant_application_matches(grant: ServiceClientGrant, application_id: str | N
     return grant.application_id == application_id
 
 
-def tenant_grants(client: ServiceClient, tenant_id: str):
-    return [grant for grant in client.grants.all() if grant.tenant_id == tenant_id]
+def tenant_grants(client: ServiceClient, tenant_id: str) -> list[ServiceClientGrant]:
+    """The client's grants for one tenant, filtered at the database (NS-5).
+
+    Exactly equivalent to the previous ``[g for g in client.grants.all() if
+    g.tenant_id == tenant_id]`` — same result set — but the tenant filter runs in
+    SQL (indexed by the FK + the composite grant constraints) instead of loading
+    every grant the client holds across all tenants into Python. This bounds the
+    per-request grant scan to the tenant in play.
+
+    Deliberately filters by ``tenant_id`` only, not by namespace: the permission
+    layer inspects the whole tenant grant set to produce precise tenant / namespace
+    / application error reasons, so narrowing further here would change which error
+    a denied request receives. Reducing the *single-tenant, many-namespace* scan
+    (the per-merchant fan-out) would require refactoring that error reasoning first;
+    see issue #63.
+    """
+
+    return list(client.grants.filter(tenant_id=tenant_id))
+
+
+def request_tenant_grants(
+    request, client: ServiceClient, tenant_id: str
+) -> list[ServiceClientGrant]:
+    """``tenant_grants`` cached on the request so one filtered query serves it all.
+
+    ``has_permission`` and, later, ``authorized_application_ids`` (object-by-id
+    lookups) both need the tenant's grants; caching keeps that to a single query.
+    The cache is keyed on ``(client.pk, tenant_id)`` so a request object reused
+    across clients or tenants can never return another principal's grants — the
+    cache is an optimization, never a way to widen access.
+    """
+
+    key = (client.pk, tenant_id)
+    cached = getattr(request, "_tenant_grants_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    grants = tenant_grants(client, tenant_id)
+    request._tenant_grants_cache = (key, grants)
+    return grants
 
 
 class BearerTokenPermission(BasePermission):
@@ -309,7 +346,7 @@ class BearerTokenPermission(BasePermission):
         # Stash the resolved scope so object-by-id lookups can bound the fetched
         # row to the applications this caller is granted for the same scope.
         request.required_scope = scope
-        tenant_grant_list = tenant_grants(client, tenant_id)
+        tenant_grant_list = request_tenant_grants(request, client, tenant_id)
         if not tenant_grant_list:
             raise TenantMismatchError(
                 "Service client is not granted access to this tenant.",
@@ -404,7 +441,10 @@ class BearerTokenPermission(BasePermission):
         try:
             # Look up by prefix and peppered hash; the raw bearer token is never
             # stored, and the prefix alone is not sufficient to authenticate.
-            client = ServiceClient.objects.prefetch_related("grants").get(
+            # Grants are fetched per-tenant on demand (request_tenant_grants), not
+            # prefetched in bulk, so a client with grants across many tenants does
+            # not load them all every request (NS-5).
+            client = ServiceClient.objects.get(
                 key_prefix=key_prefix,
                 hashed_key=hash_service_token(raw_token),
             )
