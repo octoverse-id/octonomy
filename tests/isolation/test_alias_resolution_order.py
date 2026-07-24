@@ -13,6 +13,8 @@ Covers single resolution (``/tag-resolution``) and the bulk resolution path
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from django.test import override_settings
 from rest_framework.test import APIClient
@@ -72,12 +74,13 @@ def test_alias_slug_resolves_to_merchant_before_global(wildcard_token):
     assert response.json()["data"]["tag"]["id"] == str(merchant_target.id)
 
 
-def test_global_canonical_tag_shadows_more_specific_merchant_alias(wildcard_token):
+def test_tenant_global_canonical_tag_shadows_more_specific_merchant_alias(wildcard_token):
     # NS-2 decision: a canonical tag beats an alias for the same slug regardless of
-    # scope. Here a *global* canonical tag wins over a *merchant* alias even though
-    # the alias is the more scope-specific row — canonical-vs-alias is decided before
-    # scope specificity, which only orders within tags and within aliases.
-    global_canonical = make_tag(application_id=APP, slug="shadowdup", name="Global Canonical")
+    # scope. Strongest case: a *tenant-global* canonical (app=NULL, ns=NULL — the
+    # least specific rung) wins over a *merchant* alias (the most specific rung),
+    # because canonical-vs-alias is decided before scope specificity, which only
+    # orders within tags and within aliases.
+    shared_canonical = make_tag(application_id=None, slug="shadowdup", name="Shared Canonical")
     alias_target = make_tag(application_id=APP, slug="shadowdup-alias-target", **NS_A)
     make_alias(
         tag=alias_target, application_id=APP, slug="shadowdup", name="Merchant Alias", **NS_A
@@ -91,8 +94,27 @@ def test_global_canonical_tag_shadows_more_specific_merchant_alias(wildcard_toke
     assert response.status_code == 200, response.data
     body = response.json()["data"]
     assert body["matched_type"] == "tag"
-    assert body["tag"]["id"] == str(global_canonical.id)
+    assert body["tag"]["id"] == str(shared_canonical.id)
     assert body["tag"]["id"] != str(alias_target.id)
+
+
+def test_namespaced_resolution_body_application_id_does_not_bypass_query_scope(wildcard_token):
+    # Auth authorizes reads on the query application only; a body application_id on a
+    # safe-method request must not clear auth (which would then resolve with
+    # application_id=None and fan out across the namespace). The wildcard token would
+    # authorize commerce+merchant_a, so honouring the body would 200; ignoring it
+    # (correct) leaves a namespaced request with no application -> 403.
+    make_tag(application_id=APP, slug="bodybypass", **NS_A)
+
+    client = _wildcard_a_client(wildcard_token)
+    response = client.generic(
+        "GET",
+        "/api/v2/tag-resolution?slug=bodybypass&include_global=true",
+        json.dumps({"application_id": APP}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 403, response.data
 
 
 @override_settings(NAMESPACE_WRITE_ENABLED=True)
