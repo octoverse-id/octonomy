@@ -152,18 +152,26 @@ def required_scope_for_request(request, view) -> str:
 def application_ids_from_request(request) -> set[str]:
     application_ids = set()
 
-    # Permission checks need every application id the request names, whether it
-    # came from query parameters or the body. A service with app-scoped grants
-    # must be authorized for all of them before the view runs.
+    # Permission checks need every application id the request names. A service with
+    # app-scoped grants must be authorized for all of them before the view runs.
     query_application_id = request.query_params.get("application_id")
     if query_application_id:
         application_ids.add(query_application_id)
 
-    data = request.data if hasattr(request, "data") else {}
-    if isinstance(data, dict):
-        body_application_id = data.get("application_id")
-        if body_application_id:
-            application_ids.add(body_application_id)
+    # For reads, application scope comes from the query string only — the read views
+    # (list/detail/resolution) all take application_id from the query, never the
+    # body. Authorizing a safe-method request on a *body* application_id the view
+    # ignores would desync auth from the read path: e.g. a namespaced GET with no
+    # query application but a JSON body `{"application_id": ...}` would clear auth,
+    # then resolve with application_id=None and fan out across every application in
+    # the namespace. Only mutating requests legitimately carry application_id in the
+    # body.
+    if request.method not in SAFE_METHODS:
+        data = request.data if hasattr(request, "data") else {}
+        if isinstance(data, dict):
+            body_application_id = data.get("application_id")
+            if body_application_id:
+                application_ids.add(body_application_id)
 
     return application_ids
 
