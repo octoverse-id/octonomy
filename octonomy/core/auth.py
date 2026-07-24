@@ -304,16 +304,17 @@ def request_tenant_grants(
 
     ``has_permission`` and, later, ``authorized_application_ids`` (object-by-id
     lookups) both need the tenant's grants; caching keeps that to a single query.
-    ``tenant_id`` is fixed per request (the ``X-Tenant-ID`` header), but the cache
-    is keyed on it defensively so a reused request object can never return grants
-    for the wrong tenant.
+    The cache is keyed on ``(client.pk, tenant_id)`` so a request object reused
+    across clients or tenants can never return another principal's grants — the
+    cache is an optimization, never a way to widen access.
     """
 
+    key = (client.pk, tenant_id)
     cached = getattr(request, "_tenant_grants_cache", None)
-    if cached is not None and cached[0] == tenant_id:
+    if cached is not None and cached[0] == key:
         return cached[1]
     grants = tenant_grants(client, tenant_id)
-    request._tenant_grants_cache = (tenant_id, grants)
+    request._tenant_grants_cache = (key, grants)
     return grants
 
 
