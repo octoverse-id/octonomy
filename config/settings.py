@@ -122,6 +122,9 @@ SPECTACULAR_SETTINGS = {
         "drf_spectacular.hooks.postprocess_schema_enums",
         "octonomy.openapi.schema.add_namespace_parameters",
     ],
+    # The single Swagger UI with the v1/v2 version dropdown is wired in
+    # octonomy.openapi.views.VersionedSwaggerView, which builds SWAGGER_UI_SETTINGS
+    # per request so the dropdown's schema URLs carry any script-name prefix.
 }
 
 SERVICE_TOKEN_PEPPER = os.getenv("SERVICE_TOKEN_PEPPER", "")
