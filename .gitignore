@@ -223,3 +223,4 @@ code-review/*
 
 # Local planning artifact with obsolete namespace review notes.
 /summary.md
+.gstack/
