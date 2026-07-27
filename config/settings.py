@@ -122,23 +122,9 @@ SPECTACULAR_SETTINGS = {
         "drf_spectacular.hooks.postprocess_schema_enums",
         "octonomy.openapi.schema.add_namespace_parameters",
     ],
-    # Single Swagger UI with a version dropdown ("Select a definition" topbar).
-    # Passed as a raw JS string (drf-spectacular returns str settings verbatim) so
-    # we can reference SwaggerUIStandalonePreset — the topbar/dropdown only renders
-    # under StandaloneLayout, which that preset registers. The urls map to the two
-    # schema routes in config/urls.py (schema / schema-v2); keep them in sync.
-    "SWAGGER_UI_SETTINGS": """{
-        "deepLinking": true,
-        "persistAuthorization": true,
-        "displayOperationId": true,
-        "layout": "StandaloneLayout",
-        "presets": [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
-        "urls": [
-            {"url": "/api/schema/", "name": "v1"},
-            {"url": "/api/v2/schema/", "name": "v2"}
-        ],
-        "urls.primaryName": "v1"
-    }""",
+    # The single Swagger UI with the v1/v2 version dropdown is wired in
+    # octonomy.openapi.views.VersionedSwaggerView, which builds SWAGGER_UI_SETTINGS
+    # per request so the dropdown's schema URLs carry any script-name prefix.
 }
 
 SERVICE_TOKEN_PEPPER = os.getenv("SERVICE_TOKEN_PEPPER", "")

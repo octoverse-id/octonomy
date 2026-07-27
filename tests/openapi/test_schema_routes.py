@@ -9,6 +9,7 @@ DEFAULT_VERSION and every docs route served v1.
 from __future__ import annotations
 
 import yaml
+from django.urls import set_script_prefix
 from rest_framework.test import APIClient
 
 
@@ -61,8 +62,25 @@ def test_swagger_ui_advertises_both_definitions():
     response = APIClient().get("/api/docs/swagger/")
     body = response.content.decode()
     assert response.status_code == 200
-    assert "/api/schema/" in body
-    assert "/api/v2/schema/" in body
+    assert '"url": "/api/schema/"' in body
+    assert '"url": "/api/v2/schema/"' in body
+
+
+def test_swagger_dropdown_urls_carry_the_script_name_prefix():
+    # Under a WSGI script-name prefix the dropdown must request the prefixed schema
+    # URLs, matching NamespaceURLPathVersioning's path_info handling. Origin-absolute
+    # URLs would drop the prefix and load the wrong (or no) schema. The real
+    # WSGIHandler sets the prefix from SCRIPT_NAME; the test client does not, so set
+    # it explicitly to reproduce that deployment context.
+    set_script_prefix("/octonomy/")
+    try:
+        response = APIClient().get("/api/docs/swagger/")
+        body = response.content.decode()
+    finally:
+        set_script_prefix("/")
+    assert response.status_code == 200
+    assert '"url": "/octonomy/api/schema/"' in body
+    assert '"url": "/octonomy/api/v2/schema/"' in body
 
 
 def test_v2_redoc_route_is_served():
