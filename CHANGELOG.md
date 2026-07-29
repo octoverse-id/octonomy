@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-29
+
+v2 is now the primary, advertised API surface. The default `/api/schema/`, `/api/docs/redoc/`, and
+the Swagger UI's default "Select a definition" entry now resolve to **v2** (previously v1) — the
+breaking trigger for this major bump. **v1 is unchanged and still fully supported** (not deprecated),
+now browsable at the new `/api/v1/schema/` and `/api/docs/v1/redoc/` routes. No database migration;
+rollback is a redeploy of 1.x.
+
 ### Added
 - `/api/v2` API surface via a version shim (`NamespaceURLPathVersioning`), adding the
   merchant/sub-tenant namespace axis. v2 callers select a namespace with `X-Namespace-Type` /
@@ -64,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   merchant-before-global resolution (single and bulk paths).
 
 ### Changed
+- Default OpenAPI schema and docs now advertise v2: the un-versioned `/api/schema/`,
+  `/api/docs/redoc/`, and the Swagger UI's default "Select a definition" entry resolve to v2, with
+  new `/api/v1/schema/` and `/api/docs/v1/redoc/` routes keeping v1 fully browsable. This flip of the
+  default `/api/schema/` artifact from v1 to v2 is the breaking trigger for the major bump; no v1
+  data-API behavior changed.
 - Outbox event payloads gain additive `namespace_type`/`namespace_id` JSON fields (`null` for
   global). Existing consumers ignore the new keys; every pre-existing field is unchanged, so the
   serialized shape stays backward compatible.
@@ -143,7 +156,8 @@ Initial public release.
 - OpenAPI schema and Swagger/ReDoc docs via drf-spectacular.
 - Apache License 2.0.
 
-[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/octoverse-id/octonomy/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/octoverse-id/octonomy/compare/v1.0.0-rc.1...v1.0.0
 [1.0.0-rc.1]: https://github.com/octoverse-id/octonomy/compare/v0.1.0...v1.0.0-rc.1
 [0.1.0]: https://github.com/octoverse-id/octonomy/releases/tag/v0.1.0

@@ -1,7 +1,9 @@
 # API Notes
 
-Base path: `/api/v1` (global-only) or `/api/v2` (adds the namespace surface). Both are served by
-one view tree; see [API Versions and the Namespace Surface (v2)](#api-versions-and-the-namespace-surface-v2).
+Base path: `/api/v2` (the primary surface; adds the namespace axis) or `/api/v1` (global-only,
+**still supported — not deprecated**). Both are served by one view tree; see [API Versions and the
+Namespace Surface (v2)](#api-versions-and-the-namespace-surface-v2). The endpoint paths below are
+shown under the primary `/api/v2`; the same resources exist under `/api/v1`.
 
 Required headers for tenant-owned endpoints:
 
@@ -164,12 +166,12 @@ Errors use this shape:
 Audit endpoints:
 
 ```text
-GET /api/v1/audit-logs
-GET /api/v1/tags/{tag_id}/audit-logs
-GET /api/v1/resources/{resource_type}/{resource_id}/audit-logs
+GET /api/v2/audit-logs
+GET /api/v2/tags/{tag_id}/audit-logs
+GET /api/v2/resources/{resource_type}/{resource_id}/audit-logs
 ```
 
-`GET /api/v1/audit-logs` supports filters for `application_id`, `action`, `entity_type`,
+`GET /api/v2/audit-logs` supports filters for `application_id`, `action`, `entity_type`,
 `entity_id`, `tag_id`, `resource_type`, `resource_id`, `actor_id`, and `operation_id`.
 Vocabulary mutations emit `vocabulary.created`, `vocabulary.updated`, and
 `vocabulary.deactivated` audit actions with `entity_type = "vocabulary"`.
@@ -179,47 +181,47 @@ actions with `entity_type = "tag_alias"`.
 Vocabulary endpoints:
 
 ```text
-GET /api/v1/vocabularies
-POST /api/v1/vocabularies
-GET /api/v1/vocabularies/{vocabulary_id}
-PATCH /api/v1/vocabularies/{vocabulary_id}
-DELETE /api/v1/vocabularies/{vocabulary_id}
+GET /api/v2/vocabularies
+POST /api/v2/vocabularies
+GET /api/v2/vocabularies/{vocabulary_id}
+PATCH /api/v2/vocabularies/{vocabulary_id}
+DELETE /api/v2/vocabularies/{vocabulary_id}
 ```
 
 Vocabularies are tenant-scoped and may be shared across applications by leaving
 `application_id` null. Application-specific vocabularies may only contain tags for the same
 application. Shared tags can only belong to shared vocabularies.
 
-`GET /api/v1/vocabularies` supports `application_id`, `include_shared`, `slug`, `is_active`,
+`GET /api/v2/vocabularies` supports `application_id`, `include_shared`, `slug`, `is_active`,
 `q`, `limit`, and `offset`.
 
 Tag endpoints:
 
 ```text
-GET /api/v1/tags?vocabulary_id={vocabulary_id}
-POST /api/v1/tags
-PATCH /api/v1/tags/{tag_id}
+GET /api/v2/tags?vocabulary_id={vocabulary_id}
+POST /api/v2/tags
+PATCH /api/v2/tags/{tag_id}
 ```
 
-`POST` and `PATCH` accept optional `vocabulary_id`. `GET /api/v1/tags` supports filtering by
+`POST` and `PATCH` accept optional `vocabulary_id`. `GET /api/v2/tags` supports filtering by
 `vocabulary_id`.
 
 Alias and resolution endpoints:
 
 ```text
-GET /api/v1/tag-aliases
-POST /api/v1/tag-aliases
-GET /api/v1/tag-aliases/{alias_id}
-PATCH /api/v1/tag-aliases/{alias_id}
-DELETE /api/v1/tag-aliases/{alias_id}
-GET /api/v1/tags/{tag_id}/aliases
-GET /api/v1/tag-resolution?slug={slug}&type={type}&application_id={application_id}
+GET /api/v2/tag-aliases
+POST /api/v2/tag-aliases
+GET /api/v2/tag-aliases/{alias_id}
+PATCH /api/v2/tag-aliases/{alias_id}
+DELETE /api/v2/tag-aliases/{alias_id}
+GET /api/v2/tags/{tag_id}/aliases
+GET /api/v2/tag-resolution?slug={slug}&type={type}&application_id={application_id}
 ```
 
-`POST /api/v1/tag-aliases` accepts `application_id`, `tag_id`, `name`, `slug`, `metadata`, and
-`is_active`. `GET /api/v1/tag-aliases` supports `application_id`, `include_shared`, `tag_id`,
+`POST /api/v2/tag-aliases` accepts `application_id`, `tag_id`, `name`, `slug`, `metadata`, and
+`is_active`. `GET /api/v2/tag-aliases` supports `application_id`, `include_shared`, `tag_id`,
 `slug`, `is_active`, `q`, `limit`, and `offset`.
-`GET /api/v1/tag-resolution` resolves active canonical tags first, then active aliases whose
+`GET /api/v2/tag-resolution` resolves active canonical tags first, then active aliases whose
 canonical tag is also active. Without `application_id`, only shared tags and aliases are resolved.
 If multiple active canonical tags share the same slug across different tag types, provide `type`
 to disambiguate.

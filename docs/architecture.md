@@ -191,9 +191,11 @@ signs the request with `OCTONOMY_WEBHOOK_SIGNING_SECRET`.
 
 ## Release And Operations Readiness
 
-The v1 REST surface is stable as of `1.0.0` and follows Semantic Versioning. Release readiness
-is enforced through Django system checks, migration drift checks, an OpenAPI contract drift gate,
-test-coverage thresholds, a dependency vulnerability scan, SQLite tests, and PostgreSQL tests in CI.
+The REST API exposes two live, stable surfaces that follow Semantic Versioning: `/api/v2` (the
+primary, advertised surface, which adds the namespace axis) and `/api/v1` (global-only, still
+supported — not deprecated). Release readiness is enforced through Django system checks, migration
+drift checks, an OpenAPI contract drift gate, test-coverage thresholds, a dependency vulnerability
+scan, SQLite tests, and PostgreSQL tests in CI.
 
 Production deployments should run PostgreSQL, set non-default `DJANGO_SECRET_KEY` and
 `SERVICE_TOKEN_PEPPER` values, avoid wildcard `ALLOWED_HOSTS`, and use `/health/ready` for database

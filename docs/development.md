@@ -11,6 +11,20 @@ make seed
 make run
 ```
 
+## API and Docs (local)
+
+`/api/v2` is the primary, advertised surface (it adds the namespace axis); `/api/v1` is **still
+supported — not deprecated**. Interactive docs are served locally at:
+
+```text
+http://localhost:8000/api/docs/swagger/    # v1 + v2 dropdown (opens on v2)
+http://localhost:8000/api/docs/redoc/       # v2 (default); v1 at /api/docs/v1/redoc/
+http://localhost:8000/api/schema/           # v2 schema (default); v1 at /api/v1/schema/
+```
+
+See the [API reference](api.md) for the namespace surface and the [versioning policy](versioning.md)
+for how the two surfaces coexist.
+
 ## Quality Gates
 
 Run the narrow checks while developing:
