@@ -22,7 +22,10 @@ def _swagger_ui_settings(request) -> str:
     # reference SwaggerUIStandalonePreset: the dropdown's topbar only renders under
     # StandaloneLayout, which that preset registers. json.dumps quotes each reversed
     # URL as a JS string literal; the URLs carry the script-name prefix, if any.
-    v1 = json.dumps(get_relative_url(reverse("schema", request=request)))
+    # v1 reverses schema-v1, not schema: the default "schema" route now serves v2,
+    # so labelling it "v1" would load the v2 document under the v1 tab. primaryName
+    # is "v2" so the page opens on the advertised v2 definition.
+    v1 = json.dumps(get_relative_url(reverse("schema-v1", request=request)))
     v2 = json.dumps(get_relative_url(reverse("schema-v2", request=request)))
     return (
         "{"
@@ -32,7 +35,7 @@ def _swagger_ui_settings(request) -> str:
         '"layout": "StandaloneLayout", '
         '"presets": [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset], '
         f'"urls": [{{"url": {v1}, "name": "v1"}}, {{"url": {v2}, "name": "v2"}}], '
-        '"urls.primaryName": "v1"'
+        '"urls.primaryName": "v2"'
         "}"
     )
 
