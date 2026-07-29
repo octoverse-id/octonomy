@@ -10,9 +10,11 @@ It stores vocabularies, tags, aliases, tag assignments, audit logs, and transact
 for external resources such as articles, images, orders, products, and documents. Octonomy does not
 own or duplicate external resource data.
 
-> **Project status:** `1.0.0` stable. The REST v1 contract is stable and follows
-> [Semantic Versioning](https://semver.org/spec/v2.0.0.html); breaking changes to v1 are avoided
-> unless they fix a correctness or security issue.
+> **Project status:** Stable and following
+> [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `/api/v2` is the primary, advertised
+> API surface (it adds the namespace axis); `/api/v1` remains **fully supported — not deprecated**.
+> Breaking changes are never made in place: they ship as a new URL-versioned surface alongside the
+> existing one.
 
 ## Stack
 
@@ -37,9 +39,10 @@ make run
 `make seed` prints a demo `svc-demo` service token for `tenant_demo`. Store that token from the
 terminal output; it cannot be retrieved later.
 
-API base URL:
+API base URL (`/api/v2` is the primary surface; `/api/v1` is still supported):
 
 ```text
+http://localhost:8000/api/v2
 http://localhost:8000/api/v1
 ```
 
@@ -50,12 +53,16 @@ GET /health/live
 GET /health/ready
 ```
 
-OpenAPI schema:
+OpenAPI schema and docs (the default routes serve **v2**; v1 stays browsable at its own routes):
 
 ```text
-GET /api/schema/
-GET /api/docs/swagger/
-GET /api/docs/redoc/
+GET /api/schema/          # v2 (default)
+GET /api/v1/schema/       # v1
+GET /api/v2/schema/       # v2
+GET /api/docs/swagger/    # v1 + v2 via the "Select a definition" dropdown (opens on v2)
+GET /api/docs/redoc/      # v2 (default)
+GET /api/docs/v1/redoc/   # v1
+GET /api/docs/v2/redoc/   # v2
 ```
 
 ## Authentication and Tenant Scope
@@ -103,10 +110,15 @@ make release-check
 
 ## API Examples
 
+These examples use the primary `/api/v2` surface in the **global** namespace (no `X-Namespace-*`
+headers). The same paths exist under `/api/v1`, which stays supported. To scope a request to a
+merchant/sub-tenant namespace, add the `X-Namespace-Type`/`X-Namespace-ID` headers on `/api/v2` —
+see the [API reference](docs/api.md) for the namespace surface.
+
 Create a shared vocabulary:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/vocabularies \
+curl -X POST http://localhost:8000/api/v2/vocabularies \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo" \
   -H "Content-Type: application/json" \
@@ -116,7 +128,7 @@ curl -X POST http://localhost:8000/api/v1/vocabularies \
 Create a shared tag:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/tags \
+curl -X POST http://localhost:8000/api/v2/tags \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo" \
   -H "Content-Type: application/json" \
@@ -126,7 +138,7 @@ curl -X POST http://localhost:8000/api/v1/tags \
 Create an application-specific tag in a vocabulary:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/tags \
+curl -X POST http://localhost:8000/api/v2/tags \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo" \
   -H "Content-Type: application/json" \
@@ -136,7 +148,7 @@ curl -X POST http://localhost:8000/api/v1/tags \
 Create an alias for a tag:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/tag-aliases \
+curl -X POST http://localhost:8000/api/v2/tag-aliases \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo" \
   -H "Content-Type: application/json" \
@@ -146,7 +158,7 @@ curl -X POST http://localhost:8000/api/v1/tag-aliases \
 Resolve a tag or alias slug:
 
 ```bash
-curl "http://localhost:8000/api/v1/tag-resolution?slug=promo&application_id=commerce" \
+curl "http://localhost:8000/api/v2/tag-resolution?slug=promo&application_id=commerce" \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo"
 ```
@@ -154,7 +166,7 @@ curl "http://localhost:8000/api/v1/tag-resolution?slug=promo&application_id=comm
 List tags in a vocabulary:
 
 ```bash
-curl "http://localhost:8000/api/v1/tags?vocabulary_id=<vocabulary-uuid>" \
+curl "http://localhost:8000/api/v2/tags?vocabulary_id=<vocabulary-uuid>" \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo"
 ```
@@ -162,7 +174,7 @@ curl "http://localhost:8000/api/v1/tags?vocabulary_id=<vocabulary-uuid>" \
 Assign a tag to a resource:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/tag-assignments \
+curl -X POST http://localhost:8000/api/v2/tag-assignments \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo" \
   -H "Content-Type: application/json" \
@@ -172,7 +184,7 @@ curl -X POST http://localhost:8000/api/v1/tag-assignments \
 Replace all tags for a resource:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/resources/product/prod_123/tags \
+curl -X POST http://localhost:8000/api/v2/resources/product/prod_123/tags \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo" \
   -H "Content-Type: application/json" \
@@ -182,7 +194,7 @@ curl -X POST http://localhost:8000/api/v1/resources/product/prod_123/tags \
 List resources assigned to a tag:
 
 ```bash
-curl "http://localhost:8000/api/v1/tags/<tag-uuid>/resources?application_id=commerce" \
+curl "http://localhost:8000/api/v2/tags/<tag-uuid>/resources?application_id=commerce" \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo"
 ```
@@ -190,7 +202,7 @@ curl "http://localhost:8000/api/v1/tags/<tag-uuid>/resources?application_id=comm
 List audit logs:
 
 ```bash
-curl "http://localhost:8000/api/v1/audit-logs?action=assignment.created" \
+curl "http://localhost:8000/api/v2/audit-logs?action=assignment.created" \
   -H "Authorization: Bearer <service-token>" \
   -H "X-Tenant-ID: tenant_demo"
 ```
@@ -201,7 +213,7 @@ curl "http://localhost:8000/api/v1/audit-logs?action=assignment.created" \
 - [API reference](docs/api.md) — endpoints, scopes, errors, and pagination.
 - [Development](docs/development.md) — local setup, environment variables, and service tokens.
 - [Operations](docs/operations.md) — deployment, health, logging, and outbox runbook.
-- [Versioning](docs/versioning.md) — SemVer policy, bump rules, and the `/api/v1` → `/api/v2` path.
+- [Versioning](docs/versioning.md) — SemVer policy, bump rules, and how `/api/v2` (primary) and `/api/v1` (supported) coexist.
 - [Release process](docs/release.md) — pre-release gates and the "Cutting a Release" runbook.
 - [Changelog](CHANGELOG.md) — notable changes by release.
 

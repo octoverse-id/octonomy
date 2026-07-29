@@ -2,17 +2,19 @@
 
 ## Current Target
 
-Octonomy `1.0.0` is the stable release of the REST v1 contract. The REST API under `/api/v1` is the
-release surface for v1 and follows Semantic Versioning. GraphQL, external broker transports,
-persisted counters, and external JWT or API gateway auth remain future phases.
+Octonomy's REST API is served on two live surfaces: `/api/v2` (the primary, advertised surface,
+which adds the namespace axis) and `/api/v1` (global-only, **still supported — not deprecated**).
+Both follow Semantic Versioning. GraphQL, external broker transports, persisted counters, and
+external JWT or API gateway auth remain future phases.
 
 ## Versioning
 
 Octonomy follows Semantic Versioning. Bug fixes are a patch, backward-compatible additions are a
-minor (additive on `/api/v1`), and breaking changes ship a new `/api/v2` plus a major bump. See
-[`versioning.md`](versioning.md) for the full policy and what counts as breaking.
+minor, and breaking changes ship a new parallel URL-versioned surface plus a major bump — as
+`/api/v2` did, keeping `/api/v1` supported. See [`versioning.md`](versioning.md) for the full
+policy and what counts as breaking.
 
-- Package metadata uses PEP 440 (`1.0.0`); OpenAPI and user-facing docs use SemVer (`1.0.0`).
+- Package metadata uses PEP 440 (`2.0.0`); OpenAPI and user-facing docs use SemVer (`2.0.0`).
 - Set `OCTONOMY_API_VERSION` when a deployment should expose a different schema version string.
 
 ## Release Checklist
@@ -116,7 +118,7 @@ Set these environment variables explicitly outside local development:
 - `DATABASE_URL=postgres://...`
 - `ALLOWED_HOSTS=<comma-separated-hostnames>`
 - `SERVICE_TOKEN_PEPPER=<non-default-secret-pepper>`
-- `OCTONOMY_API_VERSION=1.0.0`
+- `OCTONOMY_API_VERSION=2.0.0`
 - `LOG_LEVEL=INFO`
 - `MAX_BULK_TAGS=200` or a deployment-specific cap
 
@@ -147,7 +149,8 @@ After deployment, run these minimum checks:
 ```bash
 curl -f https://<host>/health/live
 curl -f https://<host>/health/ready
-curl -f https://<host>/api/schema/
+curl -f https://<host>/api/schema/        # v2 (default/advertised)
+curl -f https://<host>/api/v1/schema/     # v1 (still supported)
 ```
 
 Then use a real service token to verify tenant-scoped reads and a non-production tenant mutation.
