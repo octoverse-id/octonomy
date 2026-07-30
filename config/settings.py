@@ -8,8 +8,17 @@ from pathlib import Path
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load the project-root .env before any os.getenv() call below. settings.py is
+# imported by every entry point (manage.py runserver, config.wsgi for gunicorn,
+# config.asgi for uvicorn, and pytest), so loading here applies .env once, first,
+# everywhere. Real process env vars take precedence — load_dotenv() does not
+# override variables already set, so Docker/production values win over the file,
+# and a missing .env (e.g. in prod) is a silent no-op.
+load_dotenv(BASE_DIR / ".env")
 
 
 def env_bool(name: str, default: bool = False) -> bool:
