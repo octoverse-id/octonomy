@@ -24,26 +24,25 @@ from octonomy.core.admin_base import (
     ServiceBackedModelAdmin,
     run_serializer_validator,
 )
-from octonomy.core.selectors import scope_context_from_values
 from octonomy.core.validators import validate_external_id, validate_slug_like
 from octonomy.tags.alias_services import (
     create_tag_alias,
     deactivate_tag_alias,
+    reactivate_tag_alias,
     update_tag_alias,
-    validate_alias_tag,
 )
 from octonomy.tags.models import Tag, TagAlias, Vocabulary
 from octonomy.tags.services import (
     create_tag,
     deactivate_tag,
+    reactivate_tag,
     update_tag,
     validate_metadata,
-    validate_tag_parent,
-    validate_tag_vocabulary,
 )
 from octonomy.tags.vocabulary_services import (
     create_vocabulary,
     deactivate_vocabulary,
+    reactivate_vocabulary,
     update_vocabulary,
 )
 
@@ -117,9 +116,6 @@ class _ScopedTaxonomyAdmin(ServiceBackedModelAdmin):
             return _READONLY_ON_CHANGE
         return ()
 
-    def _row_scope(self, obj):
-        return scope_context_from_values(obj.namespace_type, obj.namespace_id)
-
 
 @admin.register(Vocabulary)
 class VocabularyAdmin(_ScopedTaxonomyAdmin):
@@ -165,9 +161,7 @@ class VocabularyAdmin(_ScopedTaxonomyAdmin):
         deactivate_vocabulary(obj, audit_context)
 
     def service_reactivate(self, request, obj, audit_context):
-        # A vocabulary has no relations to re-validate; the service-backed update honors
-        # the active-only slug uniqueness constraint and reports a conflict as a 409.
-        update_vocabulary(obj, {"is_active": True}, audit_context)
+        reactivate_vocabulary(obj, audit_context)
 
 
 @admin.register(Tag)
@@ -229,20 +223,10 @@ class TagAdmin(_ScopedTaxonomyAdmin):
         deactivate_tag(obj, audit_context)
 
     def service_reactivate(self, request, obj, audit_context):
-        # Re-run the create-time relation checks before reviving the row: update_tag
-        # only re-validates a relation that *changed*, so a bare is_active flip could
-        # otherwise resurrect a tag pointing at a now-inactive vocabulary or a
-        # cross-scope parent (A3). Cascaded aliases are intentionally NOT auto-revived.
-        scope_context = self._row_scope(obj)
-        validate_tag_parent(obj.tenant_id, obj.application_id, obj.parent, scope_context)
-        validate_tag_vocabulary(
-            obj.tenant_id,
-            obj.application_id,
-            obj.vocabulary,
-            scope_context,
-            require_active=True,
-        )
-        update_tag(obj, {"is_active": True}, audit_context)
+        # reactivate_tag re-validates the parent/vocabulary (active, in-scope) under row
+        # locks inside its own transaction — the check can't interleave with a concurrent
+        # deactivation. Cascaded aliases are intentionally NOT auto-revived.
+        reactivate_tag(obj, audit_context)
 
 
 @admin.register(TagAlias)
@@ -294,7 +278,6 @@ class TagAliasAdmin(_ScopedTaxonomyAdmin):
         deactivate_tag_alias(obj, audit_context)
 
     def service_reactivate(self, request, obj, audit_context):
-        # An alias can only be active while its canonical tag is active and in scope, so
-        # re-run the create-time tag validation before reviving it.
-        validate_alias_tag(obj.tenant_id, obj.application_id, obj.tag, self._row_scope(obj))
-        update_tag_alias(obj, {"is_active": True}, audit_context)
+        # reactivate_tag_alias re-validates the canonical tag (active, in-scope) with the
+        # tag row locked inside its own transaction.
+        reactivate_tag_alias(obj, audit_context)

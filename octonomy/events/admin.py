@@ -26,8 +26,10 @@ class OutboxEventAdmin(ReadOnlyModelAdmin):
         "available_at",
     )
     # Aligned with outbox_type_created_idx / the status indexes and created_at ordering.
+    # ``=`` makes aggregate_id an exact (iexact) match so it uses an index instead of an
+    # ILIKE '%..%' scan over an unbounded append-only table.
     list_filter = ("status", "event_type", "created_at")
-    search_fields = ("aggregate_id",)
+    search_fields = ("=aggregate_id",)
     date_hierarchy = "created_at"
     ordering = ("-created_at", "id")
 

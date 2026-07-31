@@ -226,6 +226,62 @@ def update_tag_alias(
     return alias
 
 
+def reactivate_tag_alias(alias: TagAlias, audit_context: AuditContext | None = None) -> TagAlias:
+    """Reactivate a soft-deleted alias atomically.
+
+    An alias may only be active while its canonical tag is active and in-scope, so this
+    re-validates the tag **with the tag row locked, inside the write transaction** — a
+    concurrent ``deactivate_tag`` cannot interleave between the check and the flip. The
+    active-only slug uniqueness constraint is enforced by the database and surfaced as a
+    ``ConflictError``. Reuses the ``tag_alias.updated`` audit/outbox contract.
+    """
+
+    scope_context = scope_context_from_values(alias.namespace_type, alias.namespace_id)
+    guard_namespace_write_enabled(scope_context)
+    with transaction.atomic():
+        locked = TagAlias.objects.select_for_update().get(id=alias.id)
+        if locked.is_active:
+            alias.is_active = True
+            return locked
+        locked_tag = Tag.objects.select_for_update().get(id=locked.tag_id)
+        validate_alias_tag(locked.tenant_id, locked.application_id, locked_tag, scope_context)
+        locked.is_active = True
+        try:
+            with transaction.atomic():
+                locked.save(update_fields=["is_active", "updated_at"])
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "tag_alias", scope_context)
+            raise ConflictError(
+                "An active tag alias with this tenant, application, and slug already exists.",
+                {"slug": ["Duplicate active alias slug."]},
+            )
+        changes = {"before": {"is_active": False}, "after": {"is_active": True}}
+        create_audit_log(
+            tenant_id=locked.tenant_id,
+            application_id=locked.application_id,
+            **namespace_fields(locked),
+            action="tag_alias.updated",
+            entity_type="tag_alias",
+            entity_id=str(locked.id),
+            tag_id=locked.tag_id,
+            audit_context=audit_context,
+            changes=changes,
+        )
+        create_outbox_event(
+            tenant_id=locked.tenant_id,
+            application_id=locked.application_id,
+            **namespace_fields(locked),
+            event_type="tag_alias.updated",
+            aggregate_type="tag_alias",
+            aggregate_id=str(locked.id),
+            tag_id=locked.tag_id,
+            audit_context=audit_context,
+            payload=changes,
+        )
+        alias.is_active = True
+        return locked
+
+
 def deactivate_tag_alias(alias: TagAlias, audit_context: AuditContext | None = None) -> bool:
     guard_namespace_write_enabled(
         scope_context_from_values(alias.namespace_type, alias.namespace_id)

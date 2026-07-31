@@ -373,34 +373,31 @@ def test_delete_queryset_routes_to_soft_deactivate(rf, superuser):
 # --------------------------------------------------------------------------------
 
 
-def test_detail_deactivate_action_soft_deletes(client, superuser):
+def test_bulk_deactivate_action_soft_deletes(client, superuser):
     tag = make_tag(slug="canonical")
     client.force_login(superuser)
-    with admin_enabled(True):
-        client.get(f"/admin/tags/tag/{tag.id}/deactivate_detail/", follow=True)
+    _run_changelist_action(client, TAG_CHANGELIST, "deactivate_selected", [tag.id])
     tag.refresh_from_db()
     assert tag.is_active is False
     assert _audit(action="tag.deactivated", entity_id=str(tag.id)).exists()
 
 
-def test_detail_reactivate_action_revives_row(client, superuser):
+def test_bulk_reactivate_action_revives_row(client, superuser):
     tag = make_tag(slug="canonical", is_active=False)
     client.force_login(superuser)
-    with admin_enabled(True):
-        client.get(f"/admin/tags/tag/{tag.id}/reactivate_detail/", follow=True)
+    _run_changelist_action(client, TAG_CHANGELIST, "reactivate_selected", [tag.id])
     tag.refresh_from_db()
     assert tag.is_active is True
     assert _audit(action="tag.updated", entity_id=str(tag.id)).exists()
 
 
 def test_reactivate_blocked_when_vocabulary_inactive(client, superuser):
-    # A3 active-relation guard: a bare is_active flip would revive a tag pointing at a
-    # now-inactive vocabulary; the reactivate path must re-run the create-time check.
+    # Active-relation guard: reviving a tag whose vocabulary is now inactive is rejected.
+    # The guard lives in reactivate_tag (service), which re-checks under a row lock.
     vocab = make_vocabulary(slug="labels", is_active=False)
     tag = make_tag(slug="scoped", is_active=False, vocabulary=vocab)
     client.force_login(superuser)
-    with admin_enabled(True):
-        client.get(f"/admin/tags/tag/{tag.id}/reactivate_detail/", follow=True)
+    _run_changelist_action(client, TAG_CHANGELIST, "reactivate_selected", [tag.id])
     tag.refresh_from_db()
     assert tag.is_active is False  # guard blocked the reactivation
 

@@ -30,15 +30,11 @@ from typing import Any
 
 from django import forms
 from django.contrib import admin, messages
-from django.contrib.admin.utils import unquote
 from django.db import transaction
 from django.http import HttpRequest, HttpResponseRedirect
-from django.shortcuts import redirect
-from django.urls import reverse
 from django.utils.html import format_html
 from rest_framework import serializers
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
-from unfold.decorators import action as unfold_action
 
 from octonomy.core.audit import AuditContext
 from octonomy.core.errors import DomainError
@@ -273,44 +269,6 @@ class ServiceBackedModelAdmin(ServiceAdminMixin, UnfoldModelAdmin):
     @admin.action(description="Reactivate selected")
     def reactivate_selected(self, request, queryset):
         self._run_bulk(request, queryset, self.service_reactivate, "reactivated")
-
-    # --- detail actions: single-row Deactivate / Reactivate ----------------------
-
-    actions_detail = ("deactivate_detail", "reactivate_detail")
-
-    def _changelist_url(self) -> str:
-        opts = self.model._meta
-        return reverse(f"{self.admin_site.name}:{opts.app_label}_{opts.model_name}_changelist")
-
-    def _change_url(self, object_id) -> str:
-        opts = self.model._meta
-        return reverse(
-            f"{self.admin_site.name}:{opts.app_label}_{opts.model_name}_change",
-            args=[object_id],
-        )
-
-    def _run_detail_action(self, request, object_id, service_method, past_tense: str):
-        obj = self.get_object(request, unquote(str(object_id)))
-        if obj is None:
-            messages.error(request, "The requested row no longer exists.")
-            return redirect(self._changelist_url())
-        _operation_id, audit_context = self.new_operation(request)
-        try:
-            with transaction.atomic():
-                service_method(request, obj, audit_context)
-        except SERVICE_ERRORS as exc:
-            messages.error(request, format_service_error(exc))
-        else:
-            messages.success(request, f"“{obj}” was {past_tense}.")
-        return redirect(self._change_url(object_id))
-
-    @unfold_action(description="Deactivate (soft delete)")
-    def deactivate_detail(self, request, object_id):
-        return self._run_detail_action(request, object_id, self.service_deactivate, "deactivated")
-
-    @unfold_action(description="Reactivate")
-    def reactivate_detail(self, request, object_id):
-        return self._run_detail_action(request, object_id, self.service_reactivate, "reactivated")
 
 
 class ReadOnlyModelAdmin(UnfoldModelAdmin):

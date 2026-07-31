@@ -16,7 +16,7 @@ from octonomy.core.selectors import (
     scope_context_from_values,
 )
 from octonomy.events.services import build_outbox_event, create_outbox_event, create_outbox_events
-from octonomy.tags.models import Tag, TagAlias
+from octonomy.tags.models import Tag, TagAlias, Vocabulary
 
 
 def validate_metadata(value) -> dict:
@@ -259,6 +259,80 @@ def update_tag(
             payload={"before": changed_before, "after": changed_after},
         )
     return tag
+
+
+def reactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> Tag:
+    """Reactivate a soft-deleted tag as one atomic, service-owned operation.
+
+    A bare ``update_tag({"is_active": True})`` only re-checks the vocabulary/parent when
+    they *change*, so it would happily revive a tag pointing at a vocabulary that has
+    since been deactivated. This re-validates parent/vocabulary compatibility and the
+    vocabulary's active state **inside the write transaction, with the vocabulary row
+    locked** — so the check and the flip cannot interleave with a concurrent
+    ``deactivate_vocabulary`` (closes the check-then-write race). Active-only slug
+    uniqueness stays enforced by the database and surfaces as a ``ConflictError``.
+    Reuses the ``tag.updated`` audit/outbox contract (``is_active`` False->True); aliases
+    are not cascaded back to active (the deactivation asymmetry is intentional).
+    """
+
+    scope_context = scope_context_from_values(tag.namespace_type, tag.namespace_id)
+    guard_namespace_write_enabled(scope_context)
+    with transaction.atomic():
+        locked_tag = Tag.objects.select_for_update().get(id=tag.id)
+        if locked_tag.is_active:
+            tag.is_active = True
+            return locked_tag
+        # Parent compatibility is a scope check only (parents may be inactive, same as at
+        # create), so the lazily-loaded parent is fine. The vocabulary's *active* state is
+        # what the race threatens, so lock that row before validating it.
+        vocabulary = None
+        if locked_tag.vocabulary_id:
+            vocabulary = Vocabulary.objects.select_for_update().get(id=locked_tag.vocabulary_id)
+        validate_tag_parent(
+            locked_tag.tenant_id, locked_tag.application_id, locked_tag.parent, scope_context
+        )
+        validate_tag_vocabulary(
+            locked_tag.tenant_id,
+            locked_tag.application_id,
+            vocabulary,
+            scope_context,
+            require_active=True,
+        )
+        locked_tag.is_active = True
+        try:
+            with transaction.atomic():
+                locked_tag.save(update_fields=["is_active", "updated_at"])
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "tag", scope_context)
+            raise ConflictError(
+                "An active tag with this tenant, application, type, and slug already exists.",
+                {"slug": ["Duplicate active tag slug."]},
+            )
+        changes = {"before": {"is_active": False}, "after": {"is_active": True}}
+        create_audit_log(
+            tenant_id=locked_tag.tenant_id,
+            application_id=locked_tag.application_id,
+            **namespace_fields(locked_tag),
+            action="tag.updated",
+            entity_type="tag",
+            entity_id=str(locked_tag.id),
+            tag_id=locked_tag.id,
+            audit_context=audit_context,
+            changes=changes,
+        )
+        create_outbox_event(
+            tenant_id=locked_tag.tenant_id,
+            application_id=locked_tag.application_id,
+            **namespace_fields(locked_tag),
+            event_type="tag.updated",
+            aggregate_type="tag",
+            aggregate_id=str(locked_tag.id),
+            tag_id=locked_tag.id,
+            audit_context=audit_context,
+            payload=changes,
+        )
+        tag.is_active = True
+        return locked_tag
 
 
 def deactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> bool:

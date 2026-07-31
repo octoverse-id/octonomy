@@ -27,9 +27,11 @@ class AuditLogAdmin(ReadOnlyModelAdmin):
         "scope_label",
     )
     # Aligned with audit_action_created_idx / audit_entity_created_idx and the created_at
-    # ordering; no free-text search on actor_id/request_id/JSON.
+    # ordering; no free-text search on actor_id/request_id/JSON. The ``=`` prefix makes
+    # entity_id an exact (iexact) match so it can use the index instead of an ILIKE
+    # '%..%' scan over an unbounded append-only table.
     list_filter = ("action", "entity_type", "created_at")
-    search_fields = ("entity_id",)
+    search_fields = ("=entity_id",)
     date_hierarchy = "created_at"
     ordering = ("-created_at", "id")
 

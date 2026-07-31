@@ -126,6 +126,60 @@ def update_vocabulary(
     return vocabulary
 
 
+def reactivate_vocabulary(
+    vocabulary: Vocabulary,
+    audit_context: AuditContext | None = None,
+) -> Vocabulary:
+    """Reactivate a soft-deleted vocabulary atomically.
+
+    A vocabulary has no relations to re-validate, but the write must still honor the
+    active-only slug uniqueness constraint under a row lock; a conflicting active slug
+    surfaces as a ``ConflictError``. Reuses the ``vocabulary.updated`` audit/outbox
+    contract (``is_active`` False->True).
+    """
+
+    scope_context = scope_context_from_values(vocabulary.namespace_type, vocabulary.namespace_id)
+    guard_namespace_write_enabled(scope_context)
+    with transaction.atomic():
+        locked = Vocabulary.objects.select_for_update().get(id=vocabulary.id)
+        if locked.is_active:
+            vocabulary.is_active = True
+            return locked
+        locked.is_active = True
+        try:
+            with transaction.atomic():
+                locked.save(update_fields=["is_active", "updated_at"])
+        except IntegrityError as exc:
+            emit_namespace_conflict(exc, "vocabulary", scope_context)
+            raise ConflictError(
+                "An active vocabulary with this tenant, application, and slug already exists.",
+                {"slug": ["Duplicate active vocabulary slug."]},
+            )
+        changes = {"before": {"is_active": False}, "after": {"is_active": True}}
+        create_audit_log(
+            tenant_id=locked.tenant_id,
+            application_id=locked.application_id,
+            **namespace_fields(locked),
+            action="vocabulary.updated",
+            entity_type="vocabulary",
+            entity_id=str(locked.id),
+            audit_context=audit_context,
+            changes=changes,
+        )
+        create_outbox_event(
+            tenant_id=locked.tenant_id,
+            application_id=locked.application_id,
+            **namespace_fields(locked),
+            event_type="vocabulary.updated",
+            aggregate_type="vocabulary",
+            aggregate_id=str(locked.id),
+            audit_context=audit_context,
+            payload=changes,
+        )
+        vocabulary.is_active = True
+        return locked
+
+
 def deactivate_vocabulary(
     vocabulary: Vocabulary,
     audit_context: AuditContext | None = None,
