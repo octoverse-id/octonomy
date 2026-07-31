@@ -12,8 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [django-unfold](https://unfoldadmin.com/), mounted at `/admin/`. It is a thin operator
   interface over the headless REST service and is **off by default in production**: it mounts only
   when `OCTONOMY_ADMIN_ENABLED` is true (which defaults to `DJANGO_DEBUG`), and even then admits
-  only active superusers. Bootstrap access with `python manage.py createsuperuser`. This release
-  ships the gated foundation only; taxonomy model workflows follow in a subsequent change.
+  only active superusers. Bootstrap access with `python manage.py createsuperuser`.
+- Service-backed taxonomy administration in the admin console. Vocabularies, tags, and tag aliases
+  can be created, updated, deactivated (soft delete), and reactivated, and tag assignments can be
+  idempotently created and removed — every write routes through the existing domain services, so it
+  inherits tenant/application/namespace isolation, the namespaced-write kill-switch, soft-deletion
+  and cascade semantics, idempotency, and the audit-log + outbox side effects exactly as the REST
+  API does. Each mutation is attributed to `admin:<username>`. Domain rejections (cross-scope
+  relationships, duplicate active slugs, disabled namespaced writes) surface as admin errors instead
+  of HTTP 500s; scope fields are immutable after creation; and the stock hard-delete routes are
+  disabled in favour of the auditable Deactivate/Reactivate actions.
+- Read-only diagnostics in the admin console for audit logs, outbox events, and service
+  clients/grants (view/list/search/filter only, with index-aligned filters). Service-token secrets
+  are never exposed: the `ServiceClient` view uses a safe-field allowlist, so `hashed_key` (and any
+  future sensitive column) never appears. Token creation and revocation remain in the existing
+  management-command workflow.
 - Deploy system check `octonomy.W001`: a non-blocking warning when the admin is enabled with
   `DEBUG=false`, reminding operators it is a trusted development/operator interface rather than a
   public surface.
