@@ -1,4 +1,4 @@
-.PHONY: install run test test-sqlite lint format check migrate migration-check makemigrations openapi openapi-check audit version-check release-check seed db-up db-down
+.PHONY: install run test test-sqlite lint format check migrate migration-check makemigrations openapi openapi-check audit version-check release-check seed db-up db-down collectstatic
 
 install:
 	uv sync --extra dev
@@ -23,6 +23,12 @@ check:
 
 migrate:
 	uv run python manage.py migrate
+
+# Gather the admin's static assets into STATIC_ROOT. Non-destructive: --noinput and
+# no --clear, so it never wipes an existing STATIC_ROOT. Needed when serving the
+# optional admin (OCTONOMY_ADMIN_ENABLED) with DEBUG=false.
+collectstatic:
+	uv run python manage.py collectstatic --noinput
 
 migration-check:
 	uv run python manage.py makemigrations --check --dry-run

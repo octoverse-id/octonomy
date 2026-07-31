@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Optional, superuser-only Django admin console themed with
+  [django-unfold](https://unfoldadmin.com/), mounted at `/admin/`. It is a thin operator
+  interface over the headless REST service and is **off by default in production**: it mounts only
+  when `OCTONOMY_ADMIN_ENABLED` is true (which defaults to `DJANGO_DEBUG`), and even then admits
+  only active superusers. Bootstrap access with `python manage.py createsuperuser`. This release
+  ships the gated foundation only; taxonomy model workflows follow in a subsequent change.
+- Deploy system check `octonomy.W001`: a non-blocking warning when the admin is enabled with
+  `DEBUG=false`, reminding operators it is a trusted development/operator interface rather than a
+  public surface.
+- `make collectstatic` target and `STATIC_URL`/`STATIC_ROOT` settings for serving the admin's
+  static assets in production (no WhiteNoise or external service introduced).
+
+### Changed
+- **Runtime floor raised.** Minimum Python is now **3.12** (was 3.10) and Django is pinned to the
+  **5.2 LTS line** (`>=5.2.8,<5.3`), the baseline required by the Unfold release. PostgreSQL CI now
+  runs on Python 3.12 and 3.14 (3.10 dropped). This is a breaking runtime/deployment requirement and
+  will drive the next package **major**, but the REST contract is unchanged: `/api/v2` stays primary
+  and `/api/v1` stays supported — there is no `/api/v3`.
+- `SESSION_COOKIE_SECURE` and `CSRF_COOKIE_SECURE` now default to true when `DEBUG=false` (each
+  overridable via its own environment variable for unusual deployments).
+- Added `django-unfold` as a runtime dependency so operators can enable the admin in production
+  without a development-only extra.
+
 ## [2.0.0] - 2026-07-29
 
 v2 is now the primary, advertised API surface. The default `/api/schema/`, `/api/docs/redoc/`, and

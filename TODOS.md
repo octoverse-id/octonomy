@@ -62,3 +62,24 @@ rollout scaffolding to remove after a single production burn-in. For a self-host
 keep a kill-switch/rollback path — so there is no maintainer-side "remove the flags" task. If a
 specific deployment ever wants to drop them after its own burn-in, that is a local operator decision,
 guided by the runbook.
+
+## Admin layer (epic #83)
+
+### ADM-1: Distinct reactivation lifecycle events — DEFERRED (from /plan-eng-review of #83/#85)
+The Unfold admin (#85) reactivates a Tag/Vocabulary/TagAlias via `update_*(row, {"is_active": True})`
+plus an active-relation guard (revalidate parent/vocabulary are active before flipping `is_active`).
+That path emits a **generic `*.updated(is_active)`** audit/outbox event, not a distinct reactivation
+signal, and does **not** auto-reactivate the aliases that `deactivate_tag` cascaded off (intentional
+asymmetry).
+
+- **What:** Add dedicated `reactivate_tag` / `reactivate_vocabulary` / `reactivate_tag_alias` services
+  emitting `*.reactivated` audit + outbox events, with an explicit alias-reactivation policy.
+- **Why:** Outbox consumers currently can't distinguish a reactivation from any other edit. A downstream
+  system that must react specifically to reactivation (re-index a search corpus, re-notify) cannot today.
+- **Pros:** Distinct lifecycle signal; symmetric with `deactivate_*`; one home for reactivation rules.
+- **Cons:** New service code + new event types + their own tests; unnecessary until a consumer needs it.
+- **Context:** The A3 decision + a cross-model tension in the #83 eng review chose the minimal
+  guard-on-`update_*` path for correctness now. This is the richer alternative (A3 option B), deferred as
+  engineered-enough restraint — don't ship speculative event types before a consumer requires them.
+- **Depends on / blocked by:** #85 merged. **Trigger:** an outbox consumer needs to distinguish
+  reactivation events.

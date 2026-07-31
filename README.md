@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/octoverse-id/octonomy/actions/workflows/ci.yml/badge.svg)](https://github.com/octoverse-id/octonomy/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 
 Octonomy is a standalone, multi-tenant, multi-application tag management and taxonomy service.
 
@@ -18,11 +18,12 @@ own or duplicate external resource data.
 
 ## Stack
 
-- Python 3.10+
-- Django
+- Python 3.12+
+- Django 5.2 LTS
 - Django REST Framework
 - PostgreSQL
 - drf-spectacular for OpenAPI
+- django-unfold for the optional admin console
 - pytest and ruff for tests/linting
 
 ## Local Development
@@ -64,6 +65,23 @@ GET /api/docs/redoc/      # v2 (default)
 GET /api/docs/v1/redoc/   # v1
 GET /api/docs/v2/redoc/   # v2
 ```
+
+## Admin Console (optional)
+
+An optional, superuser-only admin console (themed with django-unfold) is available at `/admin/` as a
+thin operator interface over the REST service — REST remains the primary API. It is mounted only when
+`OCTONOMY_ADMIN_ENABLED` is true, which **defaults to `DJANGO_DEBUG`** (on in local development, off
+in production unless you explicitly enable it). Bootstrap access with a superuser:
+
+```bash
+python manage.py migrate
+python manage.py createsuperuser
+# with DEBUG=true (or OCTONOMY_ADMIN_ENABLED=true):
+make run   # then visit http://localhost:8000/admin/
+```
+
+Enabling it in production is a deliberate operator choice — see the
+[operations guide](docs/operations.md) for the HTTPS/secrets/`collectstatic` checklist.
 
 ## Authentication and Tenant Scope
 

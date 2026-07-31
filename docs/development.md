@@ -1,5 +1,7 @@
 # Development
 
+Requires **Python 3.12+** and **Django 5.2 LTS**. PostgreSQL is the supported database.
+
 ## Setup
 
 ```bash
@@ -10,6 +12,15 @@ make migrate
 make seed
 make run
 ```
+
+With `DJANGO_DEBUG=true` (the local default), the optional admin console is enabled at
+`http://localhost:8000/admin/`. Create a superuser to sign in:
+
+```bash
+python manage.py createsuperuser
+```
+
+See [operations](operations.md) for enabling it in production.
 
 ## API and Docs (local)
 
@@ -65,6 +76,10 @@ make test-sqlite
 - `OCTONOMY_API_VERSION`: version string exposed in generated OpenAPI metadata.
 - `MAX_BULK_TAGS`: maximum number of tags accepted by bulk endpoints.
 - `LOG_LEVEL`: structured logging level.
+- `OCTONOMY_ADMIN_ENABLED`: mount the superuser-only admin at `/admin/`. Defaults to `DJANGO_DEBUG`
+  (on locally, off in production unless explicitly enabled).
+- `SESSION_COOKIE_SECURE` / `CSRF_COOKIE_SECURE`: default to true when `DJANGO_DEBUG=false`; set
+  explicitly to override for unusual deployments.
 
 ## Service Tokens
 

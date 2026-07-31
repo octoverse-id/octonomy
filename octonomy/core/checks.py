@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from django.conf import settings
-from django.core.checks import Error, Tags, register
+from django.core.checks import Error, Tags, Warning, register
 
 DEFAULT_SECRET_KEY = "local-dev-secret"
 DEFAULT_SERVICE_TOKEN_PEPPER = "local-dev-service-token-pepper"
@@ -144,6 +144,31 @@ def _check_database_engine():
         Error(
             "Production deployments must use PostgreSQL instead of SQLite.",
             id="octonomy.E005",
+        )
+    ]
+
+
+@register(Tags.security, deploy=True)
+def admin_enabled_in_production_check(app_configs, **kwargs):
+    """Warn — but do not block — when the operator admin is enabled with DEBUG=false.
+
+    The Unfold admin is a trusted development/operator interface, not a public surface.
+    Enabling it in production is a deliberate, supported operator choice (protected by
+    HTTPS, non-default secrets, and superuser-only access), so this is a Warning, not
+    an Error: ``manage.py check --deploy`` surfaces it without failing. It is
+    deploy-tagged and gated on ``not DEBUG`` so it never fires in local development.
+    """
+
+    if settings.DEBUG or not getattr(settings, "ADMIN_ENABLED", False):
+        return []
+    return [
+        Warning(
+            "The Octonomy admin is enabled with DEBUG=false. It is intended as a "
+            "trusted development/operator interface, not a public API surface; the REST "
+            "API remains the primary surface.",
+            hint="Serve it over HTTPS, restrict access to trusted operators, and unset "
+            "OCTONOMY_ADMIN_ENABLED to disable it. See docs/operations.md 'Admin console'.",
+            id="octonomy.W001",
         )
     ]
 
