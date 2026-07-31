@@ -10,12 +10,37 @@ octonomy.core ever slips after django.contrib.auth the override stops winning an
 
 from __future__ import annotations
 
+from io import StringIO
+from unittest import mock
+
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.management import call_command, get_commands
 from django.core.management.base import CommandError
 
 pytestmark = pytest.mark.django_db
+
+
+def _run_interactive(password: str, username: str) -> None:
+    """Drive the interactive createsuperuser flow with mocked TTY prompts.
+
+    Django skips interactive creation unless ``stdin.isatty()`` is true; username and
+    required fields are read via ``input()`` and the password via ``getpass``.
+    """
+
+    stdin = mock.MagicMock()
+    stdin.isatty.return_value = True
+    with (
+        mock.patch("builtins.input", side_effect=[username, f"{username}@example.com"]),
+        mock.patch("getpass.getpass", return_value=password),
+    ):
+        call_command(
+            "createsuperuser",
+            interactive=True,
+            stdin=stdin,
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
 
 
 def test_override_wins_command_resolution():
@@ -52,3 +77,31 @@ def test_noinput_without_password_is_left_to_django(monkeypatch):
     call_command("createsuperuser", interactive=False, username="nopass", email="np@e.com")
     user = get_user_model().objects.get(username="nopass")
     assert user.is_superuser and not user.has_usable_password()
+
+
+# --- Interactive path: the "[y/N] bypass" escape hatch is closed --------------------
+
+
+def test_interactive_weak_password_aborts_without_bypass():
+    # Stock Django would print the policy errors then offer to create the user anyway;
+    # our override makes the failure fatal, so the command aborts and creates no user.
+    with pytest.raises(CommandError, match="password policy"):
+        _run_interactive("1", "weakint")
+    assert not get_user_model().objects.filter(username="weakint").exists()
+
+
+def test_interactive_strong_password_succeeds():
+    _run_interactive("Str0ng-Op3rator-Pass!", "strongint")
+    user = get_user_model().objects.get(username="strongint")
+    assert user.is_superuser and user.is_active
+
+
+def test_interactive_patch_is_restored_after_run():
+    # The interactive fatal-validation swap must not leak into the wider process.
+    from django.contrib.auth.management.commands import createsuperuser as django_cmd
+    from django.contrib.auth.password_validation import (
+        validate_password as real_validate_password,
+    )
+
+    _run_interactive("Str0ng-Op3rator-Pass!", "restorecheck")
+    assert django_cmd.validate_password is real_validate_password
