@@ -39,9 +39,15 @@ system check `octonomy.W001` surfaces on `python manage.py check --deploy` as a 
   `https://` `Origin` — so a valid admin login or write returns `403`. If your proxy sets
   `X-Forwarded-Proto` (and strips any client-supplied value), set `OCTONOMY_TRUST_FORWARDED_PROTO=true`
   so Django honors the forwarded scheme. Leave it off if you cannot guarantee the header is
-  proxy-controlled — trusting a spoofable scheme header downgrades HTTPS enforcement. If the admin is
-  served from a different host/origin than the proxy presents, also add that origin to
-  `CSRF_TRUSTED_ORIGINS`.
+  proxy-controlled — trusting a spoofable scheme header downgrades HTTPS enforcement. If the browser's
+  admin origin differs from the host Django sees (a proxy/CDN presenting a different host), set the
+  `CSRF_TRUSTED_ORIGINS` environment variable (comma-separated, scheme-qualified, e.g.
+  `https://admin.example.com`); the cleaner alternative is to have the proxy preserve the public
+  `Host` header.
+- **Use a strong superuser password.** The admin is the only password-authenticated surface (the REST
+  API is token-only), and a superuser has platform-wide access. Django's standard password validators
+  (length, common-password, numeric-only, attribute-similarity) are enforced on `createsuperuser` and
+  the admin user/password forms — choose a strong, unique password.
 - **Use non-default secrets.** `DJANGO_SECRET_KEY` and `SERVICE_TOKEN_PEPPER` must be set to
   non-default values when `DEBUG=false` (enforced at boot), and `ALLOWED_HOSTS` must list your real
   hosts and must not be `*`.

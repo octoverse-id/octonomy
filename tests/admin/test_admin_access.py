@@ -133,6 +133,25 @@ def test_admin_index_renders_swagger_site_link(client, superuser):
     assert "/api/docs/swagger/" in response.content.decode()
 
 
+def test_admin_user_form_enforces_password_validators(client, superuser):
+    # AUTH_PASSWORD_VALIDATORS must reject a weak password on the Unfold user-add form:
+    # a superuser has platform-wide access, so weak credentials are a real risk. A
+    # rejected form re-renders (200) and creates no user; a 302 would mean it was saved.
+    client.force_login(superuser)
+    with admin_enabled(True):
+        response = client.post(
+            "/admin/auth/user/add/",
+            {
+                "username": "weakling",
+                "password1": "1",
+                "password2": "1",
+                "usable_password": "true",
+            },
+        )
+    assert response.status_code == 200
+    assert not User.objects.filter(username="weakling").exists()
+
+
 def test_direct_login_without_next_lands_on_admin_index(client, superuser):
     # The Unfold login template renders no hidden `next`, so a direct /admin/login/
     # (no ?next=) would otherwise fall back to LOGIN_REDIRECT_URL's Django default

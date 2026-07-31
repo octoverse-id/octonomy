@@ -37,6 +37,8 @@ _OWNED_KEYS = (
     "OCTONOMY_ADMIN_ENABLED",
     "SESSION_COOKIE_SECURE",
     "CSRF_COOKIE_SECURE",
+    "OCTONOMY_TRUST_FORWARDED_PROTO",
+    "CSRF_TRUSTED_ORIGINS",
 )
 
 
@@ -57,6 +59,8 @@ def _read_settings(**overrides: str) -> dict:
         "'ADMIN_ENABLED': settings.ADMIN_ENABLED,"
         "'SESSION_COOKIE_SECURE': settings.SESSION_COOKIE_SECURE,"
         "'CSRF_COOKIE_SECURE': settings.CSRF_COOKIE_SECURE,"
+        "'CSRF_TRUSTED_ORIGINS': settings.CSRF_TRUSTED_ORIGINS,"
+        "'SECURE_PROXY_SSL_HEADER': getattr(settings, 'SECURE_PROXY_SSL_HEADER', None),"
         "'DEBUG': settings.DEBUG}))"
     )
     result = subprocess.run(
@@ -112,3 +116,50 @@ def test_explicit_cookie_override_wins_over_debug_default(cookie):
     # escape hatch for a TLS-terminating proxy on a private network.
     result = _read_settings(DJANGO_DEBUG="false", **{cookie: "false"})
     assert result[cookie] is False
+
+
+# --- TLS-terminating proxy: forwarded-scheme trust is opt-in and off by default -----
+
+
+def test_forwarded_proto_not_trusted_by_default():
+    # Off by default: trusting a spoofable header would downgrade HTTPS enforcement.
+    assert _read_settings(DJANGO_DEBUG="false")["SECURE_PROXY_SSL_HEADER"] is None
+
+
+def test_forwarded_proto_trusted_when_opted_in():
+    result = _read_settings(DJANGO_DEBUG="false", OCTONOMY_TRUST_FORWARDED_PROTO="true")
+    # JSON round-trips the tuple as a list.
+    assert result["SECURE_PROXY_SSL_HEADER"] == ["HTTP_X_FORWARDED_PROTO", "https"]
+
+
+# --- CSRF trusted origins are configurable from the environment (round-3 finding) ----
+
+
+def test_csrf_trusted_origins_empty_by_default():
+    assert _read_settings(DJANGO_DEBUG="false")["CSRF_TRUSTED_ORIGINS"] == []
+
+
+def test_csrf_trusted_origins_parsed_and_stripped():
+    result = _read_settings(
+        DJANGO_DEBUG="false",
+        CSRF_TRUSTED_ORIGINS="https://admin.example.com, https://ops.example.com",
+    )
+    assert result["CSRF_TRUSTED_ORIGINS"] == [
+        "https://admin.example.com",
+        "https://ops.example.com",
+    ]
+
+
+# --- Password validators harden the admin's only password surface (round-3 finding) --
+
+
+def test_standard_password_validators_are_configured():
+    from django.conf import settings
+
+    names = {v["NAME"].rsplit(".", 1)[-1] for v in settings.AUTH_PASSWORD_VALIDATORS}
+    assert {
+        "UserAttributeSimilarityValidator",
+        "MinimumLengthValidator",
+        "CommonPasswordValidator",
+        "NumericPasswordValidator",
+    } <= names

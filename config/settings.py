@@ -165,6 +165,25 @@ LOGIN_REDIRECT_URL = "admin:index"
 if env_bool("OCTONOMY_TRUST_FORWARDED_PROTO", False):
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+# CSRF trusted origins for the admin's session/CSRF surface (the REST API is token-based
+# and CSRF-exempt). Needed when the browser's admin origin differs from the host Django
+# sees — e.g. a proxy/CDN in front of the admin. Comma-separated, scheme-qualified
+# (https://admin.example.com). Empty by default; ALLOWED_HOSTS still governs Host.
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip() for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if origin.strip()
+]
+
+# Password strength validators for the admin's superuser accounts. The REST API is
+# token-only, so before the admin these were irrelevant; the admin is the first
+# password-authenticated surface, and a superuser has platform-wide access — so enforce
+# Django's standard validators on createsuperuser and the Unfold user/password forms.
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
 # Unfold branding. Kept intentionally minimal — no bespoke dashboard, JS build, or
 # custom image assets. SITE_URL points the header/home affordance at the Swagger UI,
 # reinforcing that REST is the primary surface; it is a dotted path to a request-aware
