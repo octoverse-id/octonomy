@@ -6,6 +6,7 @@ from django.test import override_settings
 from octonomy.core import checks
 from octonomy.core.checks import (
     CONSTRAINT_SWAP_MIGRATIONS,
+    admin_enabled_in_production_check,
     namespace_flag_dependencies,
     namespace_write_requires_swap,
     production_settings_check,
@@ -204,3 +205,23 @@ def test_production_settings_check_requires_allowed_hosts():
     ids = {message.id for message in production_settings_check(None)}
 
     assert ids == {"octonomy.E003"}
+
+
+@override_settings(DEBUG=False, ADMIN_ENABLED=True)
+def test_admin_in_production_emits_w001_warning():
+    messages = admin_enabled_in_production_check(None)
+    ids = {message.id for message in messages}
+    assert ids == {"octonomy.W001"}
+    # A Warning, not an Error: it surfaces on `check --deploy` but must not block.
+    assert all(message.is_serious() is False for message in messages)
+
+
+@override_settings(DEBUG=False, ADMIN_ENABLED=False)
+def test_admin_disabled_in_production_is_silent():
+    assert admin_enabled_in_production_check(None) == []
+
+
+@override_settings(DEBUG=True, ADMIN_ENABLED=True)
+def test_admin_enabled_in_debug_does_not_warn():
+    # Enabled in local development is the normal case; W001 is production-only.
+    assert admin_enabled_in_production_check(None) == []

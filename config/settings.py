@@ -51,23 +51,51 @@ if not DEBUG and SECRET_KEY == "local-dev-secret":
     )
 
 INSTALLED_APPS = [
+    # Unfold must precede the admin app so its template overrides win (APP_DIRS
+    # resolves in INSTALLED_APPS order). BasicAppConfig — not unfold's default app
+    # config — because the default one swaps admin.site for a bare UnfoldAdminSite
+    # and would drop OctonomyAdminSite's superuser-only gate.
+    "unfold.apps.BasicAppConfig",
+    # Replaces "django.contrib.admin": installs OctonomyAdminSite as the default
+    # admin site (config/admin.py). The optional operator console is mounted at
+    # /admin/ only when ADMIN_ENABLED (config/urls.py).
+    "config.admin.OctonomyAdminConfig",
+    # octonomy.core hosts a createsuperuser override that enforces the password
+    # validators on the non-interactive bootstrap path (--noinput, which Django itself
+    # does not validate). Management-command overrides resolve to the app listed
+    # EARLIEST in INSTALLED_APPS, so core MUST precede django.contrib.auth (which ships
+    # the stock command). core is abstract-only (no models/migrations), so its earlier
+    # position is otherwise inert. Locked by tests/admin/test_createsuperuser.py.
+    "octonomy.core",
     "django.contrib.auth",
     "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
     "django.contrib.postgres",
     "rest_framework",
     "drf_spectacular",
     "octonomy.service_auth",
     "octonomy.audit",
     "octonomy.events",
-    "octonomy.core",
     "octonomy.tags",
     "octonomy.assignments",
     "octonomy.openapi",
 ]
 
+# Django-recommended order. Session/Csrf/Authentication/Message/XFrameOptions are
+# required by the admin (and by admin.E408-E410 system checks); they do NOT affect
+# REST: DEFAULT_AUTHENTICATION_CLASSES is empty so DRF never runs SessionAuthentication
+# or its CSRF check, and APIView is csrf_exempt. RequestContextMiddleware stays last so
+# request_id is available to admin writes too.
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "octonomy.core.middleware.RequestContextMiddleware",
 ]
 
@@ -85,6 +113,9 @@ TEMPLATES = [
             "context_processors": [
                 "django.template.context_processors.debug",
                 "django.template.context_processors.request",
+                # Required by django.contrib.admin (admin.E402/E404 system checks).
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     }
@@ -104,6 +135,74 @@ LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
+
+# --- Admin console (opt-in, superuser-only) --------------------------------------
+# The django-unfold admin is an optional operator console over the headless REST
+# service. It is mounted at /admin/ only when ADMIN_ENABLED is true (defaults to
+# DEBUG); when disabled the route is absent (resolver 404, not a branded page). The
+# site itself is superuser-only (config/admin.py). A deploy warning (octonomy.W001)
+# fires when it is enabled with DEBUG=false. See docs/operations.md "Admin console".
+ADMIN_ENABLED = env_bool("OCTONOMY_ADMIN_ENABLED", DEBUG)
+
+# Static files back the admin's CSS/JS assets. No WhiteNoise / external service:
+# operators run `manage.py collectstatic` and serve STATIC_ROOT themselves in prod.
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Secure the session/CSRF cookies by default in production (DEBUG=false), while
+# leaving an explicit env override for unusual deployments (e.g. TLS-terminating
+# proxy on a private network).
+SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", not DEBUG)
+CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", not DEBUG)
+
+# A direct login at /admin/login/ (no ?next=) otherwise falls back to Django's
+# LOGIN_REDIRECT_URL default (/accounts/profile/), which has no route here → 404 after
+# a successful login (the Unfold login template renders no hidden `next` field). The
+# admin is the only login surface, so land successful logins on the admin index. Inert
+# when the admin is disabled (no login view exists to trigger the redirect).
+LOGIN_REDIRECT_URL = "admin:index"
+
+# Behind a TLS-terminating proxy (HTTPS at the edge, HTTP to the app), Django sees
+# request.scheme == "http": secure cookies are withheld and CSRF rejects the browser's
+# https Origin, so admin login/writes 403. Opt in to trust the proxy's forwarded scheme
+# — ONLY when the proxy sets X-Forwarded-Proto and strips any client-supplied value.
+# Off by default: trusting a spoofable header would silently downgrade HTTPS
+# enforcement. See docs/operations.md "Admin console".
+if env_bool("OCTONOMY_TRUST_FORWARDED_PROTO", False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# CSRF trusted origins for the admin's session/CSRF surface (the REST API is token-based
+# and CSRF-exempt). Needed when the browser's admin origin differs from the host Django
+# sees — e.g. a proxy/CDN in front of the admin. Comma-separated, scheme-qualified
+# (https://admin.example.com). Empty by default; ALLOWED_HOSTS still governs Host.
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip() for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if origin.strip()
+]
+
+# Password strength validators for the admin's superuser accounts. The REST API is
+# token-only, so before the admin these were irrelevant; the admin is the first
+# password-authenticated surface, and a superuser has platform-wide access — so enforce
+# Django's standard validators on createsuperuser and the Unfold user/password forms.
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+# Unfold branding. Kept intentionally minimal — no bespoke dashboard, JS build, or
+# custom image assets. SITE_URL points the header/home affordance at the Swagger UI,
+# reinforcing that REST is the primary surface; it is a dotted path to a request-aware
+# callable (config.adminsite.admin_site_url) so the link honors a WSGI SCRIPT_NAME
+# prefix under subpath deployments instead of hardcoding the host-root path.
+UNFOLD = {
+    "SITE_TITLE": "Octonomy Admin",
+    "SITE_HEADER": "Octonomy Admin",
+    "SITE_SUBHEADER": "Trusted development/operator interface — REST is the primary API.",
+    "SITE_URL": "config.adminsite.admin_site_url",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": True,
+}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],

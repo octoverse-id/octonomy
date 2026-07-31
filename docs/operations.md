@@ -6,6 +6,66 @@ Octonomy is a Django REST service backed by PostgreSQL. It does not require an e
 broker for v1. Transactional outbox rows are stored in PostgreSQL and dispatched by a management
 command using the built-in logging transport or the optional webhook transport.
 
+Octonomy requires **Python 3.12+** and runs on the **Django 5.2 LTS** line.
+
+## Admin Console
+
+Octonomy ships an optional, superuser-only admin console (themed with django-unfold) mounted at
+`/admin/`. It is a thin operator interface over the domain services; **REST remains the primary
+API**. It is intended for trusted development/operator use, not as a public surface.
+
+### Enablement and access
+
+- The console mounts only when `OCTONOMY_ADMIN_ENABLED` is true. That flag **defaults to
+  `DJANGO_DEBUG`**, so it is on in local development and **off in production** unless explicitly
+  enabled. When disabled, `/admin/` does not exist (a plain 404 at the URL resolver — not a branded
+  login or denial page).
+- Even when mounted, only **active superusers** may enter; ordinary `is_staff` accounts are denied
+  the entire site. There is no default user or password — bootstrap with
+  `python manage.py createsuperuser`.
+
+### Enabling it in production
+
+Enabling the admin with `DEBUG=false` is a supported but deliberate operator decision. The deploy
+system check `octonomy.W001` surfaces on `python manage.py check --deploy` as a reminder; it is a
+**warning, not an error**, and does not block the deploy. Before enabling it in production:
+
+- **Serve over HTTPS.** The session and CSRF cookies default to `Secure` when `DEBUG=false`
+  (`SESSION_COOKIE_SECURE` / `CSRF_COOKIE_SECURE`), so the admin login will not function over plain
+  HTTP unless you deliberately override those flags.
+- **Behind a TLS-terminating proxy**, Django sees the request as HTTP (`request.scheme == "http"`)
+  even though the browser used HTTPS. Two consequences for the admin's session/CSRF surface (the REST
+  API is token-based and unaffected): secure cookies are withheld, and CSRF rejects the browser's
+  `https://` `Origin` — so a valid admin login or write returns `403`. If your proxy sets
+  `X-Forwarded-Proto` (and strips any client-supplied value), set `OCTONOMY_TRUST_FORWARDED_PROTO=true`
+  so Django honors the forwarded scheme. Leave it off if you cannot guarantee the header is
+  proxy-controlled — trusting a spoofable scheme header downgrades HTTPS enforcement. If the browser's
+  admin origin differs from the host Django sees (a proxy/CDN presenting a different host), set the
+  `CSRF_TRUSTED_ORIGINS` environment variable (comma-separated, scheme-qualified, e.g.
+  `https://admin.example.com`); the cleaner alternative is to have the proxy preserve the public
+  `Host` header.
+- **Use a strong superuser password.** The admin is the only password-authenticated surface (the REST
+  API is token-only), and a superuser has platform-wide access. Django's standard password validators
+  (length, common-password, numeric-only, attribute-similarity) are enforced on the admin user/password
+  forms and on every `createsuperuser` path — the non-interactive bootstrap
+  (`DJANGO_SUPERUSER_PASSWORD=… manage.py createsuperuser --noinput`, which stock Django skips) and the
+  interactive prompt (whose stock "bypass password validation?" escape hatch is disabled here). A
+  password that fails the policy aborts the command, so choose a strong, unique one.
+- **Use non-default secrets.** `DJANGO_SECRET_KEY` and `SERVICE_TOKEN_PEPPER` must be set to
+  non-default values when `DEBUG=false` (enforced at boot), and `ALLOWED_HOSTS` must list your real
+  hosts and must not be `*`.
+- **Apply migrations.** Run `python manage.py migrate` — the admin uses Django's built-in
+  `admin`/`sessions`/`auth` tables (created by Django's own migrations; Octonomy adds no domain
+  migration for the console).
+- **Collect and serve static assets.** Run `make collectstatic` (or
+  `python manage.py collectstatic --noinput`) to gather the admin/unfold assets into `STATIC_ROOT`,
+  then serve `STATIC_ROOT` from your web server / CDN. Octonomy does not bundle WhiteNoise or any
+  static-serving middleware — static files are served externally in production.
+- **Restrict access** to trusted operators (e.g. network ACLs / VPN) as appropriate; the console is
+  platform-wide superuser access, not tenant-scoped.
+
+To disable it again, unset `OCTONOMY_ADMIN_ENABLED` (or set it to false) and redeploy.
+
 ## Health Checks
 
 Unauthenticated health endpoints:

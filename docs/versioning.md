@@ -62,6 +62,24 @@ in-place change to a live contract):
 - Tightening validation so previously-accepted requests now fail.
 - Changing default behavior, error codes, or response semantics that callers rely on.
 
+### Package major vs. REST URL surface — they are decoupled
+A package **major** signals a backward-incompatible change *somewhere* in what the package requires
+or delivers. That is **not** always a REST contract break, and it does **not** automatically mint a
+new `/api/<next>` surface. The two triggers are independent:
+
+- **A breaking REST contract** (any bullet above, on a live surface) ⇒ ship a new parallel
+  `/api/<next>` surface, make it the advertised default, and keep the prior surface serving. This is
+  the *only* thing that adds a URL-versioned surface.
+- **A breaking runtime/deployment requirement** — e.g. raising the minimum Python or Django version,
+  or another operator-facing prerequisite to run the service — is also a major bump, because a
+  deployment cannot upgrade in place without action. But it changes nothing about the request/
+  response contract, so the URL surfaces are untouched: `/api/v2` stays primary, `/api/v1` stays
+  supported, and **no `/api/v3` is introduced**. The OpenAPI drift gate shows no path/schema diff;
+  only `info.version` moves at release time.
+
+The upcoming `3.0.0` release is exactly the second case: it raises the runtime floor (Python 3.12+,
+Django 5.2 LTS) to support the optional admin console, with an unchanged REST contract.
+
 ## The drift gate is the compatibility tripwire
 
 CI regenerates `docs/openapi.yaml` (v1) and `docs/openapi-v2.yaml` (v2) and fails on any uncommitted

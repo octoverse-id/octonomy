@@ -1,5 +1,7 @@
 """URL routes for Octonomy."""
 
+from django.conf import settings
+from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView
 
@@ -38,3 +40,10 @@ urlpatterns = [
     path("api/docs/v2/redoc/", SpectacularRedocView.as_view(url_name="schema-v2"), name="redoc-v2"),
     path("api/<version>/", include(api_patterns)),
 ]
+
+# The optional operator admin. Mounted only when ADMIN_ENABLED, and placed before
+# the api/<version>/ catch-all above would ever matter (distinct prefix). When the
+# flag is off the route is simply absent, so a request to /admin/ 404s at the
+# resolver rather than rendering a branded denial page.
+if settings.ADMIN_ENABLED:
+    urlpatterns.insert(0, path("admin/", admin.site.urls))
