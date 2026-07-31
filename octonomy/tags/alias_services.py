@@ -239,6 +239,11 @@ def reactivate_tag_alias(alias: TagAlias, audit_context: AuditContext | None = N
     scope_context = scope_context_from_values(alias.namespace_type, alias.namespace_id)
     guard_namespace_write_enabled(scope_context)
     with transaction.atomic():
+        # Lock the canonical tag BEFORE the alias, matching deactivate_tag's tag->alias
+        # lock order, so a concurrent reactivate-alias / deactivate-tag pair cannot
+        # deadlock (which PostgreSQL would abort as an unhandled 500). Re-read the tag
+        # from the locked alias afterwards in case it was re-pointed since this lock.
+        Tag.objects.select_for_update().get(id=alias.tag_id)
         locked = TagAlias.objects.select_for_update().get(id=alias.id)
         if locked.is_active:
             alias.is_active = True

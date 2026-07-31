@@ -11,11 +11,11 @@ from __future__ import annotations
 from django.contrib import admin
 
 from octonomy.audit.models import AuditLog
-from octonomy.core.admin_base import ReadOnlyModelAdmin, pretty_json
+from octonomy.core.admin_base import ExactSearchModelAdmin, pretty_json
 
 
 @admin.register(AuditLog)
-class AuditLogAdmin(ReadOnlyModelAdmin):
+class AuditLogAdmin(ExactSearchModelAdmin):
     list_display = (
         "created_at",
         "tenant_id",
@@ -26,12 +26,12 @@ class AuditLogAdmin(ReadOnlyModelAdmin):
         "application_id",
         "scope_label",
     )
-    # Aligned with audit_action_created_idx / audit_entity_created_idx and the created_at
-    # ordering; no free-text search on actor_id/request_id/JSON. The ``=`` prefix makes
-    # entity_id an exact (iexact) match so it can use the index instead of an ILIKE
-    # '%..%' scan over an unbounded append-only table.
+    # Filters aligned with audit_action_created_idx and the created_at ordering; no
+    # free-text search on actor_id/request_id/JSON. entity_id search is a case-sensitive
+    # __exact lookup (ExactSearchModelAdmin) rather than an ILIKE/iexact scan.
     list_filter = ("action", "entity_type", "created_at")
-    search_fields = ("=entity_id",)
+    search_fields = ("entity_id",)
+    exact_search_field = "entity_id"
     date_hierarchy = "created_at"
     ordering = ("-created_at", "id")
 

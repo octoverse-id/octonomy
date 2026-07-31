@@ -292,3 +292,24 @@ class ReadOnlyModelAdmin(UnfoldModelAdmin):
     def get_actions(self, request):
         # No bulk actions whatsoever (also guarantees delete_selected is absent).
         return {}
+
+
+class ExactSearchModelAdmin(ReadOnlyModelAdmin):
+    """Read-only diagnostics admin whose search box does one exact-match id lookup.
+
+    Django's ``search_fields`` prefixes only offer ``icontains`` (``ILIKE '%term%'`` —
+    a leading wildcard that forces a full scan) or ``=`` (``iexact`` — wraps the column
+    in ``UPPER()`` so a plain B-tree index can't serve it). For looking up a specific
+    ``entity_id`` / ``aggregate_id`` on an unbounded append-only table we want a plain
+    case-sensitive equality the planner can satisfy from an index, so filter with
+    ``__exact`` directly. Subclasses set ``exact_search_field`` and keep the column in
+    ``search_fields`` only so the box renders.
+    """
+
+    exact_search_field: str | None = None
+    search_help_text = "Exact id match."
+
+    def get_search_results(self, request, queryset, search_term):
+        if search_term and self.exact_search_field:
+            return queryset.filter(**{f"{self.exact_search_field}__exact": search_term}), False
+        return queryset, False

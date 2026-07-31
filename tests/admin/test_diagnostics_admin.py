@@ -140,6 +140,21 @@ def test_service_client_grant_detail_renders_scopes(client, superuser, service_c
     assert b"tags:read" in response.content
 
 
+def test_audit_search_is_exact_match_not_substring(db):
+    from django.contrib import admin as django_admin
+
+    AuditLog.objects.create(
+        tenant_id="t", action="a", entity_type="tag", entity_id="abc", changes={}, metadata={}
+    )
+    AuditLog.objects.create(
+        tenant_id="t", action="a", entity_type="tag", entity_id="abcdef", changes={}, metadata={}
+    )
+    model_admin = django_admin.site._registry[AuditLog]
+    queryset, _dupes = model_admin.get_search_results(None, AuditLog.objects.all(), "abc")
+    # Exact match: the "abcdef" row must NOT be returned by a substring-style query.
+    assert set(queryset.values_list("entity_id", flat=True)) == {"abc"}
+
+
 def test_service_client_admin_field_allowlist_excludes_hashed_key(client, superuser):
     from django.contrib import admin as django_admin
 

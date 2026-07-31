@@ -9,12 +9,12 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from octonomy.core.admin_base import ReadOnlyModelAdmin, pretty_json
+from octonomy.core.admin_base import ExactSearchModelAdmin, pretty_json
 from octonomy.events.models import OutboxEvent
 
 
 @admin.register(OutboxEvent)
-class OutboxEventAdmin(ReadOnlyModelAdmin):
+class OutboxEventAdmin(ExactSearchModelAdmin):
     list_display = (
         "created_at",
         "status",
@@ -25,11 +25,12 @@ class OutboxEventAdmin(ReadOnlyModelAdmin):
         "attempts",
         "available_at",
     )
-    # Aligned with outbox_type_created_idx / the status indexes and created_at ordering.
-    # ``=`` makes aggregate_id an exact (iexact) match so it uses an index instead of an
-    # ILIKE '%..%' scan over an unbounded append-only table.
+    # Filters aligned with outbox_type_created_idx / the status indexes and created_at
+    # ordering. aggregate_id search is a case-sensitive __exact lookup
+    # (ExactSearchModelAdmin) rather than an ILIKE/iexact scan.
     list_filter = ("status", "event_type", "created_at")
-    search_fields = ("=aggregate_id",)
+    search_fields = ("aggregate_id",)
+    exact_search_field = "aggregate_id"
     date_hierarchy = "created_at"
     ordering = ("-created_at", "id")
 
