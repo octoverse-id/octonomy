@@ -39,11 +39,12 @@ class Command(createsuperuser.Command):
     def handle(self, *args, **options):
         # Non-interactive: Django never validates the env-supplied password, so do it
         # here before delegating (the interactive patch below is inert on this path —
-        # Django's --noinput branch does not call validate_password).
-        if not options.get("interactive"):
-            password = os.environ.get(PASSWORD_ENV)
-            if password:
-                self._reject_if_weak(password, self._bootstrap_user_stub(options))
+        # Django's --noinput branch does not call validate_password). Key on env-var
+        # PRESENCE, not truthiness, matching Django's `--noinput` branch: a present-but-
+        # empty DJANGO_SUPERUSER_PASSWORD (an unset shell var expanded in) would
+        # otherwise skip validation and create a superuser with a usable blank password.
+        if not options.get("interactive") and PASSWORD_ENV in os.environ:
+            self._reject_if_weak(os.environ[PASSWORD_ENV], self._bootstrap_user_stub(options))
 
         # Interactive: make the validator failure fatal so Django's "[y/N] bypass"
         # prompt is never reached. Restored unconditionally.

@@ -70,6 +70,16 @@ def test_noinput_accepts_strong_password(monkeypatch):
     assert user.check_password("Str0ng-Op3rator-Pass!")
 
 
+def test_noinput_rejects_present_but_empty_password(monkeypatch):
+    # A present-but-empty DJANGO_SUPERUSER_PASSWORD (e.g. an unset shell var expanded
+    # in) must be rejected, not skipped — Django would otherwise create a superuser with
+    # a usable blank password. Guarding on presence (not truthiness) catches it.
+    monkeypatch.setenv("DJANGO_SUPERUSER_PASSWORD", "")
+    with pytest.raises(CommandError, match="password policy"):
+        call_command("createsuperuser", interactive=False, username="blankpw", email="b@e.com")
+    assert not get_user_model().objects.filter(username="blankpw").exists()
+
+
 def test_noinput_without_password_is_left_to_django(monkeypatch):
     # No DJANGO_SUPERUSER_PASSWORD => Django creates an unusable-password superuser
     # (must set one later). Our validation only guards a provided password.
