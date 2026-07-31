@@ -25,7 +25,20 @@ up from ``OctonomyAdminConfig.ready()`` after autodiscover has run.
 from __future__ import annotations
 
 from django.http import HttpRequest
+from django.urls import reverse
 from unfold.sites import UnfoldAdminSite
+
+
+def admin_site_url(request: HttpRequest) -> str:
+    """Swagger UI URL for the admin header/home link (``UNFOLD["SITE_URL"]``).
+
+    Reversed rather than hardcoded so it honors a WSGI ``SCRIPT_NAME`` prefix: under a
+    subpath mount (e.g. ``/octonomy``) ``reverse`` returns ``/octonomy/api/docs/swagger/``
+    from the per-request script prefix, matching how the rest of the app builds URLs.
+    Unfold invokes this callable with the request when resolving ``SITE_URL``.
+    """
+
+    return reverse("swagger-ui")
 
 
 class OctonomyAdminSite(UnfoldAdminSite):

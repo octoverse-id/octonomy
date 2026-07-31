@@ -11,8 +11,9 @@ import pytest
 from django.contrib import admin
 from django.contrib.auth.models import Group, User
 from django.test import Client
+from django.urls import set_script_prefix
 
-from config.adminsite import OctonomyAdminSite
+from config.adminsite import OctonomyAdminSite, admin_site_url
 from config.auth_admin import OctonomyGroupAdmin, OctonomyUserAdmin
 from tests.admin.conftest import admin_enabled
 
@@ -60,6 +61,17 @@ def test_inactive_superuser_cannot_enter(client, inactive_superuser):
     assert response.headers["Location"].startswith("/admin/login/")
 
 
+def test_gate_is_site_wide_not_just_the_index(client, staff_user):
+    # The gate lives on the site (admin_view wraps every view), not only the index.
+    # Prove a staff user is bounced from a concrete model page too, so a future model
+    # registration cannot accidentally expose itself to non-superusers.
+    client.force_login(staff_user)
+    with admin_enabled(True):
+        response = client.get("/admin/auth/user/")
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("/admin/login/")
+
+
 def test_the_default_site_is_octonomys_superuser_only_site():
     # The lazy admin.site proxy resolves to our custom site — so every model that
     # registers on the default site inherits the superuser-only gate.
@@ -98,3 +110,24 @@ def test_user_and_group_use_unfold_admin(client, superuser):
     assert group_list.status_code == 200
     # Themed rendering: Unfold assets load on the auth admin pages.
     assert "/static/unfold/" in user_list.content.decode()
+
+
+def test_site_url_reverses_swagger_and_honors_script_prefix():
+    # The admin header/home link must not hardcode the host-root path: under a WSGI
+    # SCRIPT_NAME subpath mount it has to carry the prefix, like the rest of the app.
+    set_script_prefix("/")
+    try:
+        assert admin_site_url(None) == "/api/docs/swagger/"
+        set_script_prefix("/octonomy/")
+        assert admin_site_url(None) == "/octonomy/api/docs/swagger/"
+    finally:
+        set_script_prefix("/")
+
+
+def test_admin_index_renders_swagger_site_link(client, superuser):
+    client.force_login(superuser)
+    with admin_enabled(True):
+        response = client.get("/admin/")
+    assert response.status_code == 200
+    # Unfold resolves UNFOLD["SITE_URL"] (the dotted callable) into the page.
+    assert "/api/docs/swagger/" in response.content.decode()

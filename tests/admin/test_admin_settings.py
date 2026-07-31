@@ -4,6 +4,12 @@ These settings (ADMIN_ENABLED, SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE) are co
 once at settings-import time from the environment, so ``override_settings`` cannot
 exercise the derivation. Each case re-imports ``config.settings`` in a fresh process
 with a controlled environment and reads the resulting value back as JSON.
+
+``config.settings`` auto-loads the repo ``.env`` via ``load_dotenv``, which would leak
+developer-local values (e.g. ``OCTONOMY_ADMIN_ENABLED``) into the "unset default"
+cases. The subprocess neutralizes ``dotenv.load_dotenv`` before importing settings so
+the constructed environment is the *only* input — making these tests hermetic
+regardless of the local ``.env``.
 """
 
 from __future__ import annotations
@@ -41,6 +47,10 @@ def _read_settings(**overrides: str) -> dict:
     env.update(_PROD_BASE)
     env.update(overrides)
     script = (
+        # Neutralize the repo .env auto-load so `env` is the only input. settings.py
+        # does `from dotenv import load_dotenv` at import time, so rebinding the
+        # attribute on the dotenv module here makes that import pick up the no-op.
+        "import dotenv; dotenv.load_dotenv = lambda *a, **k: False;"
         "import json;"
         "from django.conf import settings;"
         "print(json.dumps({"

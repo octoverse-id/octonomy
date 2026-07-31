@@ -151,12 +151,14 @@ CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", not DEBUG)
 
 # Unfold branding. Kept intentionally minimal — no bespoke dashboard, JS build, or
 # custom image assets. SITE_URL points the header/home affordance at the Swagger UI,
-# reinforcing that REST is the primary surface.
+# reinforcing that REST is the primary surface; it is a dotted path to a request-aware
+# callable (config.adminsite.admin_site_url) so the link honors a WSGI SCRIPT_NAME
+# prefix under subpath deployments instead of hardcoding the host-root path.
 UNFOLD = {
     "SITE_TITLE": "Octonomy Admin",
     "SITE_HEADER": "Octonomy Admin",
     "SITE_SUBHEADER": "Trusted development/operator interface — REST is the primary API.",
-    "SITE_URL": "/api/docs/swagger/",
+    "SITE_URL": "config.adminsite.admin_site_url",
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": True,
 }
