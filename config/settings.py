@@ -149,6 +149,22 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", not DEBUG)
 CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", not DEBUG)
 
+# A direct login at /admin/login/ (no ?next=) otherwise falls back to Django's
+# LOGIN_REDIRECT_URL default (/accounts/profile/), which has no route here → 404 after
+# a successful login (the Unfold login template renders no hidden `next` field). The
+# admin is the only login surface, so land successful logins on the admin index. Inert
+# when the admin is disabled (no login view exists to trigger the redirect).
+LOGIN_REDIRECT_URL = "admin:index"
+
+# Behind a TLS-terminating proxy (HTTPS at the edge, HTTP to the app), Django sees
+# request.scheme == "http": secure cookies are withheld and CSRF rejects the browser's
+# https Origin, so admin login/writes 403. Opt in to trust the proxy's forwarded scheme
+# — ONLY when the proxy sets X-Forwarded-Proto and strips any client-supplied value.
+# Off by default: trusting a spoofable header would silently downgrade HTTPS
+# enforcement. See docs/operations.md "Admin console".
+if env_bool("OCTONOMY_TRUST_FORWARDED_PROTO", False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # Unfold branding. Kept intentionally minimal — no bespoke dashboard, JS build, or
 # custom image assets. SITE_URL points the header/home affordance at the Swagger UI,
 # reinforcing that REST is the primary surface; it is a dotted path to a request-aware

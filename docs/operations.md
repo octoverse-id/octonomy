@@ -33,6 +33,15 @@ system check `octonomy.W001` surfaces on `python manage.py check --deploy` as a 
 - **Serve over HTTPS.** The session and CSRF cookies default to `Secure` when `DEBUG=false`
   (`SESSION_COOKIE_SECURE` / `CSRF_COOKIE_SECURE`), so the admin login will not function over plain
   HTTP unless you deliberately override those flags.
+- **Behind a TLS-terminating proxy**, Django sees the request as HTTP (`request.scheme == "http"`)
+  even though the browser used HTTPS. Two consequences for the admin's session/CSRF surface (the REST
+  API is token-based and unaffected): secure cookies are withheld, and CSRF rejects the browser's
+  `https://` `Origin` — so a valid admin login or write returns `403`. If your proxy sets
+  `X-Forwarded-Proto` (and strips any client-supplied value), set `OCTONOMY_TRUST_FORWARDED_PROTO=true`
+  so Django honors the forwarded scheme. Leave it off if you cannot guarantee the header is
+  proxy-controlled — trusting a spoofable scheme header downgrades HTTPS enforcement. If the admin is
+  served from a different host/origin than the proxy presents, also add that origin to
+  `CSRF_TRUSTED_ORIGINS`.
 - **Use non-default secrets.** `DJANGO_SECRET_KEY` and `SERVICE_TOKEN_PEPPER` must be set to
   non-default values when `DEBUG=false` (enforced at boot), and `ALLOWED_HOSTS` must list your real
   hosts and must not be `*`.

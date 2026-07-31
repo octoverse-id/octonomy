@@ -131,3 +131,15 @@ def test_admin_index_renders_swagger_site_link(client, superuser):
     assert response.status_code == 200
     # Unfold resolves UNFOLD["SITE_URL"] (the dotted callable) into the page.
     assert "/api/docs/swagger/" in response.content.decode()
+
+
+def test_direct_login_without_next_lands_on_admin_index(client, superuser):
+    # The Unfold login template renders no hidden `next`, so a direct /admin/login/
+    # (no ?next=) would otherwise fall back to LOGIN_REDIRECT_URL's Django default
+    # /accounts/profile/ and 404 after a valid login. LOGIN_REDIRECT_URL=admin:index
+    # sends it to the admin index instead.
+    with admin_enabled(True):
+        client.get("/admin/login/")
+        response = client.post("/admin/login/", {"username": "root", "password": "pw-root-123456"})
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/admin/"
