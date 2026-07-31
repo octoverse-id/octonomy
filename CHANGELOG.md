@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `/api/v1` stays supported — there is no `/api/v3`.
 - `SESSION_COOKIE_SECURE` and `CSRF_COOKIE_SECURE` now default to true when `DEBUG=false` (each
   overridable via its own environment variable for unusual deployments).
+- Enabled Django's standard `AUTH_PASSWORD_VALIDATORS` (the admin is the first password
+  surface); `createsuperuser` enforces them even on the non-interactive
+  `DJANGO_SUPERUSER_PASSWORD` + `--noinput` bootstrap, which stock Django skips.
 - Added `django-unfold` as a runtime dependency so operators can enable the admin in production
   without a development-only extra.
 

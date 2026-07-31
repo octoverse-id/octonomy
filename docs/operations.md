@@ -46,8 +46,10 @@ system check `octonomy.W001` surfaces on `python manage.py check --deploy` as a 
   `Host` header.
 - **Use a strong superuser password.** The admin is the only password-authenticated surface (the REST
   API is token-only), and a superuser has platform-wide access. Django's standard password validators
-  (length, common-password, numeric-only, attribute-similarity) are enforced on `createsuperuser` and
-  the admin user/password forms — choose a strong, unique password.
+  (length, common-password, numeric-only, attribute-similarity) are enforced on the admin user/password
+  forms and on `createsuperuser` — including the non-interactive bootstrap
+  (`DJANGO_SUPERUSER_PASSWORD=… manage.py createsuperuser --noinput`), which stock Django would
+  otherwise skip. A password that fails the policy aborts the command; choose a strong, unique one.
 - **Use non-default secrets.** `DJANGO_SECRET_KEY` and `SERVICE_TOKEN_PEPPER` must be set to
   non-default values when `DEBUG=false` (enforced at boot), and `ALLOWED_HOSTS` must list your real
   hosts and must not be `*`.

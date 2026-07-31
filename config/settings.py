@@ -60,6 +60,13 @@ INSTALLED_APPS = [
     # admin site (config/admin.py). The optional operator console is mounted at
     # /admin/ only when ADMIN_ENABLED (config/urls.py).
     "config.admin.OctonomyAdminConfig",
+    # octonomy.core hosts a createsuperuser override that enforces the password
+    # validators on the non-interactive bootstrap path (--noinput, which Django itself
+    # does not validate). Management-command overrides resolve to the app listed
+    # EARLIEST in INSTALLED_APPS, so core MUST precede django.contrib.auth (which ships
+    # the stock command). core is abstract-only (no models/migrations), so its earlier
+    # position is otherwise inert. Locked by tests/admin/test_createsuperuser.py.
+    "octonomy.core",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
@@ -71,7 +78,6 @@ INSTALLED_APPS = [
     "octonomy.service_auth",
     "octonomy.audit",
     "octonomy.events",
-    "octonomy.core",
     "octonomy.tags",
     "octonomy.assignments",
     "octonomy.openapi",
