@@ -70,7 +70,12 @@ USER app
 
 EXPOSE 8000
 
-# Production process: Gunicorn serving the WSGI app, configured by gunicorn.conf.py
-# (auto-loaded from the working directory). Migrations are NOT run here — they are an
-# explicit deploy step (a separate migration Job/init-container in the k8s work).
+# Fail-closed startup: docker-entrypoint.sh runs `manage.py check` (Django's system
+# checks — notably the namespace rollout flag-dependency contract in
+# octonomy/core/checks.py, e.g. E013) before exec'ing the command below. Gunicorn serves
+# the WSGI app directly and would otherwise skip the checks that `manage.py runserver`
+# used to run at startup. Invoked via `sh` so it needs no executable bit.
+# Migrations are NOT run here — they are an explicit deploy step (a separate migration
+# Job/init-container in the k8s work).
+ENTRYPOINT ["sh", "/app/docker-entrypoint.sh"]
 CMD ["gunicorn", "config.wsgi:application"]
