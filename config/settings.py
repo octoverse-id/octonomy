@@ -8,6 +8,7 @@ from pathlib import Path
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
+from django.urls import reverse_lazy
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -202,6 +203,92 @@ UNFOLD = {
     "SITE_URL": "config.adminsite.admin_site_url",
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": True,
+    # Group the sidebar by domain instead of Django's default per-app list. Icons are
+    # Material Symbols names (https://fonts.google.com/icons). Links use reverse_lazy so
+    # they resolve at render time (the admin is only mounted when ADMIN_ENABLED, which is
+    # exactly when the sidebar renders). No per-item "permission" is set because the whole
+    # site is already active-superuser-only (OctonomyAdminSite.has_permission).
+    #
+    # show_all_applications is off, so the sidebar shows ONLY this curated navigation —
+    # every registered model MUST appear below or it becomes unreachable from the menu
+    # (there is a test that fails if a model is dropped). Diagnostics/Access are
+    # collapsible to keep the read-only and auth sections tucked away by default.
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": "Taxonomy",
+                "collapsible": False,
+                "items": [
+                    {
+                        "title": "Vocabularies",
+                        "icon": "menu_book",
+                        "link": reverse_lazy("admin:tags_vocabulary_changelist"),
+                    },
+                    {
+                        "title": "Tags",
+                        "icon": "sell",
+                        "link": reverse_lazy("admin:tags_tag_changelist"),
+                    },
+                    {
+                        "title": "Tag aliases",
+                        "icon": "label",
+                        "link": reverse_lazy("admin:tags_tagalias_changelist"),
+                    },
+                    {
+                        "title": "Tag assignments",
+                        "icon": "link",
+                        "link": reverse_lazy("admin:assignments_tagassignment_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": "Diagnostics",
+                "separator": True,
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Audit logs",
+                        "icon": "history",
+                        "link": reverse_lazy("admin:audit_auditlog_changelist"),
+                    },
+                    {
+                        "title": "Outbox events",
+                        "icon": "outbox",
+                        "link": reverse_lazy("admin:events_outboxevent_changelist"),
+                    },
+                    {
+                        "title": "Service clients",
+                        "icon": "key",
+                        "link": reverse_lazy("admin:service_auth_serviceclient_changelist"),
+                    },
+                    {
+                        "title": "Service client grants",
+                        "icon": "verified_user",
+                        "link": reverse_lazy("admin:service_auth_serviceclientgrant_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": "Access",
+                "separator": True,
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Users",
+                        "icon": "account_circle",
+                        "link": reverse_lazy("admin:auth_user_changelist"),
+                    },
+                    {
+                        "title": "Groups",
+                        "icon": "group",
+                        "link": reverse_lazy("admin:auth_group_changelist"),
+                    },
+                ],
+            },
+        ],
+    },
 }
 
 REST_FRAMEWORK = {

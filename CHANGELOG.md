@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are never exposed: the `ServiceClient` view uses a safe-field allowlist, so `hashed_key` (and any
   future sensitive column) never appears. Token creation and revocation remain in the existing
   management-command workflow.
+- Curated the admin sidebar into domain groups — **Taxonomy**, collapsible **Diagnostics**, and
+  collapsible **Access** — instead of Django's default per-app list, with per-model icons and a
+  search box (`UNFOLD["SIDEBAR"]`).
 - Deploy system check `octonomy.W001`: a non-blocking warning when the admin is enabled with
   `DEBUG=false`, reminding operators it is a trusted development/operator interface rather than a
   public surface.
