@@ -77,7 +77,7 @@ new `/api/<next>` surface. The two triggers are independent:
   supported, and **no `/api/v3` is introduced**. The OpenAPI drift gate shows no path/schema diff;
   only `info.version` moves at release time.
 
-The upcoming `3.0.0` release is exactly the second case: it raises the runtime floor (Python 3.12+,
+The `3.0.0` release is exactly the second case: it raised the runtime floor (Python 3.12+,
 Django 5.2 LTS) to support the optional admin console, with an unchanged REST contract.
 
 ## The drift gate is the compatibility tripwire

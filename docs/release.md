@@ -14,7 +14,7 @@ minor, and breaking changes ship a new parallel URL-versioned surface plus a maj
 `/api/v2` did, keeping `/api/v1` supported. See [`versioning.md`](versioning.md) for the full
 policy and what counts as breaking.
 
-- Package metadata uses PEP 440 (`2.0.0`); OpenAPI and user-facing docs use SemVer (`2.0.0`).
+- Package metadata uses PEP 440 (`3.0.0`); OpenAPI and user-facing docs use SemVer (`3.0.0`).
 - Set `OCTONOMY_API_VERSION` when a deployment should expose a different schema version string.
 
 ## Release Checklist
@@ -118,7 +118,7 @@ Set these environment variables explicitly outside local development:
 - `DATABASE_URL=postgres://...`
 - `ALLOWED_HOSTS=<comma-separated-hostnames>`
 - `SERVICE_TOKEN_PEPPER=<non-default-secret-pepper>`
-- `OCTONOMY_API_VERSION=2.0.0`
+- `OCTONOMY_API_VERSION=3.0.0`
 - `LOG_LEVEL=INFO`
 - `MAX_BULK_TAGS=200` or a deployment-specific cap
 
