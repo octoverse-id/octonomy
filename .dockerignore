@@ -1,6 +1,48 @@
+# VCS + Python caches
 .git
-.venv
+.gitignore
 __pycache__
+*.pyc
 .pytest_cache
 .ruff_cache
+
+# Local environments / secrets — exclude every dotenv variant (incl. .env.example)
+# and common private-key / credential files so none leak into the build context.
+.venv
 .env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa
+id_rsa.*
+*.keystore
+*credentials*.json
+
+# Local build artifacts (collectstatic runs inside the image)
+staticfiles
+
+# Tests + dev/agent tooling (not needed at runtime)
+tests
+code-review
+.github
+.agents
+.codex
+.claude
+.gstack
+
+# Container + compose definitions
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Docs + project meta not needed at runtime
+docs
+summary.md
+TODOS.md
+CHANGELOG.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+AGENTS.md
