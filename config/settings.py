@@ -201,6 +201,32 @@ UNFOLD = {
     "SITE_HEADER": "Octonomy Admin",
     "SITE_SUBHEADER": "Trusted development/operator interface — REST is the primary API.",
     "SITE_URL": "config.adminsite.admin_site_url",
+    # Dropdown revealed by clicking the site header (top-left): quick links out to the
+    # source repo and the two API doc surfaces. All open in a new tab (rel=noopener to
+    # avoid tab-nabbing) so the admin session stays put. reverse_lazy honors a WSGI
+    # SCRIPT_NAME subpath the same way SITE_URL does; the docs URL names live in the
+    # always-on urlpatterns (not gated by ADMIN_ENABLED), so they resolve whenever the
+    # dropdown renders.
+    "SITE_DROPDOWN": [
+        {
+            "icon": "code",
+            "title": "GitHub repository",
+            "link": "https://github.com/octoverse-id/octonomy",
+            "attrs": {"target": "_blank", "rel": "noopener noreferrer"},
+        },
+        {
+            "icon": "api",
+            "title": "Swagger API docs",
+            "link": reverse_lazy("swagger-ui"),
+            "attrs": {"target": "_blank", "rel": "noopener noreferrer"},
+        },
+        {
+            "icon": "description",
+            "title": "ReDoc API docs",
+            "link": reverse_lazy("redoc"),
+            "attrs": {"target": "_blank", "rel": "noopener noreferrer"},
+        },
+    ],
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": True,
     # Group the sidebar by domain instead of Django's default per-app list. Icons are

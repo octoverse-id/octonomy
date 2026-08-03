@@ -30,6 +30,19 @@ def test_sidebar_renders_grouped_headings(client, superuser):
         assert item in body
 
 
+def test_site_dropdown_renders_repo_and_api_doc_links(client, superuser):
+    client.force_login(superuser)
+    with admin_enabled(True):
+        response = client.get("/admin/")
+    body = response.content.decode()
+    assert response.status_code == 200
+    for title in ("GitHub repository", "Swagger API docs", "ReDoc API docs"):
+        assert title in body
+    assert "https://github.com/octoverse-id/octonomy" in body
+    assert reverse("swagger-ui") in body
+    assert reverse("redoc") in body
+
+
 def test_sidebar_navigation_covers_every_registered_model():
     # show_all_applications is off, so a model missing from the navigation is unreachable
     # from the sidebar. Guard every registered model's changelist link.

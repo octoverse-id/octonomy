@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   collapsible **Access** — instead of Django's default per-app list, with per-model icons and a
   search box (`UNFOLD["SIDEBAR"]`). Also set `verbose_name_plural` on `Vocabulary` and `TagAlias`
   so the admin shows "Vocabularies"/"Tag aliases" instead of the naive "Vocabularys"/"Tag aliass".
+- Added a site-header dropdown (`UNFOLD["SITE_DROPDOWN"]`) with quick links to the GitHub
+  repository and the Swagger and ReDoc API docs, each opening in a new tab.
 - Deploy system check `octonomy.W001`: a non-blocking warning when the admin is enabled with
   `DEBUG=false`, reminding operators it is a trusted development/operator interface rather than a
   public surface.
