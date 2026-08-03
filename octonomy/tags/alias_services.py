@@ -226,6 +226,13 @@ def update_tag_alias(
     return alias
 
 
+class _AliasRepointed(Exception):
+    """Internal: the alias was re-pointed between the unlocked tag_id read and the alias
+    lock, so the tag we locked is stale. Raised (not ``continue``d) so Django rolls the
+    attempt's atomic/savepoint back and releases the ``FOR UPDATE`` row locks even when
+    reactivation runs inside an outer transaction (the admin bulk action)."""
+
+
 def reactivate_tag_alias(alias: TagAlias, audit_context: AuditContext | None = None) -> TagAlias:
     """Reactivate a soft-deleted alias atomically.
 
@@ -235,67 +242,80 @@ def reactivate_tag_alias(alias: TagAlias, audit_context: AuditContext | None = N
     reactivate/deactivate pair cannot deadlock. The alias's canonical tag can be
     re-pointed concurrently (``update_tag_alias``), so we read the current ``tag_id``
     WITHOUT a lock — only to pick which tag to lock first — lock that tag, lock the
-    alias, then confirm the alias still points there. On a re-point we roll back and
-    retry with the new ``tag_id``; we never acquire a second tag while holding the alias
-    lock, so the lock graph only ever holds tag -> alias edges (no cycle). Active-only
-    slug uniqueness is enforced by the DB (``ConflictError``). Reuses the
-    ``tag_alias.updated`` audit/outbox contract.
+    alias, then confirm the alias still points there. On a re-point we roll the attempt
+    back (which releases both locks) and retry with the new ``tag_id``; we never acquire
+    a second tag while holding the alias lock, so the lock graph only ever holds
+    tag -> alias edges (no cycle). All lookups are scoped by ``tenant_id`` (AGENTS.md:
+    tenant isolation explicit in every query). Active-only slug uniqueness is enforced by
+    the DB (``ConflictError``). Reuses the ``tag_alias.updated`` audit/outbox contract.
     """
 
     scope_context = scope_context_from_values(alias.namespace_type, alias.namespace_id)
     guard_namespace_write_enabled(scope_context)
+    tenant_id = alias.tenant_id
     for _attempt in range(3):
-        with transaction.atomic():
-            # Unlocked read of the current canonical tag id — only to decide which tag to
-            # lock first. The post-lock equality check below validates the guess.
-            tag_id = TagAlias.objects.values_list("tag_id", flat=True).get(id=alias.id)
-            locked_tag = Tag.objects.select_for_update().get(id=tag_id)
-            locked = TagAlias.objects.select_for_update().get(id=alias.id)
-            if locked.tag_id != tag_id:
-                # Re-pointed between the unlocked read and acquiring the alias lock, so
-                # the tag we hold is no longer the alias's tag. Commit this (read-only)
-                # transaction to release both locks and retry with the new tag_id —
-                # never lock the new tag while still holding the alias.
-                continue
-            if locked.is_active:
+        try:
+            with transaction.atomic():
+                # Unlocked read of the current canonical tag id — only to decide which
+                # tag to lock first. The post-lock equality check below validates it.
+                tag_id = TagAlias.objects.values_list("tag_id", flat=True).get(
+                    id=alias.id, tenant_id=tenant_id
+                )
+                locked_tag = Tag.objects.select_for_update().get(id=tag_id, tenant_id=tenant_id)
+                locked = TagAlias.objects.select_for_update().get(id=alias.id, tenant_id=tenant_id)
+                if locked.tag_id != tag_id:
+                    # Re-pointed between the unlocked read and acquiring the alias lock,
+                    # so the tag we hold is no longer the alias's. RAISE rather than
+                    # ``continue``: only a rollback releases the FOR UPDATE locks. Inside
+                    # the admin's outer transaction this block is a savepoint, and a plain
+                    # loop-continue would RELEASE the savepoint while RETAINING its locks —
+                    # the next attempt would then lock the new tag while still holding the
+                    # alias, re-creating the tag <- alias edge this ordering avoids.
+                    raise _AliasRepointed
+                if locked.is_active:
+                    alias.is_active = True
+                    return locked
+                validate_alias_tag(
+                    locked.tenant_id, locked.application_id, locked_tag, scope_context
+                )
+                locked.is_active = True
+                try:
+                    with transaction.atomic():
+                        locked.save(update_fields=["is_active", "updated_at"])
+                except IntegrityError as exc:
+                    emit_namespace_conflict(exc, "tag_alias", scope_context)
+                    raise ConflictError(
+                        "An active tag alias with this tenant, application, and slug "
+                        "already exists.",
+                        {"slug": ["Duplicate active alias slug."]},
+                    )
+                changes = {"before": {"is_active": False}, "after": {"is_active": True}}
+                create_audit_log(
+                    tenant_id=locked.tenant_id,
+                    application_id=locked.application_id,
+                    **namespace_fields(locked),
+                    action="tag_alias.updated",
+                    entity_type="tag_alias",
+                    entity_id=str(locked.id),
+                    tag_id=locked.tag_id,
+                    audit_context=audit_context,
+                    changes=changes,
+                )
+                create_outbox_event(
+                    tenant_id=locked.tenant_id,
+                    application_id=locked.application_id,
+                    **namespace_fields(locked),
+                    event_type="tag_alias.updated",
+                    aggregate_type="tag_alias",
+                    aggregate_id=str(locked.id),
+                    tag_id=locked.tag_id,
+                    audit_context=audit_context,
+                    payload=changes,
+                )
                 alias.is_active = True
                 return locked
-            validate_alias_tag(locked.tenant_id, locked.application_id, locked_tag, scope_context)
-            locked.is_active = True
-            try:
-                with transaction.atomic():
-                    locked.save(update_fields=["is_active", "updated_at"])
-            except IntegrityError as exc:
-                emit_namespace_conflict(exc, "tag_alias", scope_context)
-                raise ConflictError(
-                    "An active tag alias with this tenant, application, and slug already exists.",
-                    {"slug": ["Duplicate active alias slug."]},
-                )
-            changes = {"before": {"is_active": False}, "after": {"is_active": True}}
-            create_audit_log(
-                tenant_id=locked.tenant_id,
-                application_id=locked.application_id,
-                **namespace_fields(locked),
-                action="tag_alias.updated",
-                entity_type="tag_alias",
-                entity_id=str(locked.id),
-                tag_id=locked.tag_id,
-                audit_context=audit_context,
-                changes=changes,
-            )
-            create_outbox_event(
-                tenant_id=locked.tenant_id,
-                application_id=locked.application_id,
-                **namespace_fields(locked),
-                event_type="tag_alias.updated",
-                aggregate_type="tag_alias",
-                aggregate_id=str(locked.id),
-                tag_id=locked.tag_id,
-                audit_context=audit_context,
-                payload=changes,
-            )
-            alias.is_active = True
-            return locked
+        except _AliasRepointed:
+            continue
     # Exhausted retries: the alias's canonical tag kept changing under us. Surface a
     # clean conflict instead of looping forever or acquiring locks out of order.
     raise ConflictError(

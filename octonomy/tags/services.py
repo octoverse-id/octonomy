@@ -278,16 +278,20 @@ def reactivate_tag(tag: Tag, audit_context: AuditContext | None = None) -> Tag:
     scope_context = scope_context_from_values(tag.namespace_type, tag.namespace_id)
     guard_namespace_write_enabled(scope_context)
     with transaction.atomic():
-        locked_tag = Tag.objects.select_for_update().get(id=tag.id)
+        # Lookups are scoped by tenant_id, not the (globally unique) UUID alone, keeping
+        # tenant isolation explicit in every query (AGENTS.md).
+        locked_tag = Tag.objects.select_for_update().get(id=tag.id, tenant_id=tag.tenant_id)
         if locked_tag.is_active:
             tag.is_active = True
             return locked_tag
         # Parent compatibility is a scope check only (parents may be inactive, same as at
         # create), so the lazily-loaded parent is fine. The vocabulary's *active* state is
-        # what the race threatens, so lock that row before validating it.
+        # what the race threatens, so lock that row (same tenant) before validating it.
         vocabulary = None
         if locked_tag.vocabulary_id:
-            vocabulary = Vocabulary.objects.select_for_update().get(id=locked_tag.vocabulary_id)
+            vocabulary = Vocabulary.objects.select_for_update().get(
+                id=locked_tag.vocabulary_id, tenant_id=locked_tag.tenant_id
+            )
         validate_tag_parent(
             locked_tag.tenant_id, locked_tag.application_id, locked_tag.parent, scope_context
         )

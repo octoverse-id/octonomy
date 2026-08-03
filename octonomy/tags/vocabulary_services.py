@@ -141,7 +141,11 @@ def reactivate_vocabulary(
     scope_context = scope_context_from_values(vocabulary.namespace_type, vocabulary.namespace_id)
     guard_namespace_write_enabled(scope_context)
     with transaction.atomic():
-        locked = Vocabulary.objects.select_for_update().get(id=vocabulary.id)
+        # Scope the lock by tenant_id, not the (globally unique) UUID alone, keeping
+        # tenant isolation explicit in every query (AGENTS.md).
+        locked = Vocabulary.objects.select_for_update().get(
+            id=vocabulary.id, tenant_id=vocabulary.tenant_id
+        )
         if locked.is_active:
             vocabulary.is_active = True
             return locked
