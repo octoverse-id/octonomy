@@ -2,12 +2,12 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest `1.0.x` line.
+Security fixes are applied to the latest `3.0.x` line.
 
 | Version | Supported |
 | ------- | --------- |
-| 1.0.x   | ✅        |
-| < 1.0   | ❌        |
+| 3.0.x   | ✅        |
+| < 3.0   | ❌        |
 
 ## Reporting a vulnerability
 

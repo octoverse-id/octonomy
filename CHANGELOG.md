@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-03
+
+This release ships the optional, superuser-only [django-unfold](https://unfoldadmin.com/) admin
+console and raises the runtime floor to **Python 3.12+** and the **Django 5.2 LTS** line
+(`>=5.2.8,<5.3`). The runtime/deployment requirement is the breaking trigger for the package
+**major**: Python 3.10/3.11 and Django 5.0/5.1 deployments cannot upgrade in place. The **REST
+contract is unchanged** — `/api/v2` stays primary, `/api/v1` stays supported, and there is **no**
+`/api/v3`; only the OpenAPI `info.version` advances to `3.0.0`.
+
+There is **no migration to Octonomy's taxonomy data**. Enabling the admin creates Django's built-in
+`auth`/`admin`/`sessions`/`contenttypes` tables via the standard `migrate`, and the admin is **off by
+default in production** — it mounts only when `OCTONOMY_ADMIN_ENABLED` is true (defaulting to
+`DJANGO_DEBUG`) and admits only active superusers. Serving the admin with `DEBUG=false` needs
+`make collectstatic`.
+
+**Rollback:** redeploy the prior 2.x application code/runtime if necessary (the built-in
+admin/session tables may remain unused). As the immediate admin-surface rollback, set
+`OCTONOMY_ADMIN_ENABLED=false`. Do **not** remove or mutate tenant taxonomy data as part of rollback.
+
 ### Added
 - Optional, superuser-only Django admin console themed with
   [django-unfold](https://unfoldadmin.com/), mounted at `/admin/`. It is a thin operator
@@ -202,7 +221,8 @@ Initial public release.
 - OpenAPI schema and Swagger/ReDoc docs via drf-spectacular.
 - Apache License 2.0.
 
-[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/octoverse-id/octonomy/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/octoverse-id/octonomy/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/octoverse-id/octonomy/compare/v1.0.0-rc.1...v1.0.0
 [1.0.0-rc.1]: https://github.com/octoverse-id/octonomy/compare/v0.1.0...v1.0.0-rc.1
