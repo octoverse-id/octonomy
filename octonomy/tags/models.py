@@ -41,6 +41,9 @@ class Vocabulary(NamespaceScopedModel):
 
     class Meta:
         db_table = "vocabularies"
+        # Default pluralization would render "Vocabularys" in the admin.
+        verbose_name = "vocabulary"
+        verbose_name_plural = "vocabularies"
         ordering = ["name", "slug", "id"]
         constraints = [
             namespace_scope_constraint(),
@@ -261,6 +264,9 @@ class TagAlias(NamespaceScopedModel):
 
     class Meta:
         db_table = "tag_aliases"
+        # Default pluralization would render "Tag aliass" in the admin.
+        verbose_name = "tag alias"
+        verbose_name_plural = "tag aliases"
         ordering = ["name", "slug", "id"]
         constraints = [
             namespace_scope_constraint(),
