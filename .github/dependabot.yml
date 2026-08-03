@@ -28,3 +28,12 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
+
+  # Keep the Dockerfile base image (pinned by digest) patched with security updates.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "docker"

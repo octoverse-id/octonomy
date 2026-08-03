@@ -17,6 +17,10 @@ services:
 
   app:
     build: .
+    # The image's default CMD is Gunicorn (production). Local development overrides it
+    # with Django's autoreloading dev server, which pairs with the source bind mount
+    # below and DJANGO_DEBUG=true for a live-edit loop.
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
     environment:
       DJANGO_SECRET_KEY: local-dev-secret
       DJANGO_DEBUG: "true"
