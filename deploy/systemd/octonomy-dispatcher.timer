@@ -1,0 +1,14 @@
+# Runs the Octonomy outbox dispatcher every minute.
+# Install to /etc/systemd/system/octonomy-dispatcher.timer, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now octonomy-dispatcher.timer
+[Unit]
+Description=Run the Octonomy outbox dispatcher every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Unit=octonomy-dispatcher.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,63 @@
+# Outbox dispatcher. WITHOUT this, events accumulate in the outbox and are never
+# delivered. Runs every minute; concurrencyPolicy Forbid prevents overlapping runs.
+# Uses the same image + config/secret as the API. --retry-failed also re-attempts
+# previously failed (not yet dead-lettered) events. See docs/operations.md
+# "Outbox Dispatcher" for tuning and the webhook transport.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: octonomy-dispatcher
+  namespace: octonomy
+  labels:
+    app.kubernetes.io/name: octonomy
+    app.kubernetes.io/component: dispatcher
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: octonomy
+            app.kubernetes.io/component: dispatcher
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: dispatcher
+              image: your-registry.example.com/octonomy:3.0.0
+              # `args` (not `command`) so the image ENTRYPOINT still runs its
+              # `manage.py check` before dispatching.
+              args:
+                - python
+                - manage.py
+                - dispatch_outbox_events
+                - --limit
+                - "100"
+                - --retry-failed
+              envFrom:
+                - configMapRef:
+                    name: octonomy-config
+                - secretRef:
+                    name: octonomy-secrets
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}

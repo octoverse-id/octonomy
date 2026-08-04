@@ -1,0 +1,26 @@
+# One-shot database migration for the VPS/systemd install. Run it on first install and
+# before starting a newly-deployed version:
+#   sudo systemctl start octonomy-migrate
+#   systemctl status octonomy-migrate   # confirm it exited 0 (check the journal on failure)
+# Install to /etc/systemd/system/octonomy-migrate.service. Not enabled (no timer/target);
+# you trigger it manually on deploy. Mirrors the k8s migrate Job and the Compose migrate step.
+[Unit]
+Description=Octonomy database migration (one-shot)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=octonomy
+Group=octonomy
+WorkingDirectory=/opt/octonomy
+EnvironmentFile=/etc/octonomy/octonomy.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/octonomy/.venv/bin/python manage.py migrate --noinput
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true

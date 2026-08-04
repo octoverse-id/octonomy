@@ -1,0 +1,93 @@
+# Production-oriented Docker Compose for a single-host Octonomy deployment.
+#
+# This is NOT the dev compose (the repo-root docker-compose.yml bind-mounts source and
+# runs Django's autoreload server). This file runs the production image with Gunicorn,
+# a one-shot migration step, and the outbox dispatcher.
+#
+# Setup:
+#   1. Build the image (from the repository root — the Dockerfile uses the repo as context):
+#        docker build -t octonomy:local .
+#   2. Create this directory's env file from the template, lock it down, and edit it:
+#        cp deploy/.env.production.example deploy/docker/.env
+#        chmod 600 deploy/docker/.env
+#        $EDITOR deploy/docker/.env
+#      Set: DJANGO_SECRET_KEY, SERVICE_TOKEN_PEPPER, ALLOWED_HOSTS, POSTGRES_PASSWORD,
+#      and DATABASE_URL pointing at the "db" service, e.g.
+#        DATABASE_URL=postgres://octonomy:<POSTGRES_PASSWORD>@db:5432/octonomy
+#   3. Start it FROM THIS DIRECTORY so compose auto-loads ./.env for BOTH ${...}
+#      interpolation (POSTGRES_PASSWORD) and container env (running with
+#      `-f deploy/docker/compose.yaml` from elsewhere may not pick up ./.env for interpolation):
+#        cd deploy/docker && docker compose up -d
+#
+# The "migrate" service runs once and exits; "app"/"dispatcher" wait for it. Re-running
+# `up` re-runs migrate (a no-op when already applied).
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: octonomy
+      POSTGRES_USER: octonomy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/docker/.env}
+    volumes:
+      - octonomy_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U octonomy -d octonomy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot database migration. Runs to completion, then exits 0. The entrypoint runs
+  # `manage.py check` first (fail-closed on an invalid flag combination), then migrate.
+  migrate:
+    image: octonomy:local
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+    env_file: [.env]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # The API server (Gunicorn). Serves /api/* and the /health/* probes on 8000.
+  app:
+    image: octonomy:local
+    restart: unless-stopped
+    env_file: [.env]
+    ports:
+      # Loopback only: front it with a TLS reverse proxy (see docs/deployment.md). To
+      # reach the API directly on a trusted private network, change to "8000:8000".
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Uses the interpreter already in the image (no curl needed). Non-200 -> unhealthy.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=3).status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # The outbox dispatcher. Without this, events pile up in the outbox and are never
+  # delivered. Simple loop: dispatch every 60s. --retry-failed also re-attempts previously
+  # failed (not yet dead-lettered) events. `set -e` means an UNEXPECTED command failure
+  # (crash, misconfig, DB unreachable) exits the loop so `restart: unless-stopped` retries
+  # and the fault shows in the container's restart count. Per-event delivery failures are
+  # handled internally (the command still exits 0) and surface in the JSON logs + the
+  # outbox_dispatch_summary metric — monitor those, per docs/operations.md.
+  dispatcher:
+    image: octonomy:local
+    restart: unless-stopped
+    command: ["sh", "-c", "set -e; while true; do python manage.py dispatch_outbox_events --limit 100 --retry-failed; sleep 60; done"]
+    env_file: [.env]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  octonomy_pgdata:

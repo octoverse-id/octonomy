@@ -1,0 +1,56 @@
+# One-shot database migration. Run this to completion BEFORE rolling out a new app
+# version (and on the very first install). The container entrypoint runs `manage.py
+# check` first (fail-closed), then this command runs `migrate`.
+#
+# A Job's pod template is immutable, so to re-run for a later release either delete it
+# first (kubectl -n octonomy delete job octonomy-migrate --ignore-not-found) and re-apply,
+# or template the name per release. With Helm, model this as a pre-upgrade hook instead.
+#
+#   kubectl -n octonomy delete job octonomy-migrate --ignore-not-found
+#   kubectl -n octonomy apply -f migrate-job.yaml
+#   kubectl -n octonomy wait --for=condition=complete job/octonomy-migrate --timeout=300s
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: octonomy-migrate
+  namespace: octonomy
+spec:
+  backoffLimit: 3
+  # Clean the Job up automatically 5 minutes after it finishes (requires the
+  # TTLAfterFinished feature, GA since k8s 1.23).
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: octonomy
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: your-registry.example.com/octonomy:3.0.0
+          # `args` (not `command`) so the image ENTRYPOINT still runs — it executes
+          # `manage.py check` (fail-closed) before this migrate command.
+          args: ["python", "manage.py", "migrate", "--noinput"]
+          envFrom:
+            - configMapRef:
+                name: octonomy-config
+            - secretRef:
+                name: octonomy-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
