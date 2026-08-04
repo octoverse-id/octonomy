@@ -150,6 +150,42 @@ def test_csrf_trusted_origins_parsed_and_stripped():
     ]
 
 
+# --- Required secrets fail closed when empty, not just when left at the default --------
+
+
+def _import_settings(**overrides: str) -> subprocess.CompletedProcess:
+    """Import config.settings in a fresh process; capture whether the boot guards fired."""
+    env = os.environ.copy()
+    for key in _OWNED_KEYS:
+        env.pop(key, None)
+    env.update(_PROD_BASE)
+    env.update(overrides)
+    script = (
+        "import dotenv; dotenv.load_dotenv = lambda *a, **k: False;"
+        # Accessing any setting forces config.settings to import, running the module-level
+        # boot guards.
+        "from django.conf import settings; settings.DEBUG"
+    )
+    return subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize(
+    "var, message",
+    [
+        ("DJANGO_SECRET_KEY", "DJANGO_SECRET_KEY must be set to a non-default value"),
+        ("SERVICE_TOKEN_PEPPER", "SERVICE_TOKEN_PEPPER must be set to a non-default value"),
+    ],
+)
+def test_empty_required_secret_refuses_to_boot(var, message):
+    # An EMPTY value must fail closed exactly like the local-dev default, so a half-filled
+    # production env cannot boot on a blank signing key or unpeppered token hashes. The
+    # container entrypoint runs plain `manage.py check`, which imports settings, so this
+    # import-time guard is what actually protects the deploy.
+    result = _import_settings(DJANGO_DEBUG="false", **{var: ""})
+    assert result.returncode != 0, f"empty {var} should refuse to boot, but import succeeded"
+    assert message in result.stderr
+
+
 # --- Password validators harden the admin's only password surface (round-3 finding) --
 
 

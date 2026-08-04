@@ -46,7 +46,7 @@ ALLOWED_HOSTS = [
     host.strip() for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 ]
 
-if not DEBUG and SECRET_KEY == "local-dev-secret":
+if not DEBUG and (not SECRET_KEY or SECRET_KEY == "local-dev-secret"):
     raise ImproperlyConfigured(
         "DJANGO_SECRET_KEY must be set to a non-default value when DEBUG is False."
     )
