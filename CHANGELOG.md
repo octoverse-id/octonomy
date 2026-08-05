@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-08-05
+
+A **patch** release: the REST contract is untouched (no path or schema diff on either surface), and
+the OpenAPI `info.version` is the only version string that advances. `/api/v2` stays primary and
+`/api/v1` stays supported.
+
+It ships the self-hosting deployment guide and, with it, the boot guard the guide's templates depend
+on. `deploy/.env.production.example` ships both required secrets **empty** so a half-edited file
+fails closed — but on 3.0.0 only `SERVICE_TOKEN_PEPPER` actually rejected an empty value. An operator
+who copied the template, hit the pepper error, set the pepper, and started the service would have
+been running on a blank signing key. Both guards now fail closed, so the template's promise holds.
+
+**Upgrade action:** if a deployment is currently running with an empty `DJANGO_SECRET_KEY` and
+`DJANGO_DEBUG=false`, set a real value before upgrading or the service will not start. Generate one
+with `python -c "import secrets; print(secrets.token_urlsafe(64))"`. No database migration is
+required.
+
+**Rollback:** redeploy 3.0.0. No schema or data change to reverse.
+
 ### Added
 - Self-hosting [deployment guide](docs/deployment.md) covering Docker Compose, Kubernetes, and a
   VPS/systemd box, with ready-to-edit example configs under [`deploy/`](deploy) — env template,
@@ -238,7 +257,8 @@ Initial public release.
 - OpenAPI schema and Swagger/ReDoc docs via drf-spectacular.
 - Apache License 2.0.
 
-[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/octoverse-id/octonomy/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/octoverse-id/octonomy/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/octoverse-id/octonomy/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/octoverse-id/octonomy/compare/v1.0.0-rc.1...v1.0.0

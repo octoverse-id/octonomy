@@ -14,7 +14,7 @@ minor, and breaking changes ship a new parallel URL-versioned surface plus a maj
 `/api/v2` did, keeping `/api/v1` supported. See [`versioning.md`](versioning.md) for the full
 policy and what counts as breaking.
 
-- Package metadata uses PEP 440 (`3.0.0`); OpenAPI and user-facing docs use SemVer (`3.0.0`).
+- Package metadata uses PEP 440 (`3.0.1`); OpenAPI and user-facing docs use SemVer (`3.0.1`).
 - Set `OCTONOMY_API_VERSION` when a deployment should expose a different schema version string.
 
 ## Release Checklist
@@ -59,9 +59,21 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
 2. Bump the version everywhere it is stamped:
    - `pyproject.toml` `version`
    - `config/settings.py` `API_VERSION` default
-   - `.env.example` and the production checklist below (`OCTONOMY_API_VERSION`)
-   - regenerate the schema with `make openapi` (updates `docs/openapi.yaml` `info.version`)
-   - refresh the lock with `uv lock`
+   - `.env.example` (`OCTONOMY_API_VERSION`)
+   - regenerate both schemas with `make openapi` (updates `info.version` in `docs/openapi.yaml`
+     **and** `docs/openapi-v2.yaml` — `make version-check` only inspects the v1 file, but the
+     OpenAPI drift gate in CI regenerates and diffs both)
+   - refresh the lock with `uv lock` (the project's own `version` in `uv.lock`)
+   - the example image tags, which have no default to fall back on:
+     `deploy/kubernetes/{deployment,migrate-job,dispatcher-cronjob}.yaml` and the `docker build` /
+     `docker push` commands in `docs/deployment.md`
+   - `SECURITY.md` — only when the supported line changes (a patch inside the same `x.y` line
+     does not move it)
+
+   Deliberately **not** stamped: `deploy/.env.production.example` and
+   `deploy/kubernetes/configmap.yaml` leave `OCTONOMY_API_VERSION` unset so the application default
+   tracks the release on its own. Nothing validates `deploy/`, so a value pinned there would go
+   stale silently.
 3. Update `CHANGELOG.md`: move the `[Unreleased]` entries under `## [<version>] - <date>`, add the
    `[<version>]` compare link, and reset `[Unreleased]` to `compare/v<version>...HEAD`.
 4. Run the gates, then open the PR with `Closes #<issue>`:
@@ -118,7 +130,8 @@ Set these environment variables explicitly outside local development:
 - `DATABASE_URL=postgres://...`
 - `ALLOWED_HOSTS=<comma-separated-hostnames>`
 - `SERVICE_TOKEN_PEPPER=<non-default-secret-pepper>`
-- `OCTONOMY_API_VERSION=3.0.0`
+- `OCTONOMY_API_VERSION` — **leave unset.** It defaults to the version the build was cut from, so it
+  tracks upgrades on its own. Set it only to deliberately advertise a different schema version.
 - `LOG_LEVEL=INFO`
 - `MAX_BULK_TAGS=200` or a deployment-specific cap
 
