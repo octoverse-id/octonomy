@@ -13,10 +13,11 @@ narrative; [operations.md](operations.md) is the runbook for what happens *after
 
 ---
 
-## The mental model: three processes, one image
+## The mental model: three processes, one build
 
 However you deploy, Octonomy is one Django application backed by PostgreSQL, and it needs **three
-things running** from the same code/image:
+things running** off the same build — a container image for Docker Compose and Kubernetes, or a
+source checkout and virtualenv on the VPS path:
 
 1. **The API server** — Gunicorn serving `/api/*` and the health probes on port `8000`. Scale it
    horizontally; it is stateless (all state is in PostgreSQL).
@@ -24,8 +25,8 @@ things running** from the same code/image:
    before each upgrade. It is deliberately **not** run at container start, so restarts and extra
    replicas never touch the schema.
 3. **The outbox dispatcher** — a scheduled/looping `python manage.py dispatch_outbox_events`.
-   **If you skip this, events are written to the outbox but never delivered.** It uses the same
-   image and environment as the API.
+   **If you skip this, events are written to the outbox but never delivered.** It runs from the same
+   build and environment as the API.
 
 A fourth concern is optional: the **admin console** ships off in production. If you turn it on, you
 also serve its static assets (see [operations.md, "Admin console"](operations.md#admin-console)).

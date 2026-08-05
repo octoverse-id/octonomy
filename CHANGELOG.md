@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Self-hosting [deployment guide](docs/deployment.md) covering Docker Compose, Kubernetes, and a
+  VPS/systemd box, with ready-to-edit example configs under [`deploy/`](deploy) — env template,
+  Compose stack, Kubernetes manifests (namespace, ConfigMap, Secret template, migrate `Job`,
+  `Deployment`, `Service`, `Ingress`, dispatcher `CronJob`), and systemd units plus an nginx reverse
+  proxy. Every topology runs the same three processes — the Gunicorn API, a one-shot `migrate`, and
+  the outbox dispatcher — off one build: a container image for Docker/Kubernetes, or a source
+  checkout and virtualenv on the VPS path.
+
+### Changed
+- **An empty `DJANGO_SECRET_KEY` now refuses to boot when `DJANGO_DEBUG=false`**, matching the
+  existing `SERVICE_TOKEN_PEPPER` guard. Previously only the literal `local-dev-secret` default was
+  rejected, so a blank signing key could start the service — the container entrypoint runs plain
+  `manage.py check`, which imports settings and so enforces this. **Operator action:** a deployment
+  that was running with an empty `DJANGO_SECRET_KEY` will now fail to start; set a real value
+  (`python -c "import secrets; print(secrets.token_urlsafe(64))"`) before upgrading.
+
 ## [3.0.0] - 2026-08-03
 
 This release ships the optional, superuser-only [django-unfold](https://unfoldadmin.com/) admin

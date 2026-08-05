@@ -71,8 +71,8 @@ GET /api/docs/v2/redoc/   # v2
 Octonomy is self-hosted — run it on your own infrastructure. The
 [deployment guide](docs/deployment.md) covers three paths — **Docker Compose**, **Kubernetes**, and a
 **VPS / systemd** box — with copy-pasteable example configs under [`deploy/`](deploy). Every path runs
-the same three processes from one image: the Gunicorn API server, a one-shot `migrate`, and the outbox
-dispatcher.
+the same three processes off one build — the Gunicorn API server, a one-shot `migrate`, and the outbox
+dispatcher — from a container image on Docker/Kubernetes, or a source checkout on the VPS path.
 
 ## Admin Console (optional)
 
