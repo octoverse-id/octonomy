@@ -7,6 +7,21 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
+    # Update uv.lock only; never rewrite the constraints in pyproject.toml.
+    #
+    # pip's default strategy ("auto") widens ranges for an application, which
+    # produced PRs #92 and #94: `django <5.3 -> <6.1` and `gunicorn <24.0 -> <27.0`.
+    # Those upper bounds are deliberate, not incidental — <5.3 is what holds the
+    # project on the Django 5.2 LTS line (README, the 3.0.0 CHANGELOG entry, and
+    # docs/versioning.md, which makes a minimum-Django change a major bump). A
+    # range widening also passes CI misleadingly: it leaves uv.lock untouched, so
+    # `uv sync` installs the already-locked versions and the suite never exercises
+    # the newly-permitted ones. The break would surface later, on whatever
+    # unrelated PR next runs `uv lock --upgrade`.
+    #
+    # lockfile-only keeps security and patch updates flowing while leaving the
+    # supported-version contract a human decision, made per docs/versioning.md.
+    versioning-strategy: lockfile-only
     # Bundle minor + patch bumps into a single PR. Major bumps still arrive as
     # their own PRs so they get individual review.
     groups:
