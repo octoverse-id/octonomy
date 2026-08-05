@@ -1,0 +1,32 @@
+# Public entry point with TLS. This example targets the ingress-nginx controller and
+# cert-manager; adjust annotations/ingressClassName for your controller. The ingress
+# terminates TLS and forwards X-Forwarded-Proto, so Django sees the original scheme.
+#
+# If you enable the optional admin console (OCTONOMY_ADMIN_ENABLED=true), also set
+# OCTONOMY_TRUST_FORWARDED_PROTO=true so its CSRF/secure-cookie logic honors HTTPS.
+# See docs/operations.md "Admin console".
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: octonomy
+  namespace: octonomy
+  annotations:
+    # cert-manager: issue/renew the TLS cert automatically (requires a ClusterIssuer).
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.example.com
+      secretName: octonomy-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: octonomy
+                port:
+                  number: 80

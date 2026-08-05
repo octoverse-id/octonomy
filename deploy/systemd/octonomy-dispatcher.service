@@ -1,0 +1,24 @@
+# One run of the Octonomy outbox dispatcher. Driven by octonomy-dispatcher.timer —
+# do NOT `enable` this unit directly; enable the timer instead. Without the dispatcher
+# running on a schedule, outbox events are never delivered.
+# Install to /etc/systemd/system/octonomy-dispatcher.service.
+[Unit]
+Description=Octonomy outbox dispatcher (one run)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=octonomy
+Group=octonomy
+WorkingDirectory=/opt/octonomy
+EnvironmentFile=/etc/octonomy/octonomy.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/octonomy/.venv/bin/python manage.py dispatch_outbox_events --limit 100 --retry-failed
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true

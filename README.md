@@ -66,6 +66,14 @@ GET /api/docs/v1/redoc/   # v1
 GET /api/docs/v2/redoc/   # v2
 ```
 
+## Deployment
+
+Octonomy is self-hosted — run it on your own infrastructure. The
+[deployment guide](docs/deployment.md) covers three paths — **Docker Compose**, **Kubernetes**, and a
+**VPS / systemd** box — with copy-pasteable example configs under [`deploy/`](deploy). Every path runs
+the same three processes off one build — the Gunicorn API server, a one-shot `migrate`, and the outbox
+dispatcher — from a container image on Docker/Kubernetes, or a source checkout on the VPS path.
+
 ## Admin Console (optional)
 
 An optional, superuser-only admin console (themed with django-unfold) is available at `/admin/` as a
@@ -230,7 +238,8 @@ curl "http://localhost:8000/api/v2/audit-logs?action=assignment.created" \
 - [Architecture](docs/architecture.md) — system design, layers, and extension points.
 - [API reference](docs/api.md) — endpoints, scopes, errors, and pagination.
 - [Development](docs/development.md) — local setup, environment variables, and service tokens.
-- [Operations](docs/operations.md) — deployment, health, logging, and outbox runbook.
+- [Deployment](docs/deployment.md) — self-hosting on Docker, Kubernetes, or a VPS (ready-to-use configs in `deploy/`).
+- [Operations](docs/operations.md) — health, logging, namespace rollout, and the outbox runbook.
 - [Versioning](docs/versioning.md) — SemVer policy, bump rules, and how `/api/v2` (primary) and `/api/v1` (supported) coexist.
 - [Release process](docs/release.md) — pre-release gates and the "Cutting a Release" runbook.
 - [Changelog](CHANGELOG.md) — notable changes by release.

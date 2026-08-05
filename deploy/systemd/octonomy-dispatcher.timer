@@ -1,0 +1,20 @@
+# Runs the Octonomy outbox dispatcher shortly after boot, then ~60s after each run finishes.
+# Install to /etc/systemd/system/octonomy-dispatcher.timer, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now octonomy-dispatcher.timer
+[Unit]
+Description=Run the Octonomy outbox dispatcher (60s after each run finishes)
+
+[Timer]
+# Bootstrap the first run (OnUnitInactiveSec has no reference point until a run completes).
+OnBootSec=1min
+# Schedule the next run 60s after the previous one FINISHES (deactivates), not 60s after it
+# STARTED. OnUnitActiveSec would fail to rearm if a run ever ran longer than the interval
+# (e.g. many slow webhook deliveries) — the timer elapses while the oneshot is still active,
+# systemd won't restart an already-active unit, and dispatch stalls while the outbox backs
+# up. OnUnitInactiveSec both rearms reliably and guarantees runs never overlap.
+OnUnitInactiveSec=1min
+AccuracySec=15s
+Unit=octonomy-dispatcher.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,102 @@
+# The Octonomy API server (Gunicorn). Stateless — all state lives in PostgreSQL — so
+# it scales horizontally. Probes hit the unauthenticated /health/* endpoints:
+#   readiness -> /health/ready (checks DB connectivity; returns 503 if the DB is down)
+#   liveness  -> /health/live  (process is serving HTTP)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: octonomy
+  namespace: octonomy
+  labels:
+    app.kubernetes.io/name: octonomy
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: octonomy
+      app.kubernetes.io/component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: octonomy
+        app.kubernetes.io/component: api
+    spec:
+      # Octonomy never calls the Kubernetes API, so don't hand it a cluster credential:
+      # a mounted ServiceAccount token turns any app-level RCE into cluster access.
+      automountServiceAccountToken: false
+      # Give Gunicorn time to drain in-flight requests on shutdown. gunicorn.conf.py
+      # sets graceful_timeout=25s, comfortably inside this window.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: octonomy
+          image: your-registry.example.com/octonomy:3.0.0
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: octonomy-config
+            - secretRef:
+                name: octonomy-secrets
+          # Probes must send a Host that ALLOWED_HOSTS accepts, or Django 400s them
+          # (DEBUG=false rejects the pod IP the kubelet would send by default). "127.0.0.1"
+          # is in the ConfigMap's ALLOWED_HOSTS; the kubelet still connects to the pod.
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: "127.0.0.1"
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: "127.0.0.1"
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: "127.0.0.1"
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

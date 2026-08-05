@@ -1,0 +1,37 @@
+# Non-secret configuration, shared by the app, the migrate Job, and the dispatcher
+# CronJob via envFrom. Secrets (DJANGO_SECRET_KEY, SERVICE_TOKEN_PEPPER, DATABASE_URL)
+# live in the Secret, not here. Edit ALLOWED_HOSTS and any tuning values.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: octonomy-config
+  namespace: octonomy
+data:
+  DJANGO_DEBUG: "false"
+  # List your real host(s). 127.0.0.1 is kept so the liveness/readiness probes (which
+  # send "Host: 127.0.0.1", see deployment.yaml) are accepted — with DEBUG=false Django
+  # 400s any Host not listed here. Never "*".
+  ALLOWED_HOSTS: "api.example.com,127.0.0.1"
+  # OCTONOMY_API_VERSION is deliberately NOT set: the image defaults it to the version it
+  # was built from, so it tracks upgrades on its own. Pinning it here would freeze the
+  # advertised version at whatever was copied, and nothing validates this file against the
+  # release. Set it only to advertise something other than the built version.
+  LOG_LEVEL: "INFO"
+  MAX_BULK_TAGS: "200"
+  WEB_CONCURRENCY: "3"
+
+  # Namespace rollout — safe defaults (namespaced writes off). A Django system check
+  # refuses to boot on an invalid combination. See docs/operations.md before changing.
+  OCTONOMY_NAMESPACE_SCHEMA_ENABLED: "true"
+  OCTONOMY_NAMESPACE_READ_ENABLED: "true"
+  OCTONOMY_NAMESPACE_AUTH_ENFORCED: "true"
+  OCTONOMY_NAMESPACE_V2_API_ENABLED: "true"
+  OCTONOMY_NAMESPACE_WRITE_ENABLED: "false"
+
+  # Outbox dispatcher. "logging" just logs; switch to "webhook" and set the webhook
+  # secret in the Secret. The dispatcher runs as a CronJob (see dispatcher-cronjob.yaml).
+  OCTONOMY_OUTBOX_TRANSPORT: "logging"
+  OCTONOMY_OUTBOX_MAX_ATTEMPTS: "5"
+  OCTONOMY_OUTBOX_RETRY_BASE_SECONDS: "30"
+  OCTONOMY_OUTBOX_RETRY_MAX_SECONDS: "3600"
+  OCTONOMY_OUTBOX_CLAIM_TIMEOUT_SECONDS: "60"

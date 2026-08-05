@@ -1,0 +1,41 @@
+# Octonomy API server (Gunicorn) as a systemd service.
+# Install to /etc/systemd/system/octonomy.service, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now octonomy
+#
+# Assumes: source at /opt/octonomy, a venv at /opt/octonomy/.venv (uv sync), a system
+# user `octonomy`, and an env file at /etc/octonomy/octonomy.env. See docs/deployment.md.
+[Unit]
+Description=Octonomy API (Gunicorn)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=octonomy
+Group=octonomy
+WorkingDirectory=/opt/octonomy
+EnvironmentFile=/etc/octonomy/octonomy.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+# Bind Gunicorn to loopback only; nginx reverse-proxies to it. gunicorn.conf.py defaults
+# to 0.0.0.0, which would expose port 8000 on the VPS's public interface.
+Environment=GUNICORN_BIND=127.0.0.1:8000
+
+# Fail-closed: validate settings + the namespace flag contract before serving. Mirrors
+# the container entrypoint. If the config is invalid the service fails to start rather
+# than booting into an unsafe state. Run `migrate` as a deploy step (see the guide), not
+# here, so restarts don't touch the schema.
+ExecStartPre=/opt/octonomy/.venv/bin/python manage.py check
+ExecStart=/opt/octonomy/.venv/bin/gunicorn config.wsgi:application --config gunicorn.conf.py
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

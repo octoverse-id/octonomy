@@ -83,3 +83,25 @@ asymmetry).
   engineered-enough restraint — don't ship speculative event types before a consumer requires them.
 - **Depends on / blocked by:** #85 merged. **Trigger:** an outbox consumer needs to distinguish
   reactivation events.
+
+## Deployment (PR #95)
+
+### DEP-1: Publish an official container image — DEFERRED (from PR #95)
+`docs/deployment.md` has every *container* operator build the image themselves
+(`docker build -t octonomy:local .` for Compose; for Kubernetes, tag and push to a registry the
+cluster can pull from). There is no published image, so nobody can `docker pull` a release. The
+VPS/systemd path is unaffected — it installs from a source checkout into a virtualenv.
+
+- **What:** A CI job that builds and pushes a versioned image (e.g. `ghcr.io/octoverse-id/octonomy`)
+  on release tags, plus multi-arch (amd64/arm64) and provenance/signing if the registry supports it.
+  Then update the guide to `pull` by default and keep "build it yourself" as the alternative.
+- **Why:** Building the image is the biggest step in both container paths, and Kubernetes additionally
+  requires a cluster-pullable registry — an extra dependency for anyone without one. It also means no
+  two deployments provably run the same bytes for a given release.
+- **Cons:** Adds a publish surface to own — registry credentials, tag hygiene, and a supply-chain
+  story (who can push, how images are signed). Publishing is a one-way door reputationally: once
+  people pull `:3.1.0`, that tag has to keep meaning the same thing.
+- **Context:** Raised as explicit out-of-scope follow-up in the PR #95 description; the guide already
+  notes the absence. Deliberately not bundled with the docs change.
+- **Trigger:** the build-it-yourself step becomes real adoption friction, or a release needs to be
+  independently verifiable by digest.

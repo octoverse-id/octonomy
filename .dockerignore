@@ -23,6 +23,9 @@ id_rsa.*
 # Local build artifacts (collectstatic runs inside the image)
 staticfiles
 
+# Deployment examples (manifests/units/env template) — not needed inside the image
+deploy
+
 # Tests + dev/agent tooling (not needed at runtime)
 tests
 code-review
