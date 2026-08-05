@@ -26,6 +26,8 @@ spec:
         app.kubernetes.io/component: migrate
     spec:
       restartPolicy: Never
+      # No Kubernetes API access needed; don't mount a cluster credential.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001

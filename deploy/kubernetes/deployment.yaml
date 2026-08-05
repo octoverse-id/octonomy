@@ -27,6 +27,9 @@ spec:
         app.kubernetes.io/name: octonomy
         app.kubernetes.io/component: api
     spec:
+      # Octonomy never calls the Kubernetes API, so don't hand it a cluster credential:
+      # a mounted ServiceAccount token turns any app-level RCE into cluster access.
+      automountServiceAccountToken: false
       # Give Gunicorn time to drain in-flight requests on shutdown. gunicorn.conf.py
       # sets graceful_timeout=25s, comfortably inside this window.
       terminationGracePeriodSeconds: 30
