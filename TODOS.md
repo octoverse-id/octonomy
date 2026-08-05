@@ -1,32 +1,18 @@
 # TODOS
 
-Deferred work captured during reviews. Each item has enough context to pick up cold.
+Active deferred work. Each item has enough context to pick up cold, and a **trigger** saying when it
+stops being deferred.
 
-## Namespace layer (issue #36) — status
+Finished and won't-do items are condensed into [Resolved](#resolved) at the bottom — one line each,
+so the list above stays actionable while the "already considered, don't re-propose" signal survives.
+Full rationale for anything resolved lives in its linked issue/PR and in git history.
+
+## Namespace layer (issue #36)
 
 The namespace feature (S1–S7) is **built, tested, documented, and merged**; epic #36 is closed as
 delivered. Octonomy is self-hosted, so production rollout, burn-in, and per-deployment verification
 are the operator's responsibility, guided by `docs/operations.md` ("Namespace Rollout & Operations").
-The follow-ups below are resolved except **NS-5**, which is a live scale tripwire.
-
-### NS-1: Scope-move immutability — DONE (#61, PR #66)
-Shipped the `scope_immutable` guard: a PATCH that changes `application_id`/`namespace_type`/
-`namespace_id` is rejected (409). Re-create the row in the target scope instead. Atomic re-parenting
-tooling (option b) remains unbuilt; revisit only if a real "move a merchant's data" use case appears.
-
-### NS-2: Alias resolution precedence ladder — DONE (#62, PR #68)
-Documented the full ladder (`(app,exact ns)` > `(app,global ns)` > `(shared,global)`; canonical beats
-alias regardless of scope) and added the `ambiguous_resolution` guard for same-rung ties. Also closed
-a read-auth body-`application_id` bypass in the same PR.
-
-### NS-3: Rollback ordering — DONE (#59, PR #65)
-`docs/operations.md` spells out the incident-graduated rollback ladder, why the order is forced by the
-boot dependency check, and the "never downgrade to v1 visibility" prohibition.
-
-### NS-4: `include_global` query plan — RESOLVED as operator guidance (#60 closed)
-There is nothing to build in the app: it is a per-deployment `EXPLAIN` check. `docs/operations.md`
-("Read-path query plan (`include_global=true`)") tells operators to verify the plan on prod-sized data
-and add a per-branch index if it degrades. Not a maintainer task for a self-hosted product.
+NS-5 below is the only follow-up still live — a dormant scale tripwire.
 
 ### NS-5: Grant matching — DB-filter grant lookup (issue #63 CLOSED; residual tracked here)
 Issue #63 is closed: its tenant-level half shipped (PR #70), and the remaining per-merchant work is a
@@ -48,20 +34,6 @@ issue from this entry.**
   filter (`Q(namespace_wildcard=True) | Q(global) | Q(exact scope_context)` — proven a safe superset
   because a request only evaluates grants against its own scope + `GLOBAL_SCOPE`, per
   `requested_scope_contexts`). **Trigger:** per-merchant grant issuance enabled at scale.
-
-### NS-6: Constraint-swap lock window — RESOLVED as operator guidance (#58 closed)
-Tooling shipped (`python manage.py estimate_namespace_swap_lock`, PR #64) and documented in
-`docs/operations.md` ("Constraint-swap lock window (NS-6)"). Measuring the window against real row
-counts is a per-deployment operator step run on a restored clone — not a maintainer task, and not
-possible without production-scale data.
-
-### NS-7: Post-burn-in flag + index cleanup — REFRAMED (not tracked as a task)
-The five `OCTONOMY_NAMESPACE_*` flags and the E010–E016 dependency check were originally described as
-rollout scaffolding to remove after a single production burn-in. For a self-hosted product they are
-**permanent operator configuration** — each deployment uses them to run its own staged rollout and to
-keep a kill-switch/rollback path — so there is no maintainer-side "remove the flags" task. If a
-specific deployment ever wants to drop them after its own burn-in, that is a local operator decision,
-guided by the runbook.
 
 ## Admin layer (epic #83)
 
@@ -105,3 +77,72 @@ VPS/systemd path is unaffected — it installs from a source checkout into a vir
   notes the absence. Deliberately not bundled with the docs change.
 - **Trigger:** the build-it-yourself step becomes real adoption friction, or a release needs to be
   independently verifiable by digest.
+
+## Configuration
+
+### CFG-1: Rename `OCTONOMY_API_VERSION` — DEFERRED (raised 2026-08-05)
+The name says "the version of the API", which is the one thing it is not. Octonomy has three version
+surfaces (`docs/versioning.md`), and this variable drives the middle one:
+
+| Surface | Where | Answers |
+| --- | --- | --- |
+| Package version | `pyproject.toml` | Which release am I running? |
+| **Schema/document version** | **OpenAPI `info.version`, set by `OCTONOMY_API_VERSION`** | **Which build produced this schema document?** |
+| URL contract version | `/api/v1/`, `/api/v2/` | Which contract am I calling? |
+
+It has exactly one consumer: `config/settings.py:44` feeds `SPECTACULAR_SETTINGS["VERSION"]`
+(`settings.py:338`), which becomes `info.version` in the generated schemas. It never touches routing.
+The v1/v2 contract is a separate setting entirely (`REST_FRAMEWORK["ALLOWED_VERSIONS"]`,
+`settings.py:331`), and the two never meet in code. `docs/versioning.md` already calls this row the
+"API **schema** version" — clearer than the env var it configures.
+
+- **What:** Rename to `OCTONOMY_SCHEMA_VERSION` (or `OCTONOMY_OPENAPI_VERSION`). Migration path:
+  accept both names for one minor with the old one logging a deprecation warning, document the new
+  name, then drop the old in the next major. Touches `config/settings.py`, `.env.example`,
+  `docs/versioning.md`, `docs/development.md`, `docs/release.md`, `deploy/.env.production.example`,
+  and the `version-check` grep in the `Makefile`.
+- **Why:** A real reader hit this and asked why the variable is set to `3.0.1` when the API versions
+  are v1/v2. The name invites exactly that misreading, and the misreading is dangerous in the other
+  direction too: someone "correcting" it to `v2` would stamp a nonsense `info.version` on both schema
+  documents.
+- **Pros:** The name would state what it does; removes a recurring source of confusion in an
+  operator-facing surface; aligns the env var with the vocabulary `docs/versioning.md` already uses.
+- **Cons:** A breaking config rename needs a deprecation window and touches ~7 files plus the
+  `version-check` gate. Pure ergonomics — nothing is broken today.
+- **Context:** Blast radius is unusually small right now: 3.0.1 changed both the env template and the
+  `docs/release.md` production checklist to say **leave it unset**, since the application default
+  already tracks the release. Realistically no deployment should have it set at all, so a rename
+  would strand almost nobody. That window narrows as more people deploy from the new guide.
+- **Trigger:** the next time `config/settings.py` version handling is touched anyway, or another
+  report of the same confusion. Do it before the deployment guide drives wide adoption of the
+  current name.
+
+---
+
+## Resolved
+
+Closed out; kept as a one-line ledger so settled decisions are not re-proposed. Anything marked
+**won't-do** was considered and deliberately rejected — read the linked issue before reopening it.
+
+- **NS-1 — Scope-move immutability.** DONE (#61, PR #66). Shipped the `scope_immutable` 409: a PATCH
+  changing `application_id`/`namespace_type`/`namespace_id` is rejected; re-create in the target scope.
+  Atomic re-parenting tooling is **won't-do** until a real "move a merchant's data" use case appears.
+- **NS-2 — Alias resolution precedence ladder.** DONE (#62, PR #68). Ladder documented
+  (`(app,exact ns)` > `(app,global ns)` > `(shared,global)`; canonical beats alias regardless of
+  scope), `ambiguous_resolution` guard added for same-rung ties, and a read-auth
+  body-`application_id` bypass closed in the same PR.
+- **NS-3 — Rollback ordering.** DONE (#59, PR #65). `docs/operations.md` carries the
+  incident-graduated rollback ladder, why the boot dependency check forces that order, and the
+  "never downgrade to v1 visibility" prohibition.
+- **NS-4 — `include_global` query plan.** **Won't-do** (#60 closed). Nothing to build in the app; it
+  is a per-deployment `EXPLAIN` check. `docs/operations.md` ("Read-path query plan
+  (`include_global=true`)") tells operators to verify on prod-sized data and add a per-branch index
+  if it degrades. Not a maintainer task for a self-hosted product.
+- **NS-6 — Constraint-swap lock window.** DONE as tooling + guidance (#58 closed, PR #64).
+  `python manage.py estimate_namespace_swap_lock` ships; measuring the window against real row counts
+  is a per-deployment operator step on a restored clone, not a maintainer task.
+- **NS-7 — Post-burn-in flag + index cleanup.** **Won't-do** (reframed). The five
+  `OCTONOMY_NAMESPACE_*` flags and the E010–E016 dependency check are **permanent operator
+  configuration**, not rollout scaffolding — each deployment uses them for its own staged rollout and
+  kill-switch. There is no maintainer-side "remove the flags" task; dropping them after a burn-in is
+  a local operator decision.
