@@ -36,7 +36,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: your-registry.example.com/octonomy:3.0.0
+          image: your-registry.example.com/octonomy:3.0.1
           # `args` (not `command`) so the image ENTRYPOINT still runs — it executes
           # `manage.py check` (fail-closed) before this migrate command.
           args: ["python", "manage.py", "migrate", "--noinput"]

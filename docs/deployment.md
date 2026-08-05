@@ -78,8 +78,8 @@ There is no pre-published image, so build it from the repo:
 docker build -t octonomy:local .
 
 # Kubernetes — the cluster must be able to pull it, so tag for your registry and push:
-docker build -t your-registry.example.com/octonomy:3.0.0 .
-docker push your-registry.example.com/octonomy:3.0.0
+docker build -t your-registry.example.com/octonomy:3.0.1 .
+docker push your-registry.example.com/octonomy:3.0.1
 ```
 
 The image runs Gunicorn as a **non-root** user, validates configuration on start (`manage.py check`,
