@@ -28,6 +28,15 @@ jobs:
         run: uv run ruff check .
       - name: Ruff format check
         run: uv run ruff format --check .
+      - name: Lint GitHub Actions workflows
+        # actionlint validates workflow syntax and expressions and, via the shellcheck
+        # preinstalled on the runner, the shell in `run:` steps — catching malformed
+        # workflows and shell mistakes in review instead of after merge. Installed with
+        # `go install` at a pinned version (checksum-verified against the Go module
+        # database — no curl|bash); Go is preinstalled on ubuntu-latest.
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -color
 
   checks:
     runs-on: ubuntu-latest
@@ -117,3 +126,111 @@ jobs:
         run: uv sync --extra dev
       - name: Run PostgreSQL tests
         run: uv run pytest --cov-fail-under=90
+
+  docker:
+    runs-on: ubuntu-latest
+    # This job must NEVER hold a registry credential. ci.yml runs on `pull_request`,
+    # so a fork PR triggers it; keeping permissions at `contents: read` and never
+    # logging into any registry is what lets the DEP-1 publish workflow safely gate
+    # on this one. Build only — the publish path lives in publish-image.yml.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: octonomy:ci
+          # GitHub Actions cache keeps the warm-cache rebuild to ~30-60s on a PR.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Assert manage.py check passes in the image
+        # The image defaults to DJANGO_DEBUG=false, and config/settings.py refuses to
+        # boot on an empty or default SECRET_KEY when DEBUG is False — so the smoke test
+        # must pass a real DJANGO_SECRET_KEY + SERVICE_TOKEN_PEPPER and a sqlite
+        # DATABASE_URL, the same way the test-sqlite job does. `check` reads settings
+        # only (no DB), so the sqlite file is never actually created here.
+        run: |
+          docker run --rm \
+            -e DJANGO_SECRET_KEY=ci-docker-smoke-not-a-real-secret \
+            -e SERVICE_TOKEN_PEPPER=ci-pepper \
+            -e DATABASE_URL=sqlite:////tmp/octonomy-ci.sqlite3 \
+            octonomy:ci python manage.py check
+      - name: Start the container and assert /health/live
+        # gunicorn auto-loads gunicorn.conf.py from /app, which binds 0.0.0.0:8000, so
+        # the published port is reachable. /health/live needs no database. The entrypoint
+        # runs `manage.py check` before serving, so a bad image never reaches this step.
+        run: |
+          set -euo pipefail
+          docker run -d --name octonomy-ci \
+            -e DJANGO_SECRET_KEY=ci-docker-smoke-not-a-real-secret \
+            -e SERVICE_TOKEN_PEPPER=ci-pepper \
+            -e DATABASE_URL=sqlite:////tmp/octonomy-ci.sqlite3 \
+            -p 8000:8000 \
+            octonomy:ci
+          ready=0
+          for _ in $(seq 1 30); do
+            if ! docker ps --filter name=octonomy-ci --filter status=running --format '{{.Names}}' | grep -q octonomy-ci; then
+              echo "::error::container exited during startup"
+              break
+            fi
+            if curl -fsS http://localhost:8000/health/live >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::/health/live did not return 200 within the timeout"
+            docker logs octonomy-ci || true
+            exit 1
+          fi
+          echo "container is live:"
+          curl -fsS http://localhost:8000/health/live
+          echo
+      - name: Trivy vulnerability scan (advisory)
+        # Advisory only: findings go to the job summary and NEVER fail the build.
+        # continue-on-error covers even a Trivy DB-download hiccup; exit-code stays 0.
+        if: always()
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: octonomy:ci
+          scan-type: image
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          output: trivy-report.txt
+          exit-code: "0"
+      - name: Publish Trivy findings to the job summary
+        # Advisory must stay advisory: continue-on-error keeps even a write failure from
+        # reddening the job, and the report is bounded well under GitHub's 1 MiB step-
+        # summary limit so a large scan can never make the append fail.
+        if: always()
+        continue-on-error: true
+        run: |
+          {
+            echo "## Trivy image scan (advisory)"
+            echo
+            echo "HIGH/CRITICAL vulnerabilities with a fix available. Informational — this scan never fails the build."
+            echo
+            echo '```'
+            if [ -f trivy-report.txt ]; then
+              head -c 500000 trivy-report.txt
+              if [ "$(wc -c < trivy-report.txt)" -gt 500000 ]; then
+                printf '\n... report truncated at 500 KB; see the Trivy step logs for the full output.\n'
+              fi
+            else
+              echo "No Trivy report was produced."
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Tear down the smoke-test container
+        if: always()
+        run: docker rm -f octonomy-ci >/dev/null 2>&1 || true
