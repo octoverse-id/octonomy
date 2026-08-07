@@ -45,6 +45,12 @@ permissions: {}
 # cancel-in-progress is false everywhere, unlike ci.yml where cancelling a superseded
 # run is free. Cancelling a publish mid-push leaves partial registry state: a digest
 # pushed with some of its tags promoted and some not.
+#
+# Caveat of one shared group: GitHub keeps at most one run PENDING per group, so three
+# releases pushed inside one build window can leave the middle one cancelled before it
+# starts. That is a loud, recoverable failure — re-publish it with a workflow_dispatch
+# from its tag and dry_run=false — and it is the trade taken against a silent one,
+# where overlapping runs promote a moving tag backward onto an older digest.
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
