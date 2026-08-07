@@ -88,6 +88,50 @@ jobs:
             exit 1
           fi
 
+      - name: Require the published commit to be a green commit on main
+        # FIRST, and deliberately before the checkout: every later step runs code from
+        # the tagged tree — `make version-check` is that tree's Makefile, the build is
+        # its Dockerfile — and this job holds packages: write and id-token: write while
+        # it does. Nothing from the ref may execute before the ref has been vetted.
+        #
+        # Pure API calls for the same reason: no working tree is needed, so none is
+        # created. Ancestry proves the code went through main (and so through review);
+        # CI's conclusion proves that commit is green. docs/release.md already says to
+        # tag the merge commit after green CI — this is what enforces it.
+        #
+        # LIMIT, and it is a real one: for a `push` trigger GitHub loads the workflow
+        # definition from the pushed ref, so someone who can push a vX.Y.Z tag can push
+        # one whose publish-image.yml has this step deleted. This gate stops mistakes —
+        # a tag on the wrong commit, a tag ahead of CI — not someone with tag-push
+        # rights. The control for that is a tag protection ruleset, which is a
+        # repository setting rather than anything this file can assert; see DEP-2 in
+        # TODOS.md.
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != true)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # compare/BASE...HEAD reports HEAD relative to BASE: "behind" means main
+          # contains this commit, "identical" means it is main's tip. "ahead" and
+          # "diverged" both mean it was never merged.
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq '.status')
+          case "$status" in
+            behind | identical) ;;
+            *)
+              echo "::error::$GITHUB_SHA is not on main (compare status: $status) — release tags go on merged commits"
+              exit 1
+              ;;
+          esac
+
+          green=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
+            --jq '.total_count')
+          if [ "${green:-0}" -lt 1 ]; then
+            echo "::error::no successful CI run for $GITHUB_SHA — wait for CI to pass on the merge commit before tagging"
+            exit 1
+          fi
+          echo "$GITHUB_SHA is on main ($status) with $green successful CI run(s)"
+
       - name: Check out the ref being published
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,35 +189,6 @@ jobs:
         # The tag-vs-pyproject check above proves the tag names this tree's version;
         # this proves the tree agrees with itself (settings, OpenAPI, CHANGELOG).
         run: make version-check
-
-      - name: Require the tagged commit to be a green commit on main
-        # Pushing a tag needs no review, and on a tag push this job's `if:` is the only
-        # thing admitting it. Version-stamp agreement proves the tree is self-consistent
-        # — not that anybody approved it, and not that it builds. Without this, a tag on
-        # an unmerged branch publishes as a signed, attested release.
-        #
-        # Both halves matter: ancestry proves the code went through main (and therefore
-        # through review), and CI's conclusion proves that commit is green. docs/release.md
-        # already says to tag the merge commit after green CI; this enforces it.
-        if: steps.params.outputs.dry_run != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
-            echo "::error::$GITHUB_SHA is not an ancestor of main — release tags go on merged commits"
-            exit 1
-          fi
-
-          green=$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
-            --jq '.total_count')
-          if [ "${green:-0}" -lt 1 ]; then
-            echo "::error::no successful CI run for $GITHUB_SHA — wait for CI to pass on the merge commit before tagging"
-            exit 1
-          fi
-          echo "$GITHUB_SHA is on main with $green successful CI run(s)"
 
       - name: Guard — resolve what the version tag already points at
         id: guard

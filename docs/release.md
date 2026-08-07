@@ -121,6 +121,18 @@ than a broken release.
 Also confirm, once, that **Inherit access from repository** stays enabled in the same settings page,
 so `GITHUB_TOKEN` keeps its push permission for subsequent releases.
 
+## When A Publish Run Does Not Appear
+
+Release publishes share one concurrency group so they cannot promote `:X.Y` / `:latest` over each
+other. GitHub keeps at most one run *pending* per group, so if several releases are cut inside one
+build window, a queued one can be cancelled before it starts — its version is then tagged in git
+with no image published.
+
+Check the Actions tab after tagging. To publish a version whose run was cancelled, dispatch
+`Publish image` **from that version's tag** with `dry_run` unchecked. That path is idempotent: if
+the digest is already published it re-promotes it rather than rebuilding, and it refuses outright
+if the version resolves to different bytes.
+
 ## Dependency Audit
 
 CI scans the locked runtime dependencies for known vulnerabilities (the `security` job; run

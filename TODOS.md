@@ -78,6 +78,23 @@ VPS/systemd path is unaffected — it installs from a source checkout into a vir
 - **Trigger:** the build-it-yourself step becomes real adoption friction, or a release needs to be
   independently verifiable by digest.
 
+### DEP-2: Tag protection ruleset for `v*` — DEFERRED (raised 2026-08-07, PR #105)
+Publishing makes a git tag load-bearing. `publish-image.yml` triggers on a `v[0-9]+.[0-9]+.[0-9]+`
+push and holds `packages: write` plus `id-token: write`, so pushing such a tag is now equivalent to
+publishing a signed, attested release.
+
+- **What:** A repository ruleset restricting who may create or update tags matching `v*`, and
+  blocking force-updates of existing ones.
+- **Why:** The workflow's own "commit is on main and green" gate cannot close this. For a `push`
+  trigger GitHub loads the workflow definition **from the pushed ref**, so a tag can carry a
+  `publish-image.yml` with that gate deleted. Every in-workflow check is therefore a guard against
+  mistakes, not against someone holding tag-push rights; only a ruleset — evaluated outside the
+  workflow — constrains that. A force-moved tag separately leaves GHCR holding an image built from
+  source no longer reachable from any ref.
+- **Cons:** Another repository setting to keep in sync with the release process; a ruleset that is
+  too strict makes cutting a release need an admin.
+- **Trigger:** a second person gets write access. Do it before that, not after.
+
 ## Configuration
 
 ### CFG-1: Rename `OCTONOMY_API_VERSION` — DEFERRED (raised 2026-08-05)
