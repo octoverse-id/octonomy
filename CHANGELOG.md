@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Container images are now published to
+  [GHCR](https://github.com/octoverse-id/octonomy/pkgs/container/octonomy). Tagging `vX.Y.Z`
+  builds `linux/amd64` + `linux/arm64`, smoke-tests the pushed digest on **both** architectures,
+  attaches SLSA provenance and an SPDX SBOM as separate attestations, checks the image is
+  anonymously pullable, and only then promotes the digest to `:X.Y.Z`, `:X.Y`, and `:latest`. Every
+  green CI run on `main` also publishes `:edge` — amd64 only, unattested, and **unsupported**.
+  Verify a release with:
+
+  ```bash
+  gh attestation verify oci://ghcr.io/octoverse-id/octonomy:<version> \
+    --repo octoverse-id/octonomy --predicate-type https://slsa.dev/provenance/v1
+  ```
+
+  A version tag is immutable: re-running a publish re-promotes the digest already published under
+  that version (which is how a partially-promoted release recovers) and **fails** if the version
+  resolves to different bytes. There is no overwrite switch — republishing different bytes under a
+  shipped version is what a patch release is for.
+
+  The example manifests in `deploy/` and `docs/deployment.md` still build locally; adopting the
+  published image there is the next change.
+
 ## [3.0.1] - 2026-08-05
 
 A **patch** release: the REST contract is untouched (no path or schema diff on either surface), and

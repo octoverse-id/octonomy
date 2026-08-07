@@ -1,0 +1,444 @@
+name: Publish image
+
+# Publishes the Octonomy container image to GHCR.
+#
+# Two jobs, deliberately not one:
+#
+#   release  vX.Y.Z tag push, or a workflow_dispatch dry run. Multi-arch, smoke-tested
+#            on both architectures, provenance + SBOM attested, then promoted to
+#            :X.Y.Z / :X.Y / :latest.
+#   edge     every green CI run on main. amd64 only, unattested, documented as
+#            unsupported. Holds `packages: write` and nothing else.
+#
+# A single job branching on `if:` was rejected: a wrong condition there does not fail,
+# it silently skips — and the step most likely to be skipped is attestation. One job
+# would also force the union of the permissions below onto every push to main, so
+# routine merges would run holding a token that can mint Sigstore identities for this
+# repository.
+
+on:
+  push:
+    # Strict glob: only exact vX.Y.Z. Prereleases and any other tag shape are not
+    # publishable, which is what makes the "no prerelease handling" in
+    # scripts/resolve-latest-tag.sh a statement about reachability rather than a gap.
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Publish to :dryrun instead of the release tags
+        type: boolean
+        default: true
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+# No workflow-level permissions: each job asks for exactly what it needs.
+permissions: {}
+
+concurrency:
+  # Keyed on the ref, so two runs for the same version serialise instead of racing the
+  # already-published guard. cancel-in-progress is false — unlike ci.yml, where
+  # cancelling a superseded run is free. Cancelling this one mid-push leaves partial
+  # registry state: a digest pushed with some of its tags promoted and some not.
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  release:
+    # Event routing only, not the release decision. Three triggers share this file, so
+    # without this the workflow_run deliveries below would start this job too. Nothing
+    # inside the job is conditional on being "a real release" — that is the whole point
+    # of splitting release and edge into separate jobs.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # can push any image to the org
+      id-token: write # can mint Sigstore identities AS this repository
+      attestations: write
+    steps:
+      - name: Reject a workflow_dispatch from an arbitrary ref
+        # workflow_dispatch runs the workflow *from the selected ref* while this job
+        # holds the permissions above. Without this, anyone who can push a branch could
+        # dispatch a publish that runs their scripts/, their composite action and their
+        # Dockerfile against a token that can sign as this repository.
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" != "refs/heads/main" && ! "$REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::refusing to publish from $REF — dispatch from main or a vX.Y.Z tag"
+            exit 1
+          fi
+
+      - name: Check out the ref being published
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # fetch-depth: 0 so scripts/resolve-latest-tag.sh can enumerate every release
+          # tag. On the default shallow fetch it finds none, fails closed, and this job
+          # stops — which is the intended outcome, but the fix is here, not there.
+          fetch-depth: 0
+
+      - name: Resolve the version and the publish mode
+        id: params
+        env:
+          REF: ${{ github.ref }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          pyproject_version=$(grep -E '^version = ' pyproject.toml | sed -E 's/version = "([^"]+)"/\1/')
+
+          if [[ "$REF" =~ ^refs/tags/v(.+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+            # A tag asserts that the tree it points at is that version. Prove it, or a
+            # tag pushed onto arbitrary code publishes as that version.
+            if [ "$version" != "$pyproject_version" ]; then
+              echo "::error::tag v$version does not match the pyproject version $pyproject_version"
+              exit 1
+            fi
+            dry_run="${DRY_RUN_INPUT:-false}"
+          else
+            # Dispatched from main. There is no tag, so there is no version to publish
+            # immutably — a real release has to come from the tag that names it.
+            version="$pyproject_version"
+            if [ "${DRY_RUN_INPUT:-false}" != "true" ]; then
+              echo "::error::a non-dry-run publish must be dispatched from a vX.Y.Z tag, not $REF"
+              exit 1
+            fi
+            dry_run=true
+          fi
+
+          # A dry run rehearses the whole pipeline — multi-arch build, both smoke
+          # tests, attestation, verification, the :latest calculation — but promotes
+          # only the mutable :dryrun tag.
+          if [ "$dry_run" = "true" ]; then
+            primary_tag=dryrun
+          else
+            primary_tag="$version"
+          fi
+
+          {
+            echo "version=$version"
+            echo "dry_run=$dry_run"
+            echo "primary_tag=$primary_tag"
+          } >>"$GITHUB_OUTPUT"
+          echo "publishing $version (dry_run=$dry_run, primary tag :$primary_tag)"
+
+      - name: Assert the version stamps agree
+        # The tag-vs-pyproject check above proves the tag names this tree's version;
+        # this proves the tree agrees with itself (settings, OpenAPI, CHANGELOG).
+        run: make version-check
+
+      - name: Guard — resolve what the version tag already points at
+        id: guard
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.params.outputs.version }}
+          DRY_RUN: ${{ steps.params.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          # Runs on dry runs too, and is allowed to fail them. The token exchange and
+          # manifest resolution are registry mechanics that would otherwise be executed
+          # for the first time during a real release; rehearsing them is most of what a
+          # dry run is for. Only the *decision* is dry-run specific.
+          result=$(./scripts/check-tag-unpublished.sh "$IMAGE" "$VERSION")
+          echo "$result"
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::dry run — building regardless of what :$VERSION points at"
+            echo "build=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          case "$result" in
+            absent)
+              echo "build=true" >>"$GITHUB_OUTPUT"
+              ;;
+            present\ *)
+              # Recovery path. Tag promotion is not atomic, so a previous run can have
+              # landed :X.Y.Z and failed before :X.Y or :latest. Rebuilding would
+              # produce different bytes under a shipped version (collectstatic
+              # timestamps, layer metadata), so the published digest is re-promoted
+              # instead. Idempotent by construction.
+              echo "::notice::$IMAGE:$VERSION is already published; re-promoting the existing digest instead of rebuilding"
+              echo "build=false" >>"$GITHUB_OUTPUT"
+              echo "digest=${result#present }" >>"$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::unexpected guard result: $result"
+              exit 1
+              ;;
+          esac
+
+      - name: Log in to GHCR (recovery path)
+        # On the normal path the composite action below logs in. When the guard says
+        # the digest is already published that action is skipped, and promotion,
+        # attestation verification and the pull check still need the credential.
+        if: steps.guard.outputs.build == 'false'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute OCI labels
+        id: meta
+        if: steps.guard.outputs.build != 'false'
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          # latest=false, always. metadata-action's latest=auto sets :latest on any
+          # non-prerelease semver tag event without comparing it to the other tags, so
+          # a backport v2.0.2 published after v3.1.0 would move :latest backward and
+          # downgrade every deployment on imagePullPolicy: Always. :latest is decided
+          # by scripts/resolve-latest-tag.sh, which does compare.
+          flavor: latest=false
+          tags: type=semver,pattern={{version}},value=v${{ steps.params.outputs.version }}
+
+      - name: Build and push by digest
+        id: build
+        if: steps.guard.outputs.build != 'false'
+        uses: ./.github/actions/build-publish
+        with:
+          image: ${{ env.IMAGE }}
+          platforms: linux/amd64,linux/arm64
+          labels: ${{ steps.meta.outputs.labels }}
+          push_by_digest: "true"
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve the digest under test
+        id: image
+        env:
+          BUILT: ${{ steps.build.outputs.digest }}
+          EXISTING: ${{ steps.guard.outputs.digest }}
+        run: |
+          set -euo pipefail
+          digest="${BUILT:-$EXISTING}"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::no usable digest (built='$BUILT' existing='$EXISTING')"
+            exit 1
+          fi
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+          echo "working with $IMAGE@$digest"
+
+      - name: Smoke test the published digest (amd64)
+        # Runs against the exact bytes that will carry the version tag. The image
+        # defaults to DJANGO_DEBUG=false and config/settings.py refuses to boot on an
+        # empty or default SECRET_KEY, so the same three variables ci.yml passes are
+        # needed here. `check` reads settings only, so no database is touched.
+        if: steps.guard.outputs.build != 'false'
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          docker run --rm \
+            -e DJANGO_SECRET_KEY=publish-smoke-not-a-real-secret \
+            -e SERVICE_TOKEN_PEPPER=publish-pepper \
+            -e DATABASE_URL=sqlite:////tmp/octonomy-smoke.sqlite3 \
+            "$IMAGE@$DIGEST" python manage.py check
+
+      - name: Smoke test the published digest (arm64, emulated)
+        # Without this the arm64 variant ships having never been started by anyone.
+        # binfmt comes from the setup-qemu-action step inside the composite action
+        # above — which is why this step must come after it, not before.
+        if: steps.guard.outputs.build != 'false'
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -e DJANGO_SECRET_KEY=publish-smoke-not-a-real-secret \
+            -e SERVICE_TOKEN_PEPPER=publish-pepper \
+            -e DATABASE_URL=sqlite:////tmp/octonomy-smoke.sqlite3 \
+            "$IMAGE@$DIGEST" python manage.py check
+
+      - name: Attest build provenance
+        if: steps.guard.outputs.build != 'false'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate an SPDX SBOM for the published digest
+        # Trivy rather than a new vendor: it is already in this repository's supply
+        # chain (the advisory scan in ci.yml), and the release job is the last place to
+        # add a third-party action that does not have to be here.
+        if: steps.guard.outputs.build != 'false'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.image.outputs.digest }}
+          scan-type: image
+          format: spdx-json
+          output: sbom.spdx.json
+          exit-code: "0"
+
+      - name: Attest the SBOM
+        if: steps.guard.outputs.build != 'false'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+
+      - name: Verify provenance and SBOM as separate predicates
+        # A bare `gh attestation verify` proves *an* attestation exists, not that both
+        # do — it would pass with the SBOM missing entirely. Assert each predicate type
+        # by name. Runs on the recovery path too, so a re-promotion still proves the
+        # digest it moves tags onto is attested.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://$IMAGE@$DIGEST" \
+            --repo "$GITHUB_REPOSITORY" \
+            --predicate-type https://slsa.dev/provenance/v1
+          gh attestation verify "oci://$IMAGE@$DIGEST" \
+            --repo "$GITHUB_REPOSITORY" \
+            --predicate-type https://spdx.dev/Document
+
+      - name: Anonymous pull check
+        # The published image has to be pullable by someone who is not logged in —
+        # that is the entire point of publishing it. A fresh DOCKER_CONFIG drops the
+        # runner's credentials without logging out the steps that still need them.
+        #
+        # EXPECTED TO FAIL ON THE FIRST EVER PUBLISH: GHCR creates the package private
+        # even for a public repository. Flip the package to public in its settings and
+        # re-run. See the first-publish note in docs/release.md.
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          anon_config=$(mktemp -d)
+          if ! DOCKER_CONFIG="$anon_config" docker pull "$IMAGE@$DIGEST"; then
+            echo "::error::$IMAGE@$DIGEST is not anonymously pullable — if this is the first publish, make the GHCR package public and re-run (docs/release.md)"
+            exit 1
+          fi
+
+      - name: Guard — nothing else claimed this version while we were building
+        # The pre-build guard ran before the build; a concurrent run could have
+        # published in between. Comparing digests here is what turns that race into a
+        # red job instead of a silently overwritten release.
+        if: steps.guard.outputs.build == 'true' && steps.params.outputs.dry_run != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.params.outputs.version }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: ./scripts/check-tag-unpublished.sh "$IMAGE" "$VERSION" "$DIGEST"
+
+      - name: Promote the digest to its tags
+        env:
+          VERSION: ${{ steps.params.outputs.version }}
+          DRY_RUN: ${{ steps.params.outputs.dry_run }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # Always resolved, so a dry run rehearses the :latest calculation — the one
+          # piece of tag logic that otherwise runs for the first time on a real release.
+          # Assigned first rather than read from a process substitution, which `set -e`
+          # does not check: a failed resolve would otherwise pass through as an empty
+          # tag list.
+          resolved_tags=$(./scripts/resolve-latest-tag.sh "$VERSION")
+          mapfile -t resolved <<<"$resolved_tags"
+          echo "resolved tag set for $VERSION: ${resolved[*]}"
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "dry run — promoting only :dryrun"
+            resolved=(dryrun)
+          fi
+
+          args=()
+          for tag in "${resolved[@]}"; do
+            args+=(--tag "$IMAGE:$tag")
+          done
+          docker buildx imagetools create "${args[@]}" "$IMAGE@$DIGEST"
+
+      - name: Assert the primary tag resolves to the digest we published
+        # `imagetools create` writes each tag as its own registry operation. Without
+        # this post-condition a partially-applied promotion is a green run.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRIMARY_TAG: ${{ steps.params.outputs.primary_tag }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          result=$(./scripts/check-tag-unpublished.sh "$IMAGE" "$PRIMARY_TAG" "$DIGEST")
+          if [ "$result" != "match $DIGEST" ]; then
+            echo "::error::$IMAGE:$PRIMARY_TAG did not land on $DIGEST (got: $result)"
+            exit 1
+          fi
+          echo "$IMAGE:$PRIMARY_TAG -> $DIGEST"
+
+  edge:
+    # ------------------------------------------------------------------------------
+    # pwn-request guard. ALL FOUR CONDITIONS ARE LOAD-BEARING — do not simplify.
+    #
+    # ci.yml triggers on `pull_request`, so a CI run for a **fork** PR also completes
+    # successfully and fires `workflow_run`. A workflow_run job runs in *base-repo*
+    # context with base-repo permissions, and `workflow_run.head_sha` on that delivery
+    # is the fork's commit. Checking it out and building it would execute a stranger's
+    # Dockerfile and scripts while holding `packages: write`.
+    #
+    #   conclusion == 'success'          only build what CI passed
+    #   event == 'push'                  THIS is the one that closes the hole — a fork
+    #                                    PR's CI run has event == 'pull_request'
+    #   head_branch == 'main'            not some other branch's push
+    #   head_repository == this repo     belt and braces on the fork case
+    # ------------------------------------------------------------------------------
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # No id-token / attestations here. :edge is explicitly unattested and
+      # unsupported; a routine push to main must not run holding a token that can sign
+      # as this repository.
+    steps:
+      - name: Assert the triggering commit is still the tip of main
+        # Re-running an old successful CI run would otherwise republish an older commit
+        # as :edge, moving the tag backward for everyone tracking it.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')
+          if [ "$tip" != "$HEAD_SHA" ]; then
+            echo "::error::$HEAD_SHA is no longer the tip of main ($tip); refusing to move :edge backward"
+            exit 1
+          fi
+
+      - name: Check out the commit CI passed on
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Compute OCI labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: type=raw,value=edge
+
+      - name: Build and push :edge
+        # amd64 only and no attestation, by design: :edge tracks main for people who
+        # want to try unreleased work, and is documented as unsupported. Releases are
+        # where multi-arch and provenance are promised.
+        uses: ./.github/actions/build-publish
+        with:
+          image: ${{ env.IMAGE }}
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}

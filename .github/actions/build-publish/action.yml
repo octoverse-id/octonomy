@@ -1,0 +1,111 @@
+name: Build and publish the Octonomy image
+description: >-
+  Set up the buildx toolchain, authenticate to GHCR, and build the image — either
+  pushing it by digest with no tag attached, or pushing it under caller-supplied tags.
+
+# There is deliberately NO branching in here beyond the two mutually exclusive push
+# modes, and no `ref`/checkout input. Two reasons:
+#
+#   * The caller checks out. Which ref this workflow builds is the security boundary
+#     (see the fork-PR guard in publish-image.yml) — hiding that choice behind a
+#     composite action makes the most important line in the pipeline invisible.
+#   * A conditional inside a composite action fails by silently skipping. The publish
+#     pipeline's `if:` expressions all live in publish-image.yml where they are read
+#     alongside the permissions they gate.
+#
+# Every third-party action here is SHA-pinned. This action runs with the caller's
+# permissions — including `packages: write` and `id-token: write` in the release job —
+# so a compromised action tag resolved at run time would publish a signed, attested
+# malicious image that passes `gh attestation verify`. The version comment is what
+# Dependabot's github-actions ecosystem reads to keep the pins current.
+
+inputs:
+  image:
+    description: Image name without a tag, e.g. ghcr.io/octoverse-id/octonomy
+    required: true
+  registry:
+    description: Registry host to authenticate against — the first segment of `image`
+    required: false
+    default: ghcr.io
+  platforms:
+    description: Comma-separated buildx platforms, e.g. linux/amd64,linux/arm64
+    required: true
+  registry_token:
+    description: Token used to authenticate to the registry (pass secrets.GITHUB_TOKEN)
+    required: true
+  push_by_digest:
+    description: >-
+      "true" pushes the manifest with no tag and returns its digest; "false" pushes
+      under `tags`.
+    required: false
+    default: "false"
+  tags:
+    description: Newline- or comma-separated full image references. Unused when push_by_digest is true.
+    required: false
+    default: ""
+  labels:
+    description: OCI labels to bake into the image config (docker/metadata-action output)
+    required: false
+    default: ""
+
+outputs:
+  digest:
+    description: Digest of the manifest that was pushed
+    value: ${{ steps.build.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    # Registers binfmt handlers. Required to *build* linux/arm64 on an amd64 runner,
+    # and it is also what makes a subsequent `docker run --platform linux/arm64` work
+    # in the calling job — publish-image.yml's arm64 smoke test depends on this step
+    # having run, which is why the composite is invoked before it.
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+    - name: Log in to the registry
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ inputs.registry_token }}
+
+    - name: Build and push
+      id: build
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      with:
+        context: .
+        platforms: ${{ inputs.platforms }}
+        labels: ${{ inputs.labels }}
+        # push-by-digest is the mechanism, not a description of one. Without it buildx
+        # writes a tag, and the guarantee publish-image.yml is built on — that a failed
+        # smoke test or attestation leaves nothing pullable — is simply false: the bad
+        # build would sit in the package under whatever temporary tag was used.
+        # name-canonical stamps the canonical name into the manifest so the digest can
+        # later be promoted to real tags with `imagetools create`.
+        #
+        # The expression is written as `!= 'true' && x || ''` rather than the more
+        # obvious `== 'true' && '' || x`: GitHub's `&&`/`||` is not a ternary, and an
+        # empty string on the true branch falls through to the false branch.
+        tags: ${{ inputs.push_by_digest != 'true' && inputs.tags || '' }}
+        outputs: ${{ inputs.push_by_digest == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', inputs.image) || '' }}
+        push: ${{ inputs.push_by_digest != 'true' }}
+        # Shares a cache scope with the `docker` job in ci.yml. Every push to main
+        # builds this image twice on purpose — once in CI, which must never hold a
+        # registry credential because it runs on fork PRs, and once here to publish.
+        # The cache is what keeps the second build to a cache hit plus a push, and is
+        # the reason the duplication is affordable rather than something to "optimise"
+        # away by giving the CI job push rights.
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        # buildx's own inline provenance/SBOM attestations are turned off. The
+        # authoritative ones are the Sigstore attestations that publish-image.yml
+        # attaches as registry referrers with actions/attest-* and verifies with
+        # `gh attestation verify`; the inline pair would only duplicate them while
+        # adding unknown/unknown platform entries to the index that confuse manifest
+        # readers and some cluster tooling.
+        provenance: false
+        sbom: false

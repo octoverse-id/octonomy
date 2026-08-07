@@ -96,6 +96,31 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
 > published, non-prerelease release is "Latest" by default. `gh issue close` has no `--comment`;
 > post the comment separately with `gh issue comment` before closing.
 
+## First Publish To GHCR
+
+**The very first run of `publish-image.yml` is expected to fail, and it is not a defect.** GHCR
+creates a brand-new package as **private**, even when the repository is public. The workflow's last
+gate before promoting tags is an anonymous pull — the check that the published image is actually
+usable by someone who is not logged in — so that gate fails on the first publish, by design.
+
+This happens minutes after the publish workflow first lands on `main`: merging it makes the next
+green CI run publish `:edge`.
+
+Recovery is one manual step, once, for the lifetime of the package:
+
+1. Open **Packages** on the organisation or repository page and select `octonomy`.
+2. **Package settings → Danger Zone → Change visibility → Public**.
+3. Re-run the failed workflow run.
+
+While the package is private, the failure looks like a `docker pull` returning `denied` or
+`unauthorized`. Nothing else in the workflow needs changing, and nothing was published under a
+release tag — the image is pushed by digest and only promoted to `:X.Y.Z` / `:X.Y` / `:latest`
+**after** every check passes, so a failure at this gate leaves an untagged, prunable digest rather
+than a broken release.
+
+Also confirm, once, that **Inherit access from repository** stays enabled in the same settings page,
+so `GITHUB_TOKEN` keeps its push permission for subsequent releases.
+
 ## Dependency Audit
 
 CI scans the locked runtime dependencies for known vulnerabilities (the `security` job; run
