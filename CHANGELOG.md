@@ -11,10 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Container images are now published to
   [GHCR](https://github.com/octoverse-id/octonomy/pkgs/container/octonomy). Tagging `vX.Y.Z`
   builds `linux/amd64` + `linux/arm64`, smoke-tests the pushed digest on **both** architectures,
-  attaches SLSA provenance and an SPDX SBOM as separate attestations, checks the image is
-  anonymously pullable, and only then promotes the digest to `:X.Y.Z`, `:X.Y`, and `:latest`. Every
-  green CI run on `main` also publishes `:edge` — amd64 only, unattested, and **unsupported**.
-  Verify a release with:
+  attaches SLSA provenance and a per-architecture SPDX SBOM as separate attestations, checks the
+  image is anonymously pullable, and only then promotes the digest to `:X.Y.Z` — plus `:X.Y` and
+  `:latest`, each only when no newer release claims it, so a backport or a re-run can never move a
+  moving tag backward. Every green CI run on `main` also publishes `:edge` — amd64 only,
+  unattested, and **unsupported**. Verify a release with:
 
   ```bash
   gh attestation verify oci://ghcr.io/octoverse-id/octonomy:<version> \

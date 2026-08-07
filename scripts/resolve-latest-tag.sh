@@ -18,9 +18,15 @@
 #
 # Prints one registry tag per line, in promotion order:
 #
-#   3.1.0
-#   3.1
-#   latest        <- only when no released version is greater than VERSION
+#   3.1.0         <- always; the immutable version tag
+#   3.1           <- only when no greater 3.1.x release exists
+#   latest        <- only when no greater release exists at all
+#
+# Both moving tags are decided the same way, and for the same reason: `:3.1` points at
+# the newest 3.1.x, so re-promoting 3.1.0 after 3.1.1 shipped would move it backward
+# exactly as wrongly as moving `:latest` would. That case is reachable through the
+# supported recovery path, where a re-run of an already-published version re-promotes
+# its digest.
 #
 # There is deliberately NO prerelease handling. publish-image.yml's trigger glob is
 # `v[0-9]+.[0-9]+.[0-9]+`, so a prerelease tag cannot reach this script; rules for an
@@ -83,15 +89,23 @@ version_gt() {
   return 1
 }
 
+major_minor=${version%.*}
+
 newer_exists=0
+newer_in_line_exists=0
 for candidate in "${releases[@]}"; do
   if version_gt "$candidate" "$version"; then
     newer_exists=1
-    break
+    if [ "${candidate%.*}" = "$major_minor" ]; then
+      newer_in_line_exists=1
+    fi
   fi
 done
 
-printf '%s\n' "$version" "${version%.*}"
+printf '%s\n' "$version"
+if [ "$newer_in_line_exists" -eq 0 ]; then
+  printf '%s\n' "$major_minor"
+fi
 if [ "$newer_exists" -eq 0 ]; then
   printf '%s\n' latest
 fi

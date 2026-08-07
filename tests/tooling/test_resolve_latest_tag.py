@@ -29,6 +29,44 @@ def test_backport_after_a_newer_release_does_not_move_latest(run_script, tag_lis
     assert "latest" not in tags(result)
 
 
+def test_the_minor_tag_does_not_move_backward_either(run_script, tag_list):
+    """`:3.1` points at the newest 3.1.x, so re-promoting 3.1.0 after 3.1.1 shipped
+    would move it backward exactly as wrongly as moving `:latest` would. Reachable
+    through the supported recovery path, where re-running an already-published version
+    re-promotes its digest."""
+
+    result = run_script("resolve-latest-tag.sh", "3.1.0", tag_list(*RELEASED, "v3.1.0", "v3.1.1"))
+
+    assert result.returncode == 0, result.output
+    assert tags(result) == ["3.1.0"]
+
+
+def test_a_backport_keeps_its_own_minor_tag_when_it_is_the_newest_patch(run_script, tag_list):
+    """2.0.2 is the newest 2.0.x, so it owns `:2.0` even though 3.1.0 owns `:latest`."""
+
+    result = run_script("resolve-latest-tag.sh", "2.0.2", tag_list("v2.0.0", "v2.0.1", "v3.1.0"))
+
+    assert result.returncode == 0, result.output
+    assert tags(result) == ["2.0.2", "2.0"]
+
+
+def test_a_superseded_backport_moves_no_tag_but_its_own(run_script, tag_list):
+    result = run_script("resolve-latest-tag.sh", "2.0.2", tag_list("v2.0.3", "v3.1.0"))
+
+    assert result.returncode == 0, result.output
+    assert tags(result) == ["2.0.2"]
+
+
+def test_a_newer_patch_on_a_different_line_does_not_hold_back_the_minor_tag(run_script, tag_list):
+    """v3.2.1 is greater than 3.1.0 and suppresses `:latest`, but it is not in the 3.1
+    line, so it has no claim on `:3.1`."""
+
+    result = run_script("resolve-latest-tag.sh", "3.1.0", tag_list("v3.1.0", "v3.2.1"))
+
+    assert result.returncode == 0, result.output
+    assert tags(result) == ["3.1.0", "3.1"]
+
+
 def test_patch_on_the_current_line_still_moves_latest(run_script, tag_list):
     result = run_script("resolve-latest-tag.sh", "3.0.2", tag_list(*RELEASED))
 

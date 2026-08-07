@@ -72,12 +72,21 @@ fi
 token_url="https://${registry}/token?service=${registry}&scope=repository:${repository}:pull"
 auth_args=()
 if [ -n "${GITHUB_TOKEN:-}" ]; then
-  auth_args=(--user "x-access-token:${GITHUB_TOKEN}")
+  # Same username docker/login-action sends, so this exchange succeeds under exactly
+  # the conditions the registry login does. GHCR ignores the username and validates
+  # the password, but matching the working path removes a variable.
+  auth_args=(--user "${GITHUB_ACTOR:-x-access-token}:${GITHUB_TOKEN}")
 fi
 
 if ! token_response=$("$CURL" --silent --show-error --fail --max-time 30 \
   ${auth_args[@]+"${auth_args[@]}"} "$token_url" 2>&1); then
-  die "could not obtain a pull token for ${image} (${token_response})" 3
+  # GHCR answers 403 — not 404 — for a package that does not exist yet, and there is
+  # no way to tell that apart from "we are not allowed to look". Both stop the run:
+  # the alternative is reading an unknown as "nothing published here", which is how a
+  # shipped version tag gets overwritten.
+  die "could not obtain a pull token for ${image} (${token_response}).
+                      A 403 here on a first release usually means the GHCR package does
+                      not exist yet — publish :edge from main first, which creates it." 3
 fi
 
 token=$(printf '%s' "$token_response" |

@@ -36,13 +36,15 @@ on:
 # No workflow-level permissions: each job asks for exactly what it needs.
 permissions: {}
 
-concurrency:
-  # Keyed on the ref, so two runs for the same version serialise instead of racing the
-  # already-published guard. cancel-in-progress is false — unlike ci.yml, where
-  # cancelling a superseded run is free. Cancelling this one mid-push leaves partial
-  # registry state: a digest pushed with some of its tags promoted and some not.
-  group: publish-image-${{ github.ref }}
-  cancel-in-progress: false
+# Concurrency is per JOB, not per ref. Keying on the ref would let a v3.1.0 run and a
+# v3.1.1 run overlap — and they write the same moving tags, so the one that finishes
+# last wins regardless of which version is newer. The exact-version digest guard cannot
+# see that: it only ever looks at :X.Y.Z. One group for all releases makes promotion
+# ordering the push ordering.
+#
+# cancel-in-progress is false everywhere, unlike ci.yml where cancelling a superseded
+# run is free. Cancelling a publish mid-push leaves partial registry state: a digest
+# pushed with some of its tags promoted and some not.
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
@@ -55,8 +57,12 @@ jobs:
     # of splitting release and edge into separate jobs.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-image-release
+      cancel-in-progress: false
     permissions:
       contents: read
+      actions: read # read CI's conclusion for the tagged commit
       packages: write # can push any image to the org
       id-token: write # can mint Sigstore identities AS this repository
       attestations: write
@@ -133,6 +139,35 @@ jobs:
         # The tag-vs-pyproject check above proves the tag names this tree's version;
         # this proves the tree agrees with itself (settings, OpenAPI, CHANGELOG).
         run: make version-check
+
+      - name: Require the tagged commit to be a green commit on main
+        # Pushing a tag needs no review, and on a tag push this job's `if:` is the only
+        # thing admitting it. Version-stamp agreement proves the tree is self-consistent
+        # — not that anybody approved it, and not that it builds. Without this, a tag on
+        # an unmerged branch publishes as a signed, attested release.
+        #
+        # Both halves matter: ancestry proves the code went through main (and therefore
+        # through review), and CI's conclusion proves that commit is green. docs/release.md
+        # already says to tag the merge commit after green CI; this enforces it.
+        if: steps.params.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_SHA is not an ancestor of main — release tags go on merged commits"
+            exit 1
+          fi
+
+          green=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
+            --jq '.total_count')
+          if [ "${green:-0}" -lt 1 ]; then
+            echo "::error::no successful CI run for $GITHUB_SHA — wait for CI to pass on the merge commit before tagging"
+            exit 1
+          fi
+          echo "$GITHUB_SHA is on main with $green successful CI run(s)"
 
       - name: Guard — resolve what the version tag already points at
         id: guard
@@ -263,26 +298,74 @@ jobs:
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
 
-      - name: Generate an SPDX SBOM for the published digest
+      - name: Resolve the per-platform manifests inside the index
+        # Scanning the index digest on an amd64 runner silently resolves to the amd64
+        # manifest, so a single SBOM would list amd64 packages while claiming the whole
+        # multi-arch index as its subject — arm64's base-image packages would be absent
+        # from a signed document that says it describes the release. Each platform is
+        # scanned by its own manifest digest instead.
+        id: manifests
+        if: steps.guard.outputs.build != 'false'
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          raw=$(docker buildx imagetools inspect --raw "$IMAGE@$DIGEST")
+          for arch in amd64 arm64; do
+            digest=$(printf '%s' "$raw" | jq -r --arg a "$arch" \
+              '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a)
+                | .digest] | first // ""')
+            if [ -z "$digest" ]; then
+              echo "::error::the index $DIGEST has no linux/$arch manifest"
+              exit 1
+            fi
+            echo "$arch=$digest" >>"$GITHUB_OUTPUT"
+            echo "linux/$arch -> $digest"
+          done
+
+      - name: Generate an SPDX SBOM for linux/amd64
         # Trivy rather than a new vendor: it is already in this repository's supply
         # chain (the advisory scan in ci.yml), and the release job is the last place to
         # add a third-party action that does not have to be here.
         if: steps.guard.outputs.build != 'false'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ env.IMAGE }}@${{ steps.image.outputs.digest }}
+          image-ref: ${{ env.IMAGE }}@${{ steps.manifests.outputs.amd64 }}
           scan-type: image
           format: spdx-json
-          output: sbom.spdx.json
+          output: sbom.amd64.spdx.json
           exit-code: "0"
 
-      - name: Attest the SBOM
+      - name: Generate an SPDX SBOM for linux/arm64
+        # Trivy reads layer contents; it never executes the image, so scanning the arm64
+        # manifest from an amd64 runner needs no emulation.
+        if: steps.guard.outputs.build != 'false'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.manifests.outputs.arm64 }}
+          scan-type: image
+          format: spdx-json
+          output: sbom.arm64.spdx.json
+          exit-code: "0"
+
+      - name: Attest the SBOMs
+        # Both are attached to the index digest — that is the artifact a release tag
+        # resolves to, so its SBOM set has to cover every platform inside it.
         if: steps.guard.outputs.build != 'false'
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.image.outputs.digest }}
-          sbom-path: sbom.spdx.json
+          sbom-path: sbom.amd64.spdx.json
+          push-to-registry: true
+
+      - name: Attest the arm64 SBOM
+        if: steps.guard.outputs.build != 'false'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: sbom.arm64.spdx.json
           push-to-registry: true
 
       - name: Verify provenance and SBOM as separate predicates
@@ -314,6 +397,9 @@ jobs:
           DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
+          # Drop the local copy the smoke tests pulled, so this cannot be satisfied by
+          # the daemon's cache instead of by the registry.
+          docker image rm -f "$IMAGE@$DIGEST" >/dev/null 2>&1 || true
           anon_config=$(mktemp -d)
           if ! DOCKER_CONFIG="$anon_config" docker pull "$IMAGE@$DIGEST"; then
             echo "::error::$IMAGE@$DIGEST is not anonymously pullable — if this is the first publish, make the GHCR package public and re-run (docs/release.md)"
@@ -338,6 +424,12 @@ jobs:
           DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
+          # Re-fetch tags immediately before resolving. This run may have been queued
+          # behind another release for minutes; the checkout's tag list is from before
+          # the wait, and a version tagged during it must be visible here or the moving
+          # tags get promoted backward onto this older digest.
+          git fetch --tags --force origin
+
           # Always resolved, so a dry run rehearses the :latest calculation — the one
           # piece of tag logic that otherwise runs for the first time on a real release.
           # Assigned first rather than read from a process substitution, which `set -e`
@@ -397,6 +489,9 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-image-edge
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -442,3 +537,17 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           registry_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Anonymous pull check
+        # This is the job that creates the GHCR package, so it is the job that has to
+        # notice the package was created private. Without this check the first :edge
+        # publish is green while nobody can pull it, and the failure documented in
+        # docs/release.md would not surface until the first release weeks later.
+        run: |
+          set -euo pipefail
+          docker image rm -f "$IMAGE:edge" >/dev/null 2>&1 || true
+          anon_config=$(mktemp -d)
+          if ! DOCKER_CONFIG="$anon_config" docker pull "$IMAGE:edge"; then
+            echo "::error::$IMAGE:edge is not anonymously pullable — if this is the first publish, make the GHCR package public and re-run (docs/release.md)"
+            exit 1
+          fi

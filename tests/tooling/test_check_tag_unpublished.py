@@ -169,18 +169,24 @@ def test_a_transport_failure_fails_closed(run_script, registry):
 
 
 def test_a_github_token_is_used_for_the_pull_token_exchange(run_script, registry, tmp_path):
+    """Authenticates as GITHUB_ACTOR, the same username docker/login-action sends, so
+    this exchange succeeds under exactly the conditions the registry login does."""
+
     log = tmp_path / "curl.log"
     result = run_script(
         "check-tag-unpublished.sh",
         IMAGE,
         "3.1.0",
         env=registry(
-            FAKE_MANIFEST_STATUS="404", GITHUB_TOKEN="ghs-not-a-real-token", FAKE_CURL_LOG=str(log)
+            FAKE_MANIFEST_STATUS="404",
+            GITHUB_TOKEN="ghs-not-a-real-token",
+            GITHUB_ACTOR="octobot",
+            FAKE_CURL_LOG=str(log),
         ),
     )
 
     assert result.returncode == 0, result.output
-    assert "--user x-access-token:ghs-not-a-real-token" in log.read_text()
+    assert "--user octobot:ghs-not-a-real-token" in log.read_text()
 
 
 def test_no_github_token_still_works_anonymously(run_script, registry, tmp_path):
