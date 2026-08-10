@@ -78,6 +78,33 @@ VPS/systemd path is unaffected — it installs from a source checkout into a vir
 - **Trigger:** the build-it-yourself step becomes real adoption friction, or a release needs to be
   independently verifiable by digest.
 
+### DEP-2: Constrain who can publish — DEFERRED (raised 2026-08-07, PR #105)
+`publish-image.yml` holds `packages: write` and `id-token: write`, so triggering it is equivalent to
+publishing a signed, attested image as this repository. **Write access to this repository is
+therefore publish access**, and no check inside the workflow narrows that.
+
+The reason is structural: GitHub loads a workflow definition from the ref that triggered it — the
+pushed tag for `push`, the *selected ref* for `workflow_dispatch`. Both routes are open to anyone
+who can push:
+
+- push a `vX.Y.Z` tag whose `publish-image.yml` has the gates removed;
+- push **any branch** with the same edit, then dispatch the workflow from it.
+
+The in-workflow gates (commit is on main, CI green on main, dispatch-ref shape) are guards against
+*mistakes* — a tag on the wrong commit, a tag ahead of CI. They are not a boundary.
+
+- **What:** Decide and enforce who can publish, outside the workflow. In rough order of cost:
+  rulesets restricting branch and tag creation; keeping the write-access list small and reviewed;
+  and, if neither is enough, moving the privileged job behind a trigger whose definition always
+  comes from the default branch (`workflow_run`), leaving the tag push as a mere signal.
+- **Why:** A tag ruleset alone — the obvious first answer — does **not** cover the branch-dispatch
+  route. Naming only tags would leave the wider hole while looking solved. Separately, a force-moved
+  tag leaves GHCR holding an image built from source no longer reachable from any ref.
+- **Cons:** Rulesets are another repository setting to keep in step with the release process, and an
+  over-strict one makes cutting a release need an admin. The `workflow_run` redesign changes the
+  release runbook and was considered and not chosen when this epic was planned.
+- **Trigger:** a second person gets write access. Do it before that, not after.
+
 ## Configuration
 
 ### CFG-1: Rename `OCTONOMY_API_VERSION` — DEFERRED (raised 2026-08-05)

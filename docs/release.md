@@ -96,6 +96,43 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
 > published, non-prerelease release is "Latest" by default. `gh issue close` has no `--comment`;
 > post the comment separately with `gh issue comment` before closing.
 
+## First Publish To GHCR
+
+**The very first run of `publish-image.yml` is expected to fail, and it is not a defect.** GHCR
+creates a brand-new package as **private**, even when the repository is public. The workflow's last
+gate before promoting tags is an anonymous pull — the check that the published image is actually
+usable by someone who is not logged in — so that gate fails on the first publish, by design.
+
+This happens minutes after the publish workflow first lands on `main`: merging it makes the next
+green CI run publish `:edge`.
+
+Recovery is one manual step, once, for the lifetime of the package:
+
+1. Open **Packages** on the organisation or repository page and select `octonomy`.
+2. **Package settings → Danger Zone → Change visibility → Public**.
+3. Re-run the failed workflow run.
+
+While the package is private, the failure looks like a `docker pull` returning `denied` or
+`unauthorized`. Nothing else in the workflow needs changing, and nothing was published under a
+release tag — the image is pushed by digest and only promoted to `:X.Y.Z` / `:X.Y` / `:latest`
+**after** every check passes, so a failure at this gate leaves an untagged, prunable digest rather
+than a broken release.
+
+Also confirm, once, that **Inherit access from repository** stays enabled in the same settings page,
+so `GITHUB_TOKEN` keeps its push permission for subsequent releases.
+
+## When A Publish Run Does Not Appear
+
+Release publishes share one concurrency group so they cannot promote `:X.Y` / `:latest` over each
+other. GitHub keeps at most one run *pending* per group, so if several releases are cut inside one
+build window, a queued one can be cancelled before it starts — its version is then tagged in git
+with no image published.
+
+Check the Actions tab after tagging. To publish a version whose run was cancelled, dispatch
+`Publish image` **from that version's tag** with `dry_run` unchecked. That path is idempotent: if
+the digest is already published it re-promotes it rather than rebuilding, and it refuses outright
+if the version resolves to different bytes.
+
 ## Dependency Audit
 
 CI scans the locked runtime dependencies for known vulnerabilities (the `security` job; run
