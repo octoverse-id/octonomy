@@ -99,14 +99,19 @@ jobs:
         # CI's conclusion proves that commit is green. docs/release.md already says to
         # tag the merge commit after green CI — this is what enforces it.
         #
-        # LIMIT, and it is a real one: for a `push` trigger GitHub loads the workflow
-        # definition from the pushed ref, so someone who can push a vX.Y.Z tag can push
-        # one whose publish-image.yml has this step deleted. This gate stops mistakes —
-        # a tag on the wrong commit, a tag ahead of CI — not someone with tag-push
-        # rights. The control for that is a tag protection ruleset, which is a
-        # repository setting rather than anything this file can assert; see DEP-2 in
-        # TODOS.md.
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != true)
+        # No `if:` — this runs for every event that reaches this job, dry runs included.
+        # A dry run is not a lesser privilege: it checks out the selected ref and
+        # executes its Dockerfile, its scripts/ and its composite action while holding
+        # every permission a real release does. Exempting it would have left a tag on an
+        # unmerged commit one dispatch away from running arbitrary code here.
+        #
+        # LIMIT, and it is a real one: GitHub loads a workflow definition from the ref
+        # that triggered it — the pushed tag for `push`, the selected ref for
+        # `workflow_dispatch`. Anyone who can push a branch or tag can therefore push one
+        # whose publish-image.yml has this step deleted. Every check in this file guards
+        # mistakes, not someone with write access; write access to this repository IS
+        # publish access, and only controls evaluated outside the workflow change that.
+        # See DEP-2 in TODOS.md.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -123,14 +128,20 @@ jobs:
               ;;
           esac
 
+          # event=push&branch=main is load-bearing. Filtering on head_sha alone also
+          # matches the `pull_request` run for that commit — and a pull_request run
+          # checks out GitHub's synthetic merge ref, not the commit's own tree. Once the
+          # PR merges with a merge commit, its head becomes an ancestor of main and
+          # passes the comparison above, so a head_sha-only query would accept a tree CI
+          # never actually built.
           green=$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success&event=push&branch=main" \
             --jq '.total_count')
           if [ "${green:-0}" -lt 1 ]; then
-            echo "::error::no successful CI run for $GITHUB_SHA — wait for CI to pass on the merge commit before tagging"
+            echo "::error::no successful CI run on main for $GITHUB_SHA — tag the merge commit, and wait for its CI to pass"
             exit 1
           fi
-          echo "$GITHUB_SHA is on main ($status) with $green successful CI run(s)"
+          echo "$GITHUB_SHA is on main ($status) with $green successful CI run(s) on main"
 
       - name: Check out the ref being published
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
