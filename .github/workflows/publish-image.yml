@@ -293,49 +293,21 @@ jobs:
           echo "digest=$digest" >>"$GITHUB_OUTPUT"
           echo "working with $IMAGE@$digest"
 
-      - name: Smoke test the published digest (amd64)
-        # Runs against the exact bytes that will carry the version tag. The image
-        # defaults to DJANGO_DEBUG=false and config/settings.py refuses to boot on an
-        # empty or default SECRET_KEY, so the same three variables ci.yml passes are
-        # needed here. `check` reads settings only, so no database is touched.
-        if: steps.guard.outputs.build != 'false'
-        env:
-          DIGEST: ${{ steps.image.outputs.digest }}
-        run: |
-          docker run --rm \
-            -e DJANGO_SECRET_KEY=publish-smoke-not-a-real-secret \
-            -e SERVICE_TOKEN_PEPPER=publish-pepper \
-            -e DATABASE_URL=sqlite:////tmp/octonomy-smoke.sqlite3 \
-            "$IMAGE@$DIGEST" python manage.py check
-
-      - name: Smoke test the published digest (arm64, emulated)
-        # Without this the arm64 variant ships having never been started by anyone.
-        # binfmt comes from the setup-qemu-action step inside the composite action
-        # above — which is why this step must come after it, not before.
-        if: steps.guard.outputs.build != 'false'
-        env:
-          DIGEST: ${{ steps.image.outputs.digest }}
-        run: |
-          docker run --rm --platform linux/arm64 \
-            -e DJANGO_SECRET_KEY=publish-smoke-not-a-real-secret \
-            -e SERVICE_TOKEN_PEPPER=publish-pepper \
-            -e DATABASE_URL=sqlite:////tmp/octonomy-smoke.sqlite3 \
-            "$IMAGE@$DIGEST" python manage.py check
-
-      - name: Attest build provenance
-        if: steps.guard.outputs.build != 'false'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.image.outputs.digest }}
-          push-to-registry: true
-
       - name: Resolve the per-platform manifests inside the index
-        # Scanning the index digest on an amd64 runner silently resolves to the amd64
-        # manifest, so a single SBOM would list amd64 packages while claiming the whole
-        # multi-arch index as its subject — arm64's base-image packages would be absent
-        # from a signed document that says it describes the release. Each platform is
-        # scanned by its own manifest digest instead.
+        # Every per-architecture step below addresses its own manifest digest rather
+        # than the index digest, for two independent reasons.
+        #
+        # The smoke tests MUST: `docker run` stores a pulled image under the reference
+        # it was asked for, so running the index digest twice with different
+        # `--platform` values makes the second pull try to overwrite the first under the
+        # same reference, and the daemon refuses — `cannot overwrite digest <index>`,
+        # exit 125. Reproduced against a local registry, and the per-manifest form
+        # verified to run both architectures cleanly.
+        #
+        # The SBOMs MUST: scanning the index on an amd64 runner silently resolves to the
+        # amd64 manifest, so one SBOM would list amd64 packages while claiming the whole
+        # index as its subject — arm64's base-image packages absent from a signed
+        # document that says it describes the release.
         id: manifests
         if: steps.guard.outputs.build != 'false'
         env:
@@ -354,6 +326,45 @@ jobs:
             echo "$arch=$digest" >>"$GITHUB_OUTPUT"
             echo "linux/$arch -> $digest"
           done
+
+      - name: Smoke test the published image (amd64)
+        # Runs against the exact bytes that will carry the version tag. The image
+        # defaults to DJANGO_DEBUG=false and config/settings.py refuses to boot on an
+        # empty or default SECRET_KEY, so the same three variables ci.yml passes are
+        # needed here. `check` reads settings only, so no database is touched.
+        if: steps.guard.outputs.build != 'false'
+        env:
+          DIGEST: ${{ steps.manifests.outputs.amd64 }}
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -e DJANGO_SECRET_KEY=publish-smoke-not-a-real-secret \
+            -e SERVICE_TOKEN_PEPPER=publish-pepper \
+            -e DATABASE_URL=sqlite:////tmp/octonomy-smoke.sqlite3 \
+            "$IMAGE@$DIGEST" python manage.py check
+
+      - name: Smoke test the published image (arm64, emulated)
+        # Without this the arm64 variant ships having never been started by anyone.
+        # binfmt comes from the setup-qemu-action step inside the composite action
+        # above — which is why this step must come after it, not before.
+        if: steps.guard.outputs.build != 'false'
+        env:
+          DIGEST: ${{ steps.manifests.outputs.arm64 }}
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -e DJANGO_SECRET_KEY=publish-smoke-not-a-real-secret \
+            -e SERVICE_TOKEN_PEPPER=publish-pepper \
+            -e DATABASE_URL=sqlite:////tmp/octonomy-smoke.sqlite3 \
+            "$IMAGE@$DIGEST" python manage.py check
+
+      - name: Attest build provenance
+        # Subject is the INDEX digest, not a platform manifest: the index is what a
+        # release tag resolves to and what anyone verifying `oci://...:X.Y.Z` presents.
+        if: steps.guard.outputs.build != 'false'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
 
       - name: Generate an SPDX SBOM for linux/amd64
         # Trivy rather than a new vendor: it is already in this repository's supply
