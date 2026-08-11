@@ -416,16 +416,35 @@ jobs:
         # do — it would pass with the SBOM missing entirely. Assert each predicate type
         # by name. Runs on the recovery path too, so a re-promotion still proves the
         # digest it moves tags onto is attested.
+        #
+        # --signer-workflow is load-bearing, not decoration. --repo only validates the
+        # certificate's SourceRepository, so on its own it accepts a matching predicate
+        # signed by ANY workflow in this repository — add one workflow with
+        # `id-token: write` + `attestations: write` and its attestations would satisfy
+        # this gate. Pinning the signer workflow path is what makes "built by the
+        # release workflow" a checked claim instead of a comment. It matters most on
+        # the recovery path, where this verifies an attestation this run did not create.
+        # gh's own docs call --repo the minimum and recommend exactly this flag.
+        #
+        # Verified against the real dry-run attestation (run 31382089330): the signing
+        # certificate's SAN is
+        #   https://github.com/octoverse-id/octonomy/.github/workflows/publish-image.yml@refs/heads/main
+        # which is the caller workflow — attest-build-provenance is an action, not a
+        # reusable workflow, so --signer-repo/--cert-identity are not needed here.
+        # (--signer-workflow needs gh >= 2.51; ubuntu-latest ships far newer.)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
+          signer="$GITHUB_REPOSITORY/.github/workflows/publish-image.yml"
           gh attestation verify "oci://$IMAGE@$DIGEST" \
             --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer" \
             --predicate-type https://slsa.dev/provenance/v1
           gh attestation verify "oci://$IMAGE@$DIGEST" \
             --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer" \
             --predicate-type https://spdx.dev/Document
 
       - name: Anonymous pull check

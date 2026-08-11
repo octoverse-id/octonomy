@@ -25,8 +25,15 @@ the example deployments use it.
 
   ```bash
   gh attestation verify oci://ghcr.io/octoverse-id/octonomy:<version> \
-    --repo octoverse-id/octonomy --predicate-type https://slsa.dev/provenance/v1
+    --repo octoverse-id/octonomy \
+    --signer-workflow octoverse-id/octonomy/.github/workflows/publish-image.yml \
+    --predicate-type https://slsa.dev/provenance/v1
   ```
+
+  `--signer-workflow` is not optional detail: `--repo` alone only validates the certificate's
+  source *repository*, so it would accept a predicate signed by any workflow here. Needs `gh`
+  2.51+. See [deployment.md](docs/deployment.md#verifying-what-you-pulled) for the SBOM predicate
+  and the tag-binding option.
 
   A version tag is immutable: re-running a publish re-promotes the digest already published under
   that version (which is how a partially-promoted release recovers) and **fails** if the version

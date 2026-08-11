@@ -117,19 +117,30 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    #    A fresh DOCKER_CONFIG drops your credentials without logging you out.
    DOCKER_CONFIG=$(mktemp -d) docker pull ghcr.io/octoverse-id/octonomy:<version>
 
-   # d. Both attestations verify. Check them BY PREDICATE TYPE — a bare `gh attestation
-   #    verify` passes with the SBOM missing entirely.
+   # d. Both attestations verify, and the RELEASE WORKFLOW is what signed them.
+   #    --predicate-type: a bare verify passes with the SBOM missing entirely.
+   #    --signer-workflow: --repo alone accepts a predicate signed by ANY workflow in
+   #      this repo, so without it "built by the release workflow" is unchecked.
+   #    --source-ref: optional, binds the image to the release tag (needs gh 2.68+).
    gh attestation verify oci://ghcr.io/octoverse-id/octonomy:<version> \
-     --repo octoverse-id/octonomy --predicate-type https://slsa.dev/provenance/v1
+     --repo octoverse-id/octonomy \
+     --signer-workflow octoverse-id/octonomy/.github/workflows/publish-image.yml \
+     --source-ref refs/tags/v<version> \
+     --predicate-type https://slsa.dev/provenance/v1
    gh attestation verify oci://ghcr.io/octoverse-id/octonomy:<version> \
-     --repo octoverse-id/octonomy --predicate-type https://spdx.dev/Document
+     --repo octoverse-id/octonomy \
+     --signer-workflow octoverse-id/octonomy/.github/workflows/publish-image.yml \
+     --source-ref refs/tags/v<version> \
+     --predicate-type https://spdx.dev/Document
    ```
 
-   Step (d) needs **`gh` 2.49 or newer** — `gh attestation` does not exist on older builds (the
-   `gh 2.4.0` packaged by Debian/Ubuntu prints `unknown command "attestation"`). This is not a
-   reason to skip the gate: `publish-image.yml` runs these two exact commands on the runner, with
-   both predicate types, **before** it promotes any tag, so a successful run in step (a) already
-   proves the attestations verified. On an older `gh`, confirm it in the run log instead:
+   Step (d) needs **`gh` 2.51 or newer** (2.68+ for `--source-ref`; drop that line on older
+   builds) — `gh attestation` arrived in 2.49 and `--signer-workflow` in 2.51, and the `gh 2.4.0`
+   packaged by Debian/Ubuntu has no `attestation` command at all (`unknown command
+   "attestation"`). This is not a reason to skip the gate: `publish-image.yml` runs the same
+   verification with the same signer pin, for both predicate types, **before** it promotes any
+   tag, so a successful run in step (a) already proves the attestations verified. On an older
+   `gh`, confirm it in the run log instead:
 
    ```bash
    gh run view <run-id> --log | grep -A3 "Verify provenance and SBOM"

@@ -111,26 +111,39 @@ no overwrite switch. A fix ships as a new patch version.
 ### Verifying what you pulled
 
 Every release carries SLSA build provenance and a per-architecture SPDX SBOM, signed via Sigstore
-and attached to the image. Verify both — a bare `gh attestation verify` proves *an* attestation
-exists, which would still pass with the SBOM missing:
+and attached to the image. Verify both, and pin **who** signed them:
 
 ```bash
 gh attestation verify oci://ghcr.io/octoverse-id/octonomy:3.1.0 \
-  --repo octoverse-id/octonomy --predicate-type https://slsa.dev/provenance/v1
+  --repo octoverse-id/octonomy \
+  --signer-workflow octoverse-id/octonomy/.github/workflows/publish-image.yml \
+  --predicate-type https://slsa.dev/provenance/v1
 
 gh attestation verify oci://ghcr.io/octoverse-id/octonomy:3.1.0 \
-  --repo octoverse-id/octonomy --predicate-type https://spdx.dev/Document
+  --repo octoverse-id/octonomy \
+  --signer-workflow octoverse-id/octonomy/.github/workflows/publish-image.yml \
+  --predicate-type https://spdx.dev/Document
 ```
 
-This proves the image was built by this repository's release workflow from the commit the
-provenance names — not merely that something was published under the name. `:edge` is **not**
-attested and will fail this check by design.
+Both extra flags carry weight, and dropping either weakens the check in a way that still exits 0:
 
-Needs **`gh` 2.49+** (`gh attestation` does not exist on older builds — the `gh 2.4.0` in
-Debian/Ubuntu's repositories reports `unknown command "attestation"`; install from
-[cli.github.com](https://cli.github.com) instead). The same verification also runs inside the
-publish workflow before any release tag is promoted, so an image carrying a `:X.Y.Z` tag has
-already passed it.
+- **`--predicate-type`** — a bare `gh attestation verify` proves *an* attestation exists, so it
+  passes with the SBOM missing entirely. Naming each predicate is what checks both are present.
+- **`--signer-workflow`** — `--repo` alone only validates the certificate's *source repository*, so
+  it accepts a matching predicate signed by **any** workflow here. Pinning the workflow path is
+  what establishes that the release workflow built it. GitHub's own documentation calls `--repo`
+  the minimum and recommends this flag on top of it.
+
+Together these say the image was built by this repository's publish workflow and carries both
+predicates. To additionally bind the image to the **release tag** it claims to come from, add
+`--source-ref refs/tags/v3.1.0` (needs `gh` 2.68+). `:edge` is **not** attested and fails all of
+this by design.
+
+Needs **`gh` 2.51+** as written — `gh attestation` arrived in 2.49 and `--signer-workflow` in 2.51.
+The `gh 2.4.0` in Debian/Ubuntu's repositories has no `attestation` command at all
+(`unknown command "attestation"`); install from [cli.github.com](https://cli.github.com) instead.
+The same verification, with the same signer pin, also runs inside the publish workflow before any
+release tag is promoted, so an image carrying a `:X.Y.Z` tag has already passed it.
 
 ### Building it yourself
 
