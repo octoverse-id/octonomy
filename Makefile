@@ -60,6 +60,19 @@ version-check:
 	if ! grep -q "## \[$$semver\]" CHANGELOG.md; then \
 		echo "version-check FAILED: CHANGELOG.md has no '## [$$semver]' section"; exit 1; \
 	fi; \
+	case "$$semver" in \
+	*[!0-9.]*) \
+		echo "version-check: $$semver is a prerelease — skipping the image gate (publish-image.yml's tag glob only publishes vX.Y.Z, so no image exists to point at)"; \
+		;; \
+	*) \
+		./scripts/check-image-refs.sh "$$semver" \
+			deploy/kubernetes/deployment.yaml \
+			deploy/kubernetes/migrate-job.yaml \
+			deploy/kubernetes/dispatcher-cronjob.yaml \
+			deploy/docker/compose.yaml \
+			docs/deployment.md || exit 1; \
+		;; \
+	esac; \
 	echo "version-check OK: $$semver"
 
 release-check: lint check migration-check test openapi-check audit version-check

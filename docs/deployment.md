@@ -37,8 +37,10 @@ also serve its static assets (see [operations.md, "Admin console"](operations.md
 
 - **PostgreSQL** — a reachable database (managed or self-run). CI and the example Compose file use
   PostgreSQL 16; any currently-supported major works. SQLite is rejected in production.
-- **The container image** (Docker/Kubernetes) **or Python 3.12+** (VPS). The image is built from the
-  repo's `Dockerfile`; there is no published image, so you build it yourself (see below).
+- **The container image** (Docker/Kubernetes) **or Python 3.12+** (VPS). Official images are
+  published to GHCR at `ghcr.io/octoverse-id/octonomy` and the package is public, so no registry
+  of your own and no pull credentials are needed (see below). Building it yourself from the repo's
+  `Dockerfile` stays supported.
 - A TLS-terminating proxy/ingress in front of the app for anything internet-facing.
 
 ---
@@ -71,20 +73,81 @@ structured JSON on stdout/stderr; point your log collector at the container/proc
 
 ## The container image
 
-There is no pre-published image, so build it from the repo:
+Octonomy publishes an official image to GHCR. The package is **public**: no account, no
+`docker login`, and no `imagePullSecrets`.
+
+```bash
+docker pull ghcr.io/octoverse-id/octonomy:3.1.0
+```
+
+Releases are built for **`linux/amd64` and `linux/arm64`**, and each architecture is started and
+smoke-tested before the version tag is promoted onto it.
+
+The image runs Gunicorn as a **non-root** user, validates configuration on start (`manage.py check`,
+which fail-closes on an invalid namespace flag combination), and logs JSON. It does **not** run
+migrations — that is your one-shot step.
+
+### Which tag to use
+
+| Tag | Moves? | Use it for |
+| --- | --- | --- |
+| `:3.1.0` | **Never.** A given `X.Y.Z` always resolves to the same bytes. | Production. This is what the examples in `deploy/` pin. |
+| `:3.1` | Moves to the newest `3.1.x`. | Picking up patch fixes automatically. |
+| `:latest` | Moves to the newest release. | Trying it out. Not recommended for production — an upgrade arrives whenever you restart. |
+| `:edge` | Moves on every green build of `main`. | **Unsupported**, and unattested. Testing unreleased work only. |
+
+`:3.1` and `:latest` only ever move *forward*: they are recomputed against every existing release
+tag at publish time, so a backport released after a newer version cannot drag them backward onto
+older code.
+
+```bash
+docker pull ghcr.io/octoverse-id/octonomy:latest   # newest release
+docker pull ghcr.io/octoverse-id/octonomy:edge     # tip of main — unsupported, unattested
+```
+
+Republishing different bytes under a shipped `X.Y.Z` is refused by the publish workflow — there is
+no overwrite switch. A fix ships as a new patch version.
+
+### Verifying what you pulled
+
+Every release carries SLSA build provenance and a per-architecture SPDX SBOM, signed via Sigstore
+and attached to the image. Verify both — a bare `gh attestation verify` proves *an* attestation
+exists, which would still pass with the SBOM missing:
+
+```bash
+gh attestation verify oci://ghcr.io/octoverse-id/octonomy:3.1.0 \
+  --repo octoverse-id/octonomy --predicate-type https://slsa.dev/provenance/v1
+
+gh attestation verify oci://ghcr.io/octoverse-id/octonomy:3.1.0 \
+  --repo octoverse-id/octonomy --predicate-type https://spdx.dev/Document
+```
+
+This proves the image was built by this repository's release workflow from the commit the
+provenance names — not merely that something was published under the name. `:edge` is **not**
+attested and will fail this check by design.
+
+Needs **`gh` 2.49+** (`gh attestation` does not exist on older builds — the `gh 2.4.0` in
+Debian/Ubuntu's repositories reports `unknown command "attestation"`; install from
+[cli.github.com](https://cli.github.com) instead). The same verification also runs inside the
+publish workflow before any release tag is promoted, so an image carrying a `:X.Y.Z` tag has
+already passed it.
+
+### Building it yourself
+
+Still fully supported — for an air-gapped registry, a patched base image, or a local change:
 
 ```bash
 # Docker Compose / single host — a local tag is enough:
 docker build -t octonomy:local .
 
 # Kubernetes — the cluster must be able to pull it, so tag for your registry and push:
-docker build -t your-registry.example.com/octonomy:3.0.1 .
-docker push your-registry.example.com/octonomy:3.0.1
+docker build -t your-registry.example.com/octonomy:3.1.0 .
+docker push your-registry.example.com/octonomy:3.1.0
 ```
 
-The image runs Gunicorn as a **non-root** user, validates configuration on start (`manage.py check`,
-which fail-closes on an invalid namespace flag combination), and logs JSON. It does **not** run
-migrations — that is your one-shot step.
+Then replace the `image:` values in the example configs — three lines in
+`deploy/docker/compose.yaml`, and one each in `deploy/kubernetes/deployment.yaml`,
+`migrate-job.yaml`, and `dispatcher-cronjob.yaml`.
 
 ---
 
@@ -94,32 +157,42 @@ Best for a single VM or a small self-hosted box. The example
 [`deploy/docker/compose.yaml`](../deploy/docker/compose.yaml) runs PostgreSQL, a one-shot migration,
 the API, and the dispatcher.
 
-```bash
-# 1. Build the image (from the repo root — the Dockerfile uses the repo as build context)
-docker build -t octonomy:local .
+There is nothing to build — the compose file pulls the published image.
 
-# 2. Configure. Copy the template next to the compose file and lock it down (it holds
+```bash
+# 1. Configure. Copy the template next to the compose file and lock it down (it holds
 #    secrets). Set DJANGO_SECRET_KEY, SERVICE_TOKEN_PEPPER, ALLOWED_HOSTS, POSTGRES_PASSWORD,
 #    and DATABASE_URL with host "db": postgres://octonomy:<POSTGRES_PASSWORD>@db:5432/octonomy
+#    POSTGRES_PASSWORD ships commented out (it is Compose-only) — uncomment it.
 cd deploy/docker
 cp ../.env.production.example .env
 chmod 600 .env
 $EDITOR .env
 
-# 3. Start it from deploy/docker/ so compose auto-loads .env (for ${...} interpolation AND
+# 2. Start it from deploy/docker/ so compose auto-loads .env (for ${...} interpolation AND
 #    as the containers' env). migrate runs first, then app + dispatcher come up.
 docker compose up -d
 
-# 4. Watch it become healthy
+# 3. Watch it become healthy
 docker compose ps
 docker compose logs -f app
 ```
 
 The API listens on `127.0.0.1:8000` (loopback). Put a TLS proxy (nginx, Caddy, Traefik) on the host
 in front of it for public traffic, or change the port mapping to `8000:8000` to reach it directly on
-a trusted network. Upgrades: rebuild the image (repo root), then `docker compose up -d` again from
-`deploy/docker/` — the migrate service re-runs (a no-op when already applied) and the app/dispatcher
-restart.
+a trusted network.
+
+**Upgrades:** bump the version on **all three** `image:` lines in `compose.yaml` (migrate, app,
+dispatcher — leave the dispatcher behind and it runs old code against the migrated schema), then
+from `deploy/docker/`:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The migrate service re-runs (a no-op when already applied) and the app/dispatcher restart. If you
+build your own image, rebuild from the repo root instead of pulling.
 
 ---
 
@@ -130,9 +203,12 @@ Manifests are in [`deploy/kubernetes/`](../deploy/kubernetes). They create an `o
 (probes wired to `/health/live` and `/health/ready`, non-root, read-only root filesystem), a
 `Service`, an `Ingress` (TLS), and the dispatcher `CronJob`.
 
-**Before applying:** edit `configmap.yaml` (`ALLOWED_HOSTS`), set the image reference in
-`deployment.yaml`, `migrate-job.yaml`, and `dispatcher-cronjob.yaml` to the image you pushed, and set
-the host in `ingress.yaml`.
+The manifests reference the published image, so they apply **as-is** — no registry of your own, no
+`imagePullSecrets`, and no edit to any `image:` field.
+
+**Before applying:** edit `configmap.yaml` (`ALLOWED_HOSTS`) and set the host in `ingress.yaml`.
+That is the whole list. (If you build your own image, also repoint the `image:` field in
+`deployment.yaml`, `migrate-job.yaml`, and `dispatcher-cronjob.yaml`.)
 
 ```bash
 # 1. Namespace + non-secret config
@@ -165,10 +241,9 @@ This assumes an ingress controller (the example targets ingress-nginx) and, for 
 cert-manager with a `ClusterIssuer`. Point `DATABASE_URL` at your PostgreSQL (a managed service, or
 an in-cluster operator — this repo does not ship a database chart).
 
-**Upgrades:** build and push a new image tag, then bump it in **all three** workloads that use it —
-`deployment.yaml`, `migrate-job.yaml`, and `dispatcher-cronjob.yaml` (miss the CronJob and the
-dispatcher keeps running old code against the migrated schema). Re-run the migrate Job (step 3), then
-re-apply the workloads:
+**Upgrades:** bump the image tag in **all three** workloads that use it — `deployment.yaml`,
+`migrate-job.yaml`, and `dispatcher-cronjob.yaml` (miss the CronJob and the dispatcher keeps running
+old code against the migrated schema). Re-run the migrate Job (step 3), then re-apply the workloads:
 
 ```bash
 kubectl -n octonomy apply -f deploy/kubernetes/deployment.yaml \

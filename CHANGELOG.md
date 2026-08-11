@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-08-11
+
+A **minor** release: the REST contract is unchanged on both surfaces, and no request or response
+shape moves. What is new is how you *get* Octonomy — there is now an official container image, and
+the example deployments use it.
+
 ### Added
 - Container images are now published to
   [GHCR](https://github.com/octoverse-id/octonomy/pkgs/container/octonomy). Tagging `vX.Y.Z`
@@ -27,8 +33,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolves to different bytes. There is no overwrite switch — republishing different bytes under a
   shipped version is what a patch release is for.
 
-  The example manifests in `deploy/` and `docs/deployment.md` still build locally; adopting the
-  published image there is the next change.
+- The example deployments now **pull** that image instead of asking you to build one.
+  `deploy/kubernetes/` applies verbatim — no registry of your own, no `imagePullSecrets`, and no
+  edit to any `image:` field — and `deploy/docker/compose.yaml` starts without a build step.
+  Building it yourself is still documented, now as the alternative rather than the only path.
+
+  Kubernetes was the reason this mattered: Compose users only ever needed `docker build` on the
+  host they were already deploying to, but a cluster needs a registry it can pull from, which is
+  an infrastructure prerequisite rather than a command.
+
+### Changed
+- `make version-check` now also verifies every published-image reference in the example configs
+  and in `docs/deployment.md` via `scripts/check-image-refs.sh`, so a release cannot ship example
+  manifests pointing at the previous version — or at a typo'd tag. The gate asserts per-file
+  presence, so a file that loses its reference entirely fails rather than passing silently.
+- `docs/release.md` gains a **mandatory verification gate** between pushing the version tag and
+  publishing the GitHub release: the release is not announced until its image is confirmed
+  published, anonymously pullable, and attested.
 
 ## [3.0.1] - 2026-08-05
 
@@ -280,7 +301,8 @@ Initial public release.
 - OpenAPI schema and Swagger/ReDoc docs via drf-spectacular.
 - Apache License 2.0.
 
-[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.0.1...HEAD
+[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/octoverse-id/octonomy/compare/v3.0.1...v3.1.0
 [3.0.1]: https://github.com/octoverse-id/octonomy/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/octoverse-id/octonomy/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/octoverse-id/octonomy/compare/v1.0.0...v2.0.0

@@ -65,8 +65,11 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
      OpenAPI drift gate in CI regenerates and diffs both)
    - refresh the lock with `uv lock` (the project's own `version` in `uv.lock`)
    - the example image tags, which have no default to fall back on:
-     `deploy/kubernetes/{deployment,migrate-job,dispatcher-cronjob}.yaml` and the `docker build` /
-     `docker push` commands in `docs/deployment.md`
+     `deploy/kubernetes/{deployment,migrate-job,dispatcher-cronjob}.yaml` (one `image:` each),
+     `deploy/docker/compose.yaml` (**three** `image:` lines — migrate, app, dispatcher), and
+     `docs/deployment.md`. `make version-check` enforces every one of these via
+     `scripts/check-image-refs.sh`, including that a file has not silently *lost* its reference,
+     so a missed tag is a red gate rather than a stale example someone finds in production.
    - `SECURITY.md` — only when the supported line changes (a patch inside the same `x.y` line
      does not move it)
 
@@ -82,15 +85,68 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    make release-check   # lint, checks, migrations, tests, openapi drift, audit, version-check
    ```
 
-5. After merge and green CI, tag the merge commit and publish the release:
+5. After merge and green CI, tag the merge commit. Pushing the tag is what triggers
+   `publish-image.yml`, so this is the step that builds and publishes the container image:
 
    ```bash
    git tag -a v<version> -m "Octonomy <version>" <merge-commit>
    git push origin v<version>
+   ```
+
+6. **Verify the image before announcing the release. This gate is mandatory.**
+
+   A GitHub release is the announcement; the image is the artifact people actually run. Publishing
+   the announcement first means telling people to `docker pull` a tag that may not exist — and
+   `docs/deployment.md`, the `deploy/` examples, and the README quickstart all name `:<version>`
+   the moment the release is public. **A release is not published until its image is.**
+
+   The publish run can also fail for reasons that have nothing to do with your code: a queued run
+   cancelled by a concurrent release (see ["When A Publish Run Does Not
+   Appear"](#when-a-publish-run-does-not-appear)), or a first-ever publish against a private
+   package (see ["First Publish To GHCR"](#first-publish-to-ghcr)).
+
+   ```bash
+   # a. The publish workflow actually ran for this tag, and succeeded.
+   gh run list --workflow=publish-image.yml --limit 5
+
+   # b. The version tag resolves, and the moving tags followed it.
+   ./scripts/check-tag-unpublished.sh ghcr.io/octoverse-id/octonomy <version>   # -> "present <digest>"
+   ./scripts/check-tag-unpublished.sh ghcr.io/octoverse-id/octonomy latest      # same digest, if this is the newest release
+
+   # c. It is pullable by someone who is NOT logged in — the whole point of publishing it.
+   #    A fresh DOCKER_CONFIG drops your credentials without logging you out.
+   DOCKER_CONFIG=$(mktemp -d) docker pull ghcr.io/octoverse-id/octonomy:<version>
+
+   # d. Both attestations verify. Check them BY PREDICATE TYPE — a bare `gh attestation
+   #    verify` passes with the SBOM missing entirely.
+   gh attestation verify oci://ghcr.io/octoverse-id/octonomy:<version> \
+     --repo octoverse-id/octonomy --predicate-type https://slsa.dev/provenance/v1
+   gh attestation verify oci://ghcr.io/octoverse-id/octonomy:<version> \
+     --repo octoverse-id/octonomy --predicate-type https://spdx.dev/Document
+   ```
+
+   Step (d) needs **`gh` 2.49 or newer** — `gh attestation` does not exist on older builds (the
+   `gh 2.4.0` packaged by Debian/Ubuntu prints `unknown command "attestation"`). This is not a
+   reason to skip the gate: `publish-image.yml` runs these two exact commands on the runner, with
+   both predicate types, **before** it promotes any tag, so a successful run in step (a) already
+   proves the attestations verified. On an older `gh`, confirm it in the run log instead:
+
+   ```bash
+   gh run view <run-id> --log | grep -A3 "Verify provenance and SBOM"
+   ```
+
+   If any of these fail, **stop and fix the publish before continuing** — do not create the
+   release. The version tag in git is already pushed, which is fine: re-publishing the same
+   version re-promotes the digest it already published and refuses if the bytes differ, so the
+   recovery path is safe to re-run.
+
+7. Only once step 6 is fully green, publish the release:
+
+   ```bash
    gh release create v<version> --title "v<version>" --notes-file <notes>
    ```
 
-6. Close the tracking issue and delete the merged branch.
+8. Close the tracking issue and delete the merged branch.
 
 > `gh` caveats (observed on `gh 2.4.0`): `release create` has no `--latest` / `--verify-tag` — a
 > published, non-prerelease release is "Latest" by default. `gh issue close` has no `--comment`;

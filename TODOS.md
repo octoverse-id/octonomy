@@ -56,27 +56,7 @@ asymmetry).
 - **Depends on / blocked by:** #85 merged. **Trigger:** an outbox consumer needs to distinguish
   reactivation events.
 
-## Deployment (PR #95)
-
-### DEP-1: Publish an official container image — DEFERRED (from PR #95)
-`docs/deployment.md` has every *container* operator build the image themselves
-(`docker build -t octonomy:local .` for Compose; for Kubernetes, tag and push to a registry the
-cluster can pull from). There is no published image, so nobody can `docker pull` a release. The
-VPS/systemd path is unaffected — it installs from a source checkout into a virtualenv.
-
-- **What:** A CI job that builds and pushes a versioned image (e.g. `ghcr.io/octoverse-id/octonomy`)
-  on release tags, plus multi-arch (amd64/arm64) and provenance/signing if the registry supports it.
-  Then update the guide to `pull` by default and keep "build it yourself" as the alternative.
-- **Why:** Building the image is the biggest step in both container paths, and Kubernetes additionally
-  requires a cluster-pullable registry — an extra dependency for anyone without one. It also means no
-  two deployments provably run the same bytes for a given release.
-- **Cons:** Adds a publish surface to own — registry credentials, tag hygiene, and a supply-chain
-  story (who can push, how images are signed). Publishing is a one-way door reputationally: once
-  people pull `:3.1.0`, that tag has to keep meaning the same thing.
-- **Context:** Raised as explicit out-of-scope follow-up in the PR #95 description; the guide already
-  notes the absence. Deliberately not bundled with the docs change.
-- **Trigger:** the build-it-yourself step becomes real adoption friction, or a release needs to be
-  independently verifiable by digest.
+## Deployment
 
 ### DEP-2: Constrain who can publish — DEFERRED (raised 2026-08-07, PR #105)
 `publish-image.yml` holds `packages: write` and `id-token: write`, so triggering it is equivalent to
@@ -168,6 +148,15 @@ Closed out; kept as a one-line ledger so settled decisions are not re-proposed. 
 - **NS-6 — Constraint-swap lock window.** DONE as tooling + guidance (#58 closed, PR #64).
   `python manage.py estimate_namespace_swap_lock` ships; measuring the window against real row counts
   is a per-deployment operator step on a restored clone, not a maintainer task.
+- **DEP-1 — Publish an official container image.** DONE (epic #100; #101 CI build, #102 publish
+  workflow, #103 adoption in 3.1.0). `ghcr.io/octoverse-id/octonomy` publishes multi-arch
+  `:X.Y.Z` / `:X.Y` / `:latest` on a `vX.Y.Z` tag — smoke-tested per architecture, SLSA provenance
+  and per-arch SPDX SBOM attested, anonymous-pull checked before any tag is promoted — plus
+  `:edge` per green `main` build (amd64, unattested, **unsupported**). `deploy/` and
+  `docs/deployment.md` pull by default; building it yourself stays documented.
+  `make version-check` guards the example references. **Rebuild automation is won't-do** for now:
+  it requires deciding what a rebuilt `:X.Y.Z` means, and different bytes under a shipped version
+  breaks the one promise that cannot be walked back. Who may publish is DEP-2, still open.
 - **NS-7 — Post-burn-in flag + index cleanup.** **Won't-do** (reframed). The five
   `OCTONOMY_NAMESPACE_*` flags and the E010–E016 dependency check are **permanent operator
   configuration**, not rollout scaffolding — each deployment uses them for its own staged rollout and
