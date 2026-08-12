@@ -153,9 +153,12 @@ Still fully supported — for an air-gapped registry, a patched base image, or a
 # Docker Compose / single host — a local tag is enough:
 docker build -t octonomy:local .
 
-# Kubernetes — the cluster must be able to pull it, so tag for your registry and push:
-docker build -t your-registry.example.com/octonomy:3.1.0 .
-docker push your-registry.example.com/octonomy:3.1.0
+# Kubernetes — the cluster must be able to pull it, so tag for your registry and push.
+# Read the version out of the checkout rather than typing it, so the tag always names
+# the release you are actually building:
+version=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+docker build -t "your-registry.example.com/octonomy:$version" .
+docker push "your-registry.example.com/octonomy:$version"
 ```
 
 Then replace the `image:` values in the example configs — three lines in

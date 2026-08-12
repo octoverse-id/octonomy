@@ -50,10 +50,12 @@ the example deployments use it.
   an infrastructure prerequisite rather than a command.
 
 ### Changed
-- `make version-check` now also verifies every published-image reference in the example configs
-  and in `docs/deployment.md` via `scripts/check-image-refs.sh`, so a release cannot ship example
-  manifests pointing at the previous version — or at a typo'd tag. The gate asserts per-file
-  presence, so a file that loses its reference entirely fails rather than passing silently.
+- `make version-check` now also verifies every published-image reference in the example configs,
+  `docs/deployment.md`, and the `README.md` quickstart via `scripts/check-image-refs.sh`, so a
+  release cannot ship examples pointing at the previous version — or at a typo'd tag. The gate
+  asserts per-file presence, so a file that loses its reference entirely fails rather than
+  passing silently, and it additionally rejects a **moving** tag (`:latest`, `:edge`) in the
+  example deployments, which must pin an immutable `X.Y.Z`.
 - `docs/release.md` gains a **mandatory verification gate** between pushing the version tag and
   publishing the GitHub release: the release is not announced until its image is confirmed
   published, anonymously pullable, and attested.

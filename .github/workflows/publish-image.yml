@@ -432,20 +432,29 @@ jobs:
         # which is the caller workflow — attest-build-provenance is an action, not a
         # reusable workflow, so --signer-repo/--cert-identity are not needed here.
         # (--signer-workflow needs gh >= 2.51; ubuntu-latest ships far newer.)
+        # --source-ref/--source-digest bind the attestation to the ref and commit THIS run
+        # is publishing, which the signer pin alone does not. The case that needs it is the
+        # recovery path: a `:X.Y.Z` pushed by hand onto some other already-attested digest
+        # — the `:dryrun` one, say — would otherwise satisfy every check here and then be
+        # promoted to `:X.Y` and `:latest`. A dry run cannot reach that state on its own
+        # (it promotes only `:dryrun`), but DEP-2 in TODOS.md already records that write
+        # access to this repository is publish access, and this file guards mistakes.
+        # Both are exact-match and fail closed, including on a force-moved tag.
+        # (--source-ref/--source-digest need gh >= 2.68; ubuntu-latest ships far newer.)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
           signer="$GITHUB_REPOSITORY/.github/workflows/publish-image.yml"
-          gh attestation verify "oci://$IMAGE@$DIGEST" \
-            --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$signer" \
-            --predicate-type https://slsa.dev/provenance/v1
-          gh attestation verify "oci://$IMAGE@$DIGEST" \
-            --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$signer" \
-            --predicate-type https://spdx.dev/Document
+          for predicate in https://slsa.dev/provenance/v1 https://spdx.dev/Document; do
+            gh attestation verify "oci://$IMAGE@$DIGEST" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$signer" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --predicate-type "$predicate"
+          done
 
       - name: Anonymous pull check
         # The published image has to be pullable by someone who is not logged in —

@@ -70,7 +70,15 @@ version-check:
 			deploy/kubernetes/migrate-job.yaml \
 			deploy/kubernetes/dispatcher-cronjob.yaml \
 			deploy/docker/compose.yaml \
-			docs/deployment.md || exit 1; \
+			docs/deployment.md \
+			README.md || exit 1; \
+		if grep -lE 'ghcr\.io/octoverse-id/octonomy:(latest|edge)' \
+			deploy/kubernetes/deployment.yaml \
+			deploy/kubernetes/migrate-job.yaml \
+			deploy/kubernetes/dispatcher-cronjob.yaml \
+			deploy/docker/compose.yaml; then \
+			echo "version-check FAILED: the files above pin a moving tag; example deployments must pin an immutable X.Y.Z"; exit 1; \
+		fi; \
 		;; \
 	esac; \
 	echo "version-check OK: $$semver"

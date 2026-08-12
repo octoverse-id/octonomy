@@ -14,7 +14,9 @@ minor, and breaking changes ship a new parallel URL-versioned surface plus a maj
 `/api/v2` did, keeping `/api/v1` supported. See [`versioning.md`](versioning.md) for the full
 policy and what counts as breaking.
 
-- Package metadata uses PEP 440 (`3.0.1`); OpenAPI and user-facing docs use SemVer (`3.0.1`).
+- Package metadata uses PEP 440 (`X.Y.Z`, and `X.Y.ZrcN` for a prerelease); OpenAPI and
+  user-facing docs use SemVer (`X.Y.Z`, and `X.Y.Z-rc.N`). The two differ only for prereleases,
+  which is the conversion `make version-check` performs before comparing them.
 - Set `OCTONOMY_API_VERSION` when a deployment should expose a different schema version string.
 
 ## Release Checklist
@@ -66,10 +68,17 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    - refresh the lock with `uv lock` (the project's own `version` in `uv.lock`)
    - the example image tags, which have no default to fall back on:
      `deploy/kubernetes/{deployment,migrate-job,dispatcher-cronjob}.yaml` (one `image:` each),
-     `deploy/docker/compose.yaml` (**three** `image:` lines — migrate, app, dispatcher), and
-     `docs/deployment.md`. `make version-check` enforces every one of these via
-     `scripts/check-image-refs.sh`, including that a file has not silently *lost* its reference,
-     so a missed tag is a red gate rather than a stale example someone finds in production.
+     `deploy/docker/compose.yaml` (**three** `image:` lines — migrate, app, dispatcher),
+     `docs/deployment.md`, and `README.md` (the quickstart's `docker pull`).
+
+     `make version-check` enforces **exactly those files** via `scripts/check-image-refs.sh`,
+     including that a file has not silently *lost* its reference, so a missed tag is a red gate
+     rather than a stale example someone finds in production. It matches
+     `ghcr.io/octoverse-id/octonomy` only, so adding a new file that names the published image
+     means adding it to the `version-check` list too — nothing detects a file the gate was never
+     pointed at. The `your-registry.example.com` build-it-yourself example is deliberately
+     *not* on the list: it reads the version out of `pyproject.toml` instead of hardcoding one,
+     so there is nothing there to stamp.
    - `SECURITY.md` — only when the supported line changes (a patch inside the same `x.y` line
      does not move it)
 
@@ -105,42 +114,74 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    Appear"](#when-a-publish-run-does-not-appear)), or a first-ever publish against a private
    package (see ["First Publish To GHCR"](#first-publish-to-ghcr)).
 
+   Run it as one block. **Every check below must fail loudly rather than print something you
+   are expected to read** — `set -euo pipefail` and the explicit string comparisons are the
+   point of the script, not decoration. In particular `check-tag-unpublished.sh` exits **0** and
+   prints `absent` when a tag does not exist, so its exit status alone proves nothing; the
+   output has to be compared.
+
    ```bash
-   # a. The publish workflow actually ran for this tag, and succeeded.
-   gh run list --workflow=publish-image.yml --limit 5
+   set -euo pipefail
+   VERSION=<version>                                # e.g. 3.1.0, no leading v
+   REPO=octoverse-id/octonomy
+   IMAGE=ghcr.io/$REPO
 
-   # b. The version tag resolves, and the moving tags followed it.
-   ./scripts/check-tag-unpublished.sh ghcr.io/octoverse-id/octonomy <version>   # -> "present <digest>"
-   ./scripts/check-tag-unpublished.sh ghcr.io/octoverse-id/octonomy latest      # same digest, if this is the newest release
+   # a. The publish run for THIS tagged commit finished, and finished green.
+   #    Filter on head_sha (not the tag name) and on the push event, so this cannot match
+   #    the :edge run for the same commit.
+   sha=$(git rev-list -n1 "v$VERSION")
+   conclusion=$(gh api \
+     "repos/$REPO/actions/workflows/publish-image.yml/runs?event=push&per_page=50" \
+     --jq "[.workflow_runs[] | select(.head_sha == \"$sha\")] | first | .conclusion // \"NO RUN\"")
+   [ "$conclusion" = "success" ] || { echo "publish run for v$VERSION: $conclusion"; exit 1; }
 
-   # c. It is pullable by someone who is NOT logged in — the whole point of publishing it.
+   # b. :X.Y.Z resolves. Capture the digest every other tag has to agree with.
+   result=$(./scripts/check-tag-unpublished.sh "$IMAGE" "$VERSION")
+   case "$result" in
+     present\ *) digest=${result#present } ;;
+     *) echo "no image published for $VERSION (got: $result)"; exit 1 ;;
+   esac
+   echo "$IMAGE:$VERSION -> $digest"
+
+   # c. Every tag this version should own points at that SAME digest — including :X.Y and
+   #    :latest when this is the newest release. resolve-latest-tag.sh is the same script
+   #    the workflow promotes with, so this asserts exactly what it should have written.
+   for tag in $(./scripts/resolve-latest-tag.sh "$VERSION"); do
+     got=$(./scripts/check-tag-unpublished.sh "$IMAGE" "$tag" "$digest")
+     [ "$got" = "match $digest" ] || { echo "$IMAGE:$tag -> $got"; exit 1; }
+     echo "$IMAGE:$tag -> match"
+   done
+
+   # d. It is pullable by someone who is NOT logged in — the whole point of publishing it.
    #    A fresh DOCKER_CONFIG drops your credentials without logging you out.
-   DOCKER_CONFIG=$(mktemp -d) docker pull ghcr.io/octoverse-id/octonomy:<version>
+   DOCKER_CONFIG=$(mktemp -d) docker pull "$IMAGE@$digest"
 
-   # d. Both attestations verify, and the RELEASE WORKFLOW is what signed them.
+   # e. Both attestations verify, and the RELEASE WORKFLOW is what signed them.
+   #    Verify the DIGEST, not the tag: it is the thing (b) and (c) just pinned.
    #    --predicate-type: a bare verify passes with the SBOM missing entirely.
-   #    --signer-workflow: --repo alone accepts a predicate signed by ANY workflow in
-   #      this repo, so without it "built by the release workflow" is unchecked.
-   #    --source-ref: optional, binds the image to the release tag (needs gh 2.68+).
-   gh attestation verify oci://ghcr.io/octoverse-id/octonomy:<version> \
-     --repo octoverse-id/octonomy \
-     --signer-workflow octoverse-id/octonomy/.github/workflows/publish-image.yml \
-     --source-ref refs/tags/v<version> \
-     --predicate-type https://slsa.dev/provenance/v1
-   gh attestation verify oci://ghcr.io/octoverse-id/octonomy:<version> \
-     --repo octoverse-id/octonomy \
-     --signer-workflow octoverse-id/octonomy/.github/workflows/publish-image.yml \
-     --source-ref refs/tags/v<version> \
-     --predicate-type https://spdx.dev/Document
+   #    --signer-workflow: --repo alone accepts a predicate signed by ANY workflow here.
+   #    --source-ref/--source-digest: bind it to this tag and commit (gh 2.68+).
+   for predicate in https://slsa.dev/provenance/v1 https://spdx.dev/Document; do
+     gh attestation verify "oci://$IMAGE@$digest" \
+       --repo "$REPO" \
+       --signer-workflow "$REPO/.github/workflows/publish-image.yml" \
+       --source-ref "refs/tags/v$VERSION" \
+       --source-digest "$sha" \
+       --predicate-type "$predicate"
+   done
+   echo "v$VERSION is published, promoted, pullable and attested"
    ```
 
-   Step (d) needs **`gh` 2.51 or newer** (2.68+ for `--source-ref`; drop that line on older
-   builds) — `gh attestation` arrived in 2.49 and `--signer-workflow` in 2.51, and the `gh 2.4.0`
-   packaged by Debian/Ubuntu has no `attestation` command at all (`unknown command
-   "attestation"`). This is not a reason to skip the gate: `publish-image.yml` runs the same
-   verification with the same signer pin, for both predicate types, **before** it promotes any
-   tag, so a successful run in step (a) already proves the attestations verified. On an older
-   `gh`, confirm it in the run log instead:
+   Step (e) needs **`gh` 2.68 or newer** as written (`gh attestation` arrived in 2.49,
+   `--signer-workflow` in 2.51, `--source-ref`/`--source-digest` in 2.68); on 2.51–2.67 drop the
+   two `--source-*` lines. The `gh 2.4.0` packaged by Debian/Ubuntu has no `attestation` command
+   at all (`unknown command "attestation"`) — install from [cli.github.com](https://cli.github.com).
+   Steps (a)–(d) work on any `gh` that has `gh api`.
+
+   An old `gh` is not a reason to skip the gate: `publish-image.yml` runs the same verification,
+   with the same signer and source pins, for both predicate types, **before** it promotes any
+   tag — so a green run in step (a) already proves the attestations verified. On an older `gh`,
+   confirm it in the run log instead:
 
    ```bash
    gh run view <run-id> --log | grep -A3 "Verify provenance and SBOM"
