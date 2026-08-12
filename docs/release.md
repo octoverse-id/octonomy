@@ -122,15 +122,12 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    Appear"](#when-a-publish-run-does-not-appear)), or a first-ever publish against a private
    package (see ["First Publish To GHCR"](#first-publish-to-ghcr)).
 
-   Run it as one block. **Every check below must fail loudly rather than print something you
-   are expected to read** — `set -euo pipefail` and the explicit string comparisons are the
-   point of the script, not decoration. In particular `check-tag-unpublished.sh` exits **0** and
-   prints `absent` when a tag does not exist, so its exit status alone proves nothing; the
-   output has to be compared.
-
    **Save it to a file and run it** (`bash verify-release.sh`) rather than pasting it into your
-   shell: `set -e` is what makes the checks below abort, and it does not behave the same way
-   interactively — where `exit 1` would also close your terminal.
+   shell. Every check below must fail loudly rather than print something you are expected to
+   read, and `set -euo pipefail` plus the explicit string comparisons are what make that true —
+   neither behaves the same way interactively, where `exit 1` would also close your terminal.
+   The comparisons are not decoration: `check-tag-unpublished.sh` exits **0** and prints
+   `absent` for a tag that does not exist, so its exit status alone proves nothing.
 
    ```bash
    set -euo pipefail

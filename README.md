@@ -97,7 +97,9 @@ chmod 600 .env
 #   ALLOWED_HOSTS         your hostname(s); keep 127.0.0.1 for the health probes
 $EDITOR .env
 
-docker compose up -d
+# --wait blocks until migrate has exited 0 and the API reports healthy, so the
+# check below is not racing Gunicorn's startup.
+docker compose up -d --wait
 curl -fsS http://127.0.0.1:8000/health/ready
 ```
 

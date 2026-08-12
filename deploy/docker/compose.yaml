@@ -30,7 +30,9 @@
 #   3. Start it FROM THIS DIRECTORY so compose auto-loads ./.env for BOTH ${...}
 #      interpolation (POSTGRES_PASSWORD) and container env (running with
 #      `-f deploy/docker/compose.yaml` from elsewhere may not pick up ./.env for interpolation):
-#        cd deploy/docker && docker compose up -d
+#        cd deploy/docker && docker compose up -d --wait
+#      (--wait blocks until "migrate" has exited 0 and "app" reports healthy, rather
+#      than returning as soon as the containers are started.)
 #
 # The "migrate" service runs once and exits; "app"/"dispatcher" wait for it. Re-running
 # `up` re-runs migrate (a no-op when already applied).

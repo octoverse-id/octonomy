@@ -187,9 +187,11 @@ $EDITOR .env
 
 # 2. Start it from deploy/docker/ so compose auto-loads .env (for ${...} interpolation AND
 #    as the containers' env). migrate runs first, then app + dispatcher come up.
-docker compose up -d
+#    --wait returns only once migrate has exited 0 and the API reports healthy, so a
+#    failure surfaces here instead of in the next command.
+docker compose up -d --wait
 
-# 3. Watch it become healthy
+# 3. Confirm the state it settled into
 docker compose ps
 docker compose logs -f app
 ```
