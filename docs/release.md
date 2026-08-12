@@ -79,6 +79,14 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
      pointed at. The `your-registry.example.com` build-it-yourself example is deliberately
      *not* on the list: it reads the version out of `pyproject.toml` instead of hardcoding one,
      so there is nothing there to stamp.
+
+     **Prereleases are the exception, and it is a deliberate one.** This step applies to final
+     `X.Y.Z` releases. `publish-image.yml` only publishes exact `vX.Y.Z` tags, so there is no
+     `3.2.0rc1` image for an example to point at — `version-check` therefore skips the image
+     gate entirely for a prerelease version and says so in its output. On a prerelease branch,
+     **leave the example tags on the last published final release**; do not bump them to the
+     prerelease version, which would document a pull that cannot work. They get stamped when the
+     final release is cut.
    - `SECURITY.md` — only when the supported line changes (a patch inside the same `x.y` line
      does not move it)
 
@@ -165,8 +173,12 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    done
 
    # d. It is pullable by someone who is NOT logged in — the whole point of publishing it.
-   #    A fresh DOCKER_CONFIG drops your credentials without logging you out.
-   DOCKER_CONFIG=$(mktemp -d) docker pull "$IMAGE@$digest"
+   #    A fresh DOCKER_CONFIG drops your credentials without logging you out. Assigned on its
+   #    own line because in `VAR=$(cmd) docker ...` the status is docker's, so a failed mktemp
+   #    would leave DOCKER_CONFIG empty — and Docker then falls back to your REAL config,
+   #    quietly turning this into an authenticated pull that proves nothing.
+   anon_config=$(mktemp -d)
+   DOCKER_CONFIG="$anon_config" docker pull "$IMAGE@$digest"
 
    # e. Both attestations verify, and the RELEASE WORKFLOW is what signed them.
    #    Verify the DIGEST, not the tag: it is the thing (b) and (c) just pinned.
