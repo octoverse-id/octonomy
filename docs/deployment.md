@@ -91,12 +91,12 @@ migrations — that is your one-shot step.
 
 | Tag | Moves? | Use it for |
 | --- | --- | --- |
-| `:3.1.0` | **Never.** A given `X.Y.Z` always resolves to the same bytes. | Production. This is what the examples in `deploy/` pin. |
-| `:3.1` | Moves to the newest `3.1.x`. | Picking up patch fixes automatically. |
+| `:X.Y.Z` | **Never.** A given `X.Y.Z` always resolves to the same bytes. | Production. This is what the examples in `deploy/` pin. |
+| `:X.Y` | Moves to the newest `X.Y.Z` in that line. | Picking up patch fixes automatically. |
 | `:latest` | Moves to the newest release. | Trying it out. Not recommended for production — an upgrade arrives whenever you restart. |
 | `:edge` | Moves on every green build of `main`. | **Unsupported**, and unattested. Testing unreleased work only. |
 
-`:3.1` and `:latest` only ever move *forward*: they are recomputed against every existing release
+`:X.Y` and `:latest` only ever move *forward*: they are recomputed against every existing release
 tag at publish time, so a backport released after a newer version cannot drag them backward onto
 older code.
 
@@ -206,7 +206,7 @@ from `deploy/docker/`:
 
 ```bash
 docker compose pull
-docker compose up -d
+docker compose up -d --wait
 ```
 
 The migrate service re-runs (a no-op when already applied) and the app/dispatcher restart. If you

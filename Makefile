@@ -79,6 +79,12 @@ version-check:
 			deploy/docker/compose.yaml; then \
 			echo "version-check FAILED: the files above pin a moving tag; example deployments must pin an immutable X.Y.Z"; exit 1; \
 		fi; \
+		stale_tag_refs=$$(grep -hoE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' \
+			docs/deployment.md docs/release.md README.md | sort -u \
+			| grep -v "^refs/tags/v$$semver$$" || true); \
+		if [ -n "$$stale_tag_refs" ]; then \
+			echo "version-check FAILED: stale release-tag reference(s) $$stale_tag_refs — this tree is v$$semver"; exit 1; \
+		fi; \
 		;; \
 	esac; \
 	echo "version-check OK: $$semver"
