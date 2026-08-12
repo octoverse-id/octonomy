@@ -120,22 +120,30 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    prints `absent` when a tag does not exist, so its exit status alone proves nothing; the
    output has to be compared.
 
+   **Save it to a file and run it** (`bash verify-release.sh`) rather than pasting it into your
+   shell: `set -e` is what makes the checks below abort, and it does not behave the same way
+   interactively — where `exit 1` would also close your terminal.
+
    ```bash
    set -euo pipefail
    VERSION=<version>                                # e.g. 3.1.0, no leading v
    REPO=octoverse-id/octonomy
    IMAGE=ghcr.io/$REPO
 
-   # a. The publish run for THIS tagged commit finished, and finished green.
-   #    Filter on head_sha (not the tag name) and on the push event, so this cannot match
-   #    the :edge run for the same commit.
+   # a. A publish run for THIS tagged commit finished green.
+   #    Matched on head_sha, not the tag name. `event != "workflow_run"` excludes the :edge
+   #    deliveries for the same commit, while still accepting a workflow_dispatch — which is
+   #    how the recovery path below re-publishes a cancelled release.
    sha=$(git rev-list -n1 "v$VERSION")
-   conclusion=$(gh api \
-     "repos/$REPO/actions/workflows/publish-image.yml/runs?event=push&per_page=50" \
-     --jq "[.workflow_runs[] | select(.head_sha == \"$sha\")] | first | .conclusion // \"NO RUN\"")
-   [ "$conclusion" = "success" ] || { echo "publish run for v$VERSION: $conclusion"; exit 1; }
+   green=$(gh api "repos/$REPO/actions/workflows/publish-image.yml/runs?per_page=100" \
+     --jq "[.workflow_runs[]
+            | select(.head_sha == \"$sha\" and .event != \"workflow_run\"
+                     and .conclusion == \"success\")] | length")
+   [ "${green:-0}" -ge 1 ] || { echo "no successful publish run for v$VERSION"; exit 1; }
 
    # b. :X.Y.Z resolves. Capture the digest every other tag has to agree with.
+   #    check-tag-unpublished.sh exits 0 and prints `absent` for a tag that does not exist,
+   #    so the OUTPUT is what proves publication — never the exit status alone.
    result=$(./scripts/check-tag-unpublished.sh "$IMAGE" "$VERSION")
    case "$result" in
      present\ *) digest=${result#present } ;;
@@ -146,7 +154,11 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    # c. Every tag this version should own points at that SAME digest — including :X.Y and
    #    :latest when this is the newest release. resolve-latest-tag.sh is the same script
    #    the workflow promotes with, so this asserts exactly what it should have written.
-   for tag in $(./scripts/resolve-latest-tag.sh "$VERSION"); do
+   #    Assigned before the loop on purpose: `for tag in $(cmd)` does NOT trip `set -e` when
+   #    cmd fails, so a failed resolve would silently iterate over nothing and pass.
+   tags=$(./scripts/resolve-latest-tag.sh "$VERSION")
+   [ -n "$tags" ] || { echo "resolve-latest-tag.sh produced no tags for $VERSION"; exit 1; }
+   for tag in $tags; do
      got=$(./scripts/check-tag-unpublished.sh "$IMAGE" "$tag" "$digest")
      [ "$got" = "match $digest" ] || { echo "$IMAGE:$tag -> $got"; exit 1; }
      echo "$IMAGE:$tag -> match"
