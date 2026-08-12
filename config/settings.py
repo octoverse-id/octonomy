@@ -41,7 +41,7 @@ def env_int(name: str, default: int) -> int:
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "local-dev-secret")
 DEBUG = env_bool("DJANGO_DEBUG", True)
-API_VERSION = os.getenv("OCTONOMY_API_VERSION", "3.0.1")
+API_VERSION = os.getenv("OCTONOMY_API_VERSION", "3.1.0")
 ALLOWED_HOSTS = [
     host.strip() for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 ]

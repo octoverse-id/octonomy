@@ -37,7 +37,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: dispatcher
-              image: your-registry.example.com/octonomy:3.0.1
+              image: ghcr.io/octoverse-id/octonomy:3.1.0
               # `args` (not `command`) so the image ENTRYPOINT still runs its
               # `manage.py check` before dispatching.
               args:

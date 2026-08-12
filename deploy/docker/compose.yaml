@@ -5,8 +5,19 @@
 # a one-shot migration step, and the outbox dispatcher.
 #
 # Setup:
-#   1. Build the image (from the repository root — the Dockerfile uses the repo as context):
+#   1. Nothing to build — the three services below pull a published, multi-arch image
+#      (linux/amd64 + linux/arm64) straight from GHCR. No registry of your own, no
+#      credentials: the package is public, so `docker compose pull` works logged out.
+#
+#      To run your own build instead, build from the repository root (the Dockerfile
+#      uses the repo as its context) and swap the image reference:
 #        docker build -t octonomy:local .
+#      then replace ghcr.io/octoverse-id/octonomy:3.1.0 with octonomy:local in the
+#      `image:` lines below.
+#
+#      UPGRADING: the version appears on THREE `image:` lines (migrate, app,
+#      dispatcher) and they must move together. Leave the dispatcher behind and it
+#      keeps running old code against the newly migrated schema.
 #   2. Create this directory's env file from the template, lock it down, and edit it:
 #        cp deploy/.env.production.example deploy/docker/.env
 #        chmod 600 deploy/docker/.env
@@ -14,10 +25,14 @@
 #      Set: DJANGO_SECRET_KEY, SERVICE_TOKEN_PEPPER, ALLOWED_HOSTS, POSTGRES_PASSWORD,
 #      and DATABASE_URL pointing at the "db" service, e.g.
 #        DATABASE_URL=postgres://octonomy:<POSTGRES_PASSWORD>@db:5432/octonomy
+#      POSTGRES_PASSWORD ships commented out in the template (it is Compose-only) —
+#      uncomment it, and match it to the password inside DATABASE_URL.
 #   3. Start it FROM THIS DIRECTORY so compose auto-loads ./.env for BOTH ${...}
 #      interpolation (POSTGRES_PASSWORD) and container env (running with
 #      `-f deploy/docker/compose.yaml` from elsewhere may not pick up ./.env for interpolation):
-#        cd deploy/docker && docker compose up -d
+#        cd deploy/docker && docker compose up -d --wait
+#      (--wait blocks until "migrate" has exited 0 and "app" reports healthy, rather
+#      than returning as soon as the containers are started.)
 #
 # The "migrate" service runs once and exits; "app"/"dispatcher" wait for it. Re-running
 # `up` re-runs migrate (a no-op when already applied).
@@ -41,7 +56,7 @@ services:
   # One-shot database migration. Runs to completion, then exits 0. The entrypoint runs
   # `manage.py check` first (fail-closed on an invalid flag combination), then migrate.
   migrate:
-    image: octonomy:local
+    image: ghcr.io/octoverse-id/octonomy:3.1.0
     command: ["python", "manage.py", "migrate", "--noinput"]
     restart: "no"
     env_file: [.env]
@@ -51,7 +66,7 @@ services:
 
   # The API server (Gunicorn). Serves /api/* and the /health/* probes on 8000.
   app:
-    image: octonomy:local
+    image: ghcr.io/octoverse-id/octonomy:3.1.0
     restart: unless-stopped
     env_file: [.env]
     ports:
@@ -79,7 +94,7 @@ services:
   # handled internally (the command still exits 0) and surface in the JSON logs + the
   # outbox_dispatch_summary metric — monitor those, per docs/operations.md.
   dispatcher:
-    image: octonomy:local
+    image: ghcr.io/octoverse-id/octonomy:3.1.0
     restart: unless-stopped
     command: ["sh", "-c", "set -e; while true; do python manage.py dispatch_outbox_events --limit 100 --retry-failed; sleep 60; done"]
     env_file: [.env]

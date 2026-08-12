@@ -416,17 +416,45 @@ jobs:
         # do — it would pass with the SBOM missing entirely. Assert each predicate type
         # by name. Runs on the recovery path too, so a re-promotion still proves the
         # digest it moves tags onto is attested.
+        #
+        # --signer-workflow is load-bearing, not decoration. --repo only validates the
+        # certificate's SourceRepository, so on its own it accepts a matching predicate
+        # signed by ANY workflow in this repository — add one workflow with
+        # `id-token: write` + `attestations: write` and its attestations would satisfy
+        # this gate. Pinning the signer workflow path is what makes "built by the
+        # release workflow" a checked claim instead of a comment. It matters most on
+        # the recovery path, where this verifies an attestation this run did not create.
+        # gh's own docs call --repo the minimum and recommend exactly this flag.
+        #
+        # Verified against the real dry-run attestation (run 31382089330): the signing
+        # certificate's SAN is
+        #   https://github.com/octoverse-id/octonomy/.github/workflows/publish-image.yml@refs/heads/main
+        # which is the caller workflow — attest-build-provenance is an action, not a
+        # reusable workflow, so --signer-repo/--cert-identity are not needed here.
+        # (--signer-workflow needs gh >= 2.51; ubuntu-latest ships far newer.)
+        # --source-ref/--source-digest bind the attestation to the ref and commit THIS run
+        # is publishing, which the signer pin alone does not. The case that needs it is the
+        # recovery path: a `:X.Y.Z` pushed by hand onto some other already-attested digest
+        # — the `:dryrun` one, say — would otherwise satisfy every check here and then be
+        # promoted to `:X.Y` and `:latest`. A dry run cannot reach that state on its own
+        # (it promotes only `:dryrun`), but DEP-2 in TODOS.md already records that write
+        # access to this repository is publish access, and this file guards mistakes.
+        # Both are exact-match and fail closed, including on a force-moved tag.
+        # (--source-ref/--source-digest need gh >= 2.68; ubuntu-latest ships far newer.)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
-          gh attestation verify "oci://$IMAGE@$DIGEST" \
-            --repo "$GITHUB_REPOSITORY" \
-            --predicate-type https://slsa.dev/provenance/v1
-          gh attestation verify "oci://$IMAGE@$DIGEST" \
-            --repo "$GITHUB_REPOSITORY" \
-            --predicate-type https://spdx.dev/Document
+          signer="$GITHUB_REPOSITORY/.github/workflows/publish-image.yml"
+          for predicate in https://slsa.dev/provenance/v1 https://spdx.dev/Document; do
+            gh attestation verify "oci://$IMAGE@$DIGEST" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$signer" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --predicate-type "$predicate"
+          done
 
       - name: Anonymous pull check
         # The published image has to be pullable by someone who is not logged in —

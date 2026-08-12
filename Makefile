@@ -60,6 +60,33 @@ version-check:
 	if ! grep -q "## \[$$semver\]" CHANGELOG.md; then \
 		echo "version-check FAILED: CHANGELOG.md has no '## [$$semver]' section"; exit 1; \
 	fi; \
+	case "$$semver" in \
+	*[!0-9.]*) \
+		echo "version-check: $$semver is a prerelease — skipping the image gate (publish-image.yml's tag glob only publishes vX.Y.Z, so no image exists to point at)"; \
+		;; \
+	*) \
+		./scripts/check-image-refs.sh "$$semver" \
+			deploy/kubernetes/deployment.yaml \
+			deploy/kubernetes/migrate-job.yaml \
+			deploy/kubernetes/dispatcher-cronjob.yaml \
+			deploy/docker/compose.yaml \
+			docs/deployment.md \
+			README.md || exit 1; \
+		if grep -lE 'ghcr\.io/octoverse-id/octonomy:(latest|edge)' \
+			deploy/kubernetes/deployment.yaml \
+			deploy/kubernetes/migrate-job.yaml \
+			deploy/kubernetes/dispatcher-cronjob.yaml \
+			deploy/docker/compose.yaml; then \
+			echo "version-check FAILED: the files above pin a moving tag; example deployments must pin an immutable X.Y.Z"; exit 1; \
+		fi; \
+		stale_tag_refs=$$(grep -hoE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9_-]*' \
+			docs/deployment.md docs/release.md README.md | sort -u \
+			| grep -v "^refs/tags/v$$semver$$" || true); \
+		if [ -n "$$stale_tag_refs" ]; then \
+			echo "version-check FAILED: stale release-tag reference(s) $$stale_tag_refs — this tree is v$$semver"; exit 1; \
+		fi; \
+		;; \
+	esac; \
 	echo "version-check OK: $$semver"
 
 release-check: lint check migration-check test openapi-check audit version-check

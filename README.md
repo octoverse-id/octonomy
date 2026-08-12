@@ -68,11 +68,59 @@ GET /api/docs/v2/redoc/   # v2
 
 ## Deployment
 
-Octonomy is self-hosted — run it on your own infrastructure. The
-[deployment guide](docs/deployment.md) covers three paths — **Docker Compose**, **Kubernetes**, and a
-**VPS / systemd** box — with copy-pasteable example configs under [`deploy/`](deploy). Every path runs
-the same three processes off one build — the Gunicorn API server, a one-shot `migrate`, and the outbox
-dispatcher — from a container image on Docker/Kubernetes, or a source checkout on the VPS path.
+Octonomy is self-hosted — run it on your own infrastructure. Official multi-arch container images
+(`linux/amd64` + `linux/arm64`) are published to
+[GHCR](https://github.com/octoverse-id/octonomy/pkgs/container/octonomy) and the package is public,
+so there is nothing to build and nothing to log into:
+
+```bash
+docker pull ghcr.io/octoverse-id/octonomy:3.1.0
+```
+
+### Quickstart (Docker Compose)
+
+This needs **two files from this repo** — the Compose stack and the env template — and **five
+values** you fill in. Run it from `deploy/docker/`, because Compose reads `./.env` both for
+`${...}` interpolation and as the containers' environment:
+
+```bash
+git clone https://github.com/octoverse-id/octonomy && cd octonomy/deploy/docker
+
+cp ../.env.production.example .env
+chmod 600 .env
+
+# Set these five in .env — the app refuses to boot with the secrets empty:
+#   DJANGO_SECRET_KEY     python -c "import secrets; print(secrets.token_urlsafe(64))"
+#   SERVICE_TOKEN_PEPPER  generate the same way
+#   POSTGRES_PASSWORD     any strong value — UNCOMMENT this line, it ships commented out
+#   DATABASE_URL          postgres://octonomy:<POSTGRES_PASSWORD>@db:5432/octonomy
+#   ALLOWED_HOSTS         your hostname(s); keep 127.0.0.1 for the health probes
+$EDITOR .env
+
+# --wait blocks until migrate has exited 0 and the API reports healthy, so the
+# check below is not racing Gunicorn's startup.
+docker compose up -d --wait
+curl -fsS http://127.0.0.1:8000/health/ready
+```
+
+That brings up PostgreSQL, runs migrations once, then starts the API and the outbox dispatcher.
+The API binds to loopback — put a TLS proxy in front of it before exposing it.
+
+> Use `deploy/.env.production.example`, **not** the repo-root `.env.example` — the latter is for
+> local development and does not carry the production settings this stack expects.
+
+### The other paths
+
+The [deployment guide](docs/deployment.md) covers three paths — **Docker Compose**, **Kubernetes**,
+and a **VPS / systemd** box — with copy-pasteable example configs under [`deploy/`](deploy).
+`deploy/kubernetes/` applies verbatim against the published image: no registry of your own, no
+`imagePullSecrets`, no edit to any `image:` field. Every path runs the same three processes off one
+build — the Gunicorn API server, a one-shot `migrate`, and the outbox dispatcher — from a container
+image on Docker/Kubernetes, or a source checkout on the VPS path.
+
+Releases carry SLSA provenance and an SPDX SBOM; the guide has the
+[verification recipe](docs/deployment.md#verifying-what-you-pulled) and the
+[tag contract](docs/deployment.md#which-tag-to-use).
 
 ## Admin Console (optional)
 
