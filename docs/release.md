@@ -110,7 +110,15 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    git push origin v<version>
    ```
 
-6. **Verify the image before announcing the release. This gate is mandatory.**
+   **A prerelease publishes no image, so it skips step 6 entirely — go straight to step 7.**
+   `publish-image.yml`'s trigger is the exact glob `v[0-9]+.[0-9]+.[0-9]+`, so a prerelease tag
+   (`v1.0.0-rc.1`) does not start it. That is deliberate and matches step 2's stamping exception:
+   `:X.Y.Z` is a promise of immutable bytes, and a prerelease is not something anyone should be
+   pinning a deployment to. Say so in the release notes rather than leaving readers to discover
+   that `docker pull` has nothing to fetch.
+
+6. **Verify the image before announcing the release. This gate is mandatory for a final
+   `X.Y.Z` release** (prereleases skip it — see step 5).
 
    A GitHub release is the announcement; the image is the artifact people actually run. Publishing
    the announcement first means telling people to `docker pull` a tag that may not exist — and
