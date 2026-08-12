@@ -79,7 +79,7 @@ version-check:
 			deploy/docker/compose.yaml; then \
 			echo "version-check FAILED: the files above pin a moving tag; example deployments must pin an immutable X.Y.Z"; exit 1; \
 		fi; \
-		stale_tag_refs=$$(grep -hoE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' \
+		stale_tag_refs=$$(grep -hoE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9_-]*' \
 			docs/deployment.md docs/release.md README.md | sort -u \
 			| grep -v "^refs/tags/v$$semver$$" || true); \
 		if [ -n "$$stale_tag_refs" ]; then \
