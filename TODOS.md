@@ -85,6 +85,38 @@ The in-workflow gates (commit is on main, CI green on main, dispatch-ref shape) 
   release runbook and was considered and not chosen when this epic was planned.
 - **Trigger:** a second person gets write access. Do it before that, not after.
 
+### DEP-3: SBOM verification passes on one architecture — DEFERRED (raised 2026-08-12, PR #108)
+`publish-image.yml` generates a per-architecture SPDX SBOM and attests **both against the index
+digest**. They therefore share a subject *and* a predicate type, so
+`gh attestation verify --predicate-type https://spdx.dev/Document` is satisfied by **either one**.
+A digest carrying only the amd64 SBOM verifies exactly like a complete one — for the workflow's own
+gate and for any operator following `docs/deployment.md`.
+
+Not reachable on the normal path, which is why this is deferred rather than fixed: neither attest
+step sets `continue-on-error`, so a failed second attestation fails the job *before* promotion,
+`:X.Y.Z` never gets written, the pre-build guard reports `absent`, and the next run rebuilds.
+Reaching a half-attested digest under a release tag needs someone to attach `:X.Y.Z` by hand —
+which is **DEP-2**, not this.
+
+- **What:** either attest each SBOM against its own platform-manifest digest and verify both
+  explicitly, or produce one genuine multi-architecture SBOM and attest that.
+- **Why:** "this release has an SBOM" should not be true when half of it is missing. The claim is
+  operator-facing — `docs/deployment.md` tells people to verify the SPDX predicate by name
+  precisely so a missing SBOM cannot pass.
+- **Cons:** per-platform attestation reverses a deliberate #102 decision, documented in the
+  workflow: both SBOMs attach to the index because *that* is what a release tag resolves to and
+  what `gh attestation verify oci://…:X.Y.Z` presents. Splitting them means an operator verifying
+  the tag no longer sees a complete set without knowing the per-arch digests. The single-SBOM route
+  avoids that but needs Trivy to emit a merged document, or the workflow to merge two.
+- **Context:** raised by a Codex review of PR #108 and rejected there with these reasons — release
+  work is the wrong place to redesign the attestation strategy. The observation itself is correct
+  and was confirmed by hand: both SBOM statements are `https://spdx.dev/Document/v2.3` on the same
+  index subject, and the short predicate string matches them (verified against a real digest with
+  `gh` 2.97).
+- **Trigger:** DEP-2 is addressed (removing the manual-tag premise that currently makes this
+  unreachable), or a consumer needs a provably complete per-release SBOM — a compliance question
+  about what ships in the arm64 image is the likely shape.
+
 ## Configuration
 
 ### CFG-1: Rename `OCTONOMY_API_VERSION` — DEFERRED (raised 2026-08-05)

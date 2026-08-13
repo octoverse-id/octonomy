@@ -224,14 +224,24 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
 7. Only once step 6 is fully green, publish the release:
 
    ```bash
-   gh release create v<version> --title "v<version>" --notes-file <notes>
+   gh release create v<version> --title "v<version>" --notes-file <notes> --verify-tag --latest
    ```
+
+   `--verify-tag` makes this **fail** when `v<version>` does not exist rather than helpfully
+   creating the tag for you — which would publish a release pointing at a tag no image was ever
+   built from. `--latest` is explicit rather than relying on the default.
 
 8. Close the tracking issue and delete the merged branch.
 
-> `gh` caveats (observed on `gh 2.4.0`): `release create` has no `--latest` / `--verify-tag` — a
-> published, non-prerelease release is "Latest" by default. `gh issue close` has no `--comment`;
-> post the comment separately with `gh issue comment` before closing.
+> **`gh` version floors**, checked against `cli/cli` source rather than assumed: `--verify-tag`
+> landed in **2.21**, `--latest` in **2.19**, `gh attestation` in **2.49**, `--signer-workflow` in
+> **2.51**, and `--source-ref`/`--source-digest` in **2.68**. On a `gh` older than those — the
+> `2.4.0` in the Debian/Ubuntu packages has no `attestation` command at all — drop `--verify-tag`
+> and `--latest` (a published, non-prerelease release is "Latest" by default), and use
+> `gh issue comment` before `gh issue close`, which had no `--comment` flag. Installing a current
+> `gh` from [cli.github.com](https://cli.github.com) is the better answer: step 6 is only fully
+> runnable on 2.68+, and below that you are trusting the publish workflow's own verification
+> instead of reproducing it.
 
 ## First Publish To GHCR
 
