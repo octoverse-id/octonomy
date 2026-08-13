@@ -18,6 +18,21 @@ To change a ruleset:
 Doing it in the other order — editing JSON and expecting it to apply — is the one
 mistake this README exists to prevent.
 
+This directory is a **mirror**, not an append-only pile. A ruleset that was deleted or
+renamed upstream has its old `.json` removed on the next export, and the run says so:
+
+```
+removed  .github/rulesets/old-name.json (no longer a live ruleset)
+export-rulesets OK: 3 ruleset(s) written, 1 stale file(s) removed
+```
+
+Without that, a deleted policy would sit here reading as current, and the restore
+procedure below would happily re-apply something nobody wants any more.
+
+Two names can also normalise to the same file name — `Foo bar` and `Foo-bar` both give
+`foo-bar.json`. The export **refuses** rather than letting one silently overwrite the
+other, because a record that omits a ruleset is worse than no record. Rename one.
+
 ## What is protected
 
 | File | Target | Effect |
