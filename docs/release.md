@@ -117,6 +117,40 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    pinning a deployment to. Say so in the release notes rather than leaving readers to discover
    that `docker pull` has nothing to fetch.
 
+   ### If the tag push is rejected
+
+   Two repository rulesets cover `refs/tags/v*`, so a push can be refused here — after the release
+   PR has already merged, which is the worst moment to be guessing:
+
+   | Ruleset | Rule | Bypass | Effect |
+   | --- | --- | --- | --- |
+   | `release tags: never move` | `update`, `non_fast_forward` | **nobody** | a `v*` tag can never be re-pointed, by anyone, including admins |
+   | `release tags: deletion is admin-only` | `deletion` | repo admins | a tag can be removed, so a mistake is recoverable |
+
+   Tag **creation is deliberately unrestricted** — any maintainer can cut a release, and a
+   wrong-commit tag is already caught by step 6(a) plus the workflow's own on-main + CI-green gate.
+
+   `remote: Cannot force-push to this tag` means you tried to move an existing tag. **Do not go
+   looking for a way around it.** Two cases:
+
+   - **The tag is on the wrong commit and nothing was published.** Delete it and re-tag. No version
+     is burned, because nothing under that version ever shipped:
+
+     ```bash
+     git push --delete origin v<version>     # allowed: repo admin
+     git tag -d v<version>
+     git tag -a v<version> -m "Octonomy <version>" <correct-merge-commit>
+     git push origin v<version>
+     ```
+
+   - **The image already published under that version.** Then the tag is correct and must not move.
+     Different bytes under a shipped `X.Y.Z` is the one promise that cannot be walked back — cut the
+     next patch instead. `./scripts/check-tag-unpublished.sh ghcr.io/octoverse-id/octonomy <version>`
+     tells you which case you are in: `absent` means nothing shipped, `present <digest>` means it did.
+
+   The moving-tag prohibition has no escape hatch on purpose. If you find yourself wanting to weaken
+   the ruleset to finish a release, the answer is a patch release, not a settings change.
+
 6. **Verify the image before announcing the release. This gate is mandatory for a final
    `X.Y.Z` release** (prereleases skip it — see step 5).
 
