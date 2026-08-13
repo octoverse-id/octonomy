@@ -167,23 +167,49 @@ which nobody reads on a schedule.
 That gap is what keeps the DEP-2 claim "bypassing requires an *audited* settings change" honest only
 in the narrow sense that the audit log exists. It is not detection.
 
-- **What:** a scheduled job that fetches the live rulesets, normalises them the way
+**These are two different problems and one of them cannot be solved by polling.** Getting that
+backwards is how this entry gets implemented into a false sense of security:
+
+| Case | What it looks like | Caught by |
+| --- | --- | --- |
+| **Persistent drift** | someone weakens a ruleset and leaves it that way, or forgets to re-export after a legitimate change | a scheduled live-vs-JSON diff |
+| **Transient weaken → act → restore** | the DEP-2 residual case: relax the rule, publish, put it back | **only** event or audit-log monitoring |
+
+A snapshot comparison **cannot** see a change that reverts before the next sample, and nothing forces
+the actor to wait. So a scheduled diff alone does not address the case in this entry's own opening
+paragraph. Caught by a Codex review of PR #119, which was right: the first draft here proposed the
+schedule and then claimed it covered delete/act/recreate.
+
+- **What, part 1 — persistent drift:** a job that fetches the live rulesets, normalises them the way
   `scripts/export-rulesets.sh` does, and fails on any diff against the committed JSON.
+- **What, part 2 — transient changes:** subscribe to the **`repository_ruleset`** webhook
+  (`created` / `edited` / `deleted`) or poll the organisation audit log, and alert on any event whose
+  actor is not an expected release action. This is the half that actually covers the DEP-2 residual.
+  Confirmed the event exists in GitHub's webhook reference; note that subscribing to it *also*
+  requires a GitHub App with **Administration** read, so it shares the blocker below rather than
+  routing around it.
 - **Blocker, and it is the reason this is deferred rather than done — do not rediscover it:**
   **`administration` is not a valid `GITHUB_TOKEN` `permissions:` scope.** A workflow cannot read
   rulesets with the built-in token at all. Detection therefore needs a fine-grained PAT or a GitHub
   App with `administration: read`, provisioned and rotated. Verified against GitHub's own docs after
   a Codex review of PR #108 caught the claim that it was possible.
 - **Also required, easy to miss:**
-  - **A `schedule:` trigger.** Ruleset edits do not fire any workflow event, so a push-triggered job
-    would only notice drift the next time somebody happened to push.
-  - **The drift job must itself be a required check**, or a PR can land while it is red.
+  - **A `schedule:` trigger** for part 1. Ruleset edits fire no *workflow* event, so a push-triggered
+    job would only notice drift the next time somebody happened to push.
+  - **Do NOT make a schedule-only job a required status check.** A scheduled workflow never reports a
+    check run against a pull request's head commit, so requiring it would block **every** PR forever
+    waiting for a check that cannot arrive. Either give it a `pull_request` trigger as well — which
+    is independently useful, since it verifies a PR that edits `.github/rulesets/*.json` against
+    live — or leave the scheduled run as an alert and do not require it. A `pull_request` trigger also
+    means the credential must not be exposed to fork PRs.
   - **Canonicalisation.** The API returns server-owned fields (`id`, `created_at`,
     `current_user_can_bypass`, …); `export-rulesets.sh` already strips exactly these, so reuse its
     filter rather than writing a second one that can disagree.
-- **Cons:** a credential to hold and rotate, for a check that detects rather than prevents — an admin
-  can disable the detector too. It raises the cost of quietly weakening a ruleset from "one settings
-  change" to "two settings changes, one of which is a workflow edit visible in a diff".
+- **Cons:** a credential to hold and rotate, for something that detects rather than prevents — an
+  admin can disable the detector too. Be honest about the ceiling: **it does not meaningfully raise
+  the cost of a deliberate bypass**, because the actor can act inside the polling window (part 1) or
+  disable the webhook (part 2). Its real value is catching *accidents* and *drift left behind*, which
+  is a smaller and more truthful claim than the one this entry originally made.
 - **Context:** scoped out of #113 deliberately. That PR delivered the reviewable, restorable record,
   which is most of the value with none of the credential cost. `.github/rulesets/README.md` states
   the missing piece so a reader does not assume drift is covered.
