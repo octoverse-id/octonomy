@@ -58,32 +58,73 @@ asymmetry).
 
 ## Deployment
 
-### DEP-2: Constrain who can publish — DEFERRED (raised 2026-08-07, PR #105)
-`publish-image.yml` holds `packages: write` and `id-token: write`, so triggering it is equivalent to
-publishing a signed, attested image as this repository. **Write access to this repository is
-therefore publish access**, and no check inside the workflow narrows that.
+### DEP-2: Constrain who can publish — PARTLY DONE, residual DEFERRED (raised 2026-08-07, PR #105; epic #111 landed 2026-08-13)
+`publish-image.yml` holds `packages: write`, `id-token: write` and `attestations: write`, so
+triggering it is equivalent to publishing a signed, attested image as this repository. Epic #111
+narrowed *how* that gets triggered by accident. **It did not narrow who can do it deliberately.**
 
-The reason is structural: GitHub loads a workflow definition from the ref that triggered it — the
-pushed tag for `push`, the *selected ref* for `workflow_dispatch`. Both routes are open to anyone
-who can push:
+**Correcting this entry's original framing, because it was wrong twice.** It said "write access is
+publish access" and proposed rulesets as the answer. The collaborators are all **`admin`**, not
+writers — and an admin can edit, disable or delete a repository-level ruleset, publish, and restore
+it. Its trigger also read *"a second person gets write access. Do it before that, not after"*; by
+the time anyone checked there were **three admins**, so the trigger had already fired twice and the
+instruction was moot.
 
-- push a `vX.Y.Z` tag whose `publish-image.yml` has the gates removed;
-- push **any branch** with the same edit, then dispatch the workflow from it.
+#### What epic #111 closed
 
-The in-workflow gates (commit is on main, CI green on main, dispatch-ref shape) are guards against
-*mistakes* — a tag on the wrong commit, a tag ahead of CI. They are not a boundary.
+- **#110** — `main` requires a pull request and all 7 CI checks, bypass list empty. This also fixed a
+  live defect: Dependabot minor/patch PRs were merging **before CI finished** (PR #93 landed 74
+  seconds ahead of its own build) because `dependabot-auto-merge.yml` depended on branch protection
+  that did not exist.
+- **#112** — `refs/tags/v*` can never be re-pointed or force-pushed **by anyone, admins included**
+  (`current_user_can_bypass: never`, verified against a real push). Deletion is admin-only on
+  purpose: without that escape a wrong-commit tag could never be cleared and the version would be
+  burned.
+- **#113** — all three rulesets are exported to `.github/rulesets/*.json`, so the policy is
+  reviewable, diffable and restorable.
+- **#116** — a release tag must name the actual release merge (`scripts/check-release-merge.sh`).
+  This closed a hole DEP-2 never named: the publish gates could not tell the release merge from any
+  later commit that still carried the same version, so a mistyped tag shipped the wrong tree under
+  an immutable `:X.Y.Z` and reported success.
 
-- **What:** Decide and enforce who can publish, outside the workflow. In rough order of cost:
-  rulesets restricting branch and tag creation; keeping the write-access list small and reviewed;
-  and, if neither is enough, moving the privileged job behind a trigger whose definition always
-  comes from the default branch (`workflow_run`), leaving the tag push as a mere signal.
-- **Why:** A tag ruleset alone — the obvious first answer — does **not** cover the branch-dispatch
-  route. Naming only tags would leave the wider hole while looking solved. Separately, a force-moved
-  tag leaves GHCR holding an image built from source no longer reachable from any ref.
-- **Cons:** Rulesets are another repository setting to keep in step with the release process, and an
-  over-strict one makes cutting a release need an admin. The `workflow_run` redesign changes the
-  release runbook and was considered and not chosen when this epic was planned.
-- **Trigger:** a second person gets write access. Do it before that, not after.
+Net effect: a **mistake-guard**. Not a boundary.
+
+#### What remains open — do not read the above as publish access being constrained
+
+**The branch-dispatch route is untouched, and it preserves the entire original capability.** GitHub
+loads a workflow definition from the ref that triggered it, so anyone who can push a branch can push
+one whose `publish-image.yml` has every gate removed, dispatch it, and run arbitrary code holding
+`packages: write` + `id-token: write` + `attestations: write`. Nothing shipped in #111 touches this.
+It is not a "reduced" residual and should not be described as one.
+
+Two smaller residuals worth stating so nobody over-trusts what landed:
+
+- Required status checks gate **broken** code, not **hostile** code. The check names come from this
+  repo's own workflow file, so a PR can redefine those jobs as no-ops and satisfy them.
+- A repo admin can delete any of the three rulesets, act, and recreate it. Nothing detects that —
+  see **DEP-4**.
+
+- **What:** Decide and enforce who may publish, from outside the repository. In rough order of cost:
+  - **Organisation-level rulesets** — the option this entry originally missed, and the cheapest path
+    to something that is actually a boundary. An org ruleset is owned at the org, so repo admins
+    cannot edit or delete it. Needs someone to hold org-owner separately from repo-admin to mean
+    anything.
+  - **Reduce the admin list.** All three collaborators are `admin`; day-to-day work needs `write` or
+    `maintain`. This is the single highest-leverage change available, because it is what makes every
+    repo-level ruleset bind the people it is aimed at. It is a **people decision**, not a config one.
+  - **Move the publishing credential out of `GITHUB_TOKEN`.** Remove the repo's push access to the
+    GHCR package and publish with a GitHub App token held as a secret in a protected `release`
+    environment with required reviewers. This is the only design that survives a workflow edit —
+    strip `environment:` and the credential is gone. Costs ongoing rotation.
+  - **`workflow_run`-triggered privileged job**, so the privileged definition always comes from the
+    default branch and the tag push is a mere signal. Changes the release runbook.
+- **Why:** the routes that remain open are open to *intent*, and no in-repo configuration closes
+  them. Anything that can be edited by the people it constrains is a speed bump.
+- **Cons:** each option trades convenience or trust for a boundary. Org rulesets need org-level
+  ownership to be separate; shrinking the admin list is a conversation; the App-token design adds a
+  credential to rotate and an approval step to every release.
+- **Trigger:** a contributor **outside the current three** gets write access, or the moment you want
+  a boundary rather than a mistake-guard. Unlike the original trigger, this one has not fired yet.
 
 ### DEP-3: SBOM verification passes on one architecture — DEFERRED (raised 2026-08-12, PR #108)
 `publish-image.yml` generates a per-architecture SPDX SBOM and attests **both against the index
@@ -116,6 +157,39 @@ which is **DEP-2**, not this.
 - **Trigger:** DEP-2 is addressed (removing the manual-tag premise that currently makes this
   unreachable), or a consumer needs a provably complete per-release SBOM — a compliance question
   about what ships in the arm64 image is the likely shape.
+
+### DEP-4: Nothing detects a weakened ruleset — DEFERRED (raised 2026-08-13, PR #118)
+Three rulesets now carry real guarantees (see DEP-2), and `.github/rulesets/*.json` records what they
+should be. **Nothing compares the two.** A repo admin can weaken or delete a ruleset, act, and
+recreate it, and this repository will not notice — the only trace is the organisation audit log,
+which nobody reads on a schedule.
+
+That gap is what keeps the DEP-2 claim "bypassing requires an *audited* settings change" honest only
+in the narrow sense that the audit log exists. It is not detection.
+
+- **What:** a scheduled job that fetches the live rulesets, normalises them the way
+  `scripts/export-rulesets.sh` does, and fails on any diff against the committed JSON.
+- **Blocker, and it is the reason this is deferred rather than done — do not rediscover it:**
+  **`administration` is not a valid `GITHUB_TOKEN` `permissions:` scope.** A workflow cannot read
+  rulesets with the built-in token at all. Detection therefore needs a fine-grained PAT or a GitHub
+  App with `administration: read`, provisioned and rotated. Verified against GitHub's own docs after
+  a Codex review of PR #108 caught the claim that it was possible.
+- **Also required, easy to miss:**
+  - **A `schedule:` trigger.** Ruleset edits do not fire any workflow event, so a push-triggered job
+    would only notice drift the next time somebody happened to push.
+  - **The drift job must itself be a required check**, or a PR can land while it is red.
+  - **Canonicalisation.** The API returns server-owned fields (`id`, `created_at`,
+    `current_user_can_bypass`, …); `export-rulesets.sh` already strips exactly these, so reuse its
+    filter rather than writing a second one that can disagree.
+- **Cons:** a credential to hold and rotate, for a check that detects rather than prevents — an admin
+  can disable the detector too. It raises the cost of quietly weakening a ruleset from "one settings
+  change" to "two settings changes, one of which is a workflow edit visible in a diff".
+- **Context:** scoped out of #113 deliberately. That PR delivered the reviewable, restorable record,
+  which is most of the value with none of the credential cost. `.github/rulesets/README.md` states
+  the missing piece so a reader does not assume drift is covered.
+- **Trigger:** DEP-2 moves to an org-level ruleset or a reduced admin list (at which point the
+  detector guards something that is actually a boundary), or a ruleset gets weakened once and nobody
+  notices for a while.
 
 ## Configuration
 
