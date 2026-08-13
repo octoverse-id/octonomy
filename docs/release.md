@@ -117,6 +117,86 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    pinning a deployment to. Say so in the release notes rather than leaving readers to discover
    that `docker pull` has nothing to fetch.
 
+   ### If the tag push is rejected
+
+   Two repository rulesets cover `refs/tags/v*`, so a push can be refused here — after the release
+   PR has already merged, which is the worst moment to be guessing:
+
+   | Ruleset | Rule | Bypass | Effect |
+   | --- | --- | --- | --- |
+   | `release tags: never move` | `update`, `non_fast_forward` | **nobody** | a `v*` tag can never be re-pointed, by anyone, including admins |
+   | `release tags: deletion is admin-only` | `deletion` | repo admins | a tag can be removed, so a mistake is recoverable |
+
+   Tag **creation is deliberately unrestricted** — any maintainer can cut a release. But do not read
+   that as "a wrong commit gets caught downstream", because there is one wrong commit that does not:
+
+   > **The workflow cannot tell the release merge from a later commit that still carries the same
+   > version.** Its gates are *on main*, *CI green*, and *tag matches `pyproject`*. Only release PRs
+   > bump the version, so **every commit merged after the release PR still matches** — a docs-only
+   > merge, a bug fix, a feature. Tag any of them and all three gates pass, and the immutable
+   > `:X.Y.Z` gets built from the wrong tree. This repo's own history demonstrates it: `7032af7`
+   > (the v3.1.0 release merge) and `b1b27bb` (a docs merge two commits later) both read
+   > `version = "3.1.0"`.
+
+   So verify the commit **before** pushing the tag. The release merge is the commit where the version
+   *first appears* on main — its first parent still carries the previous version:
+
+   ```bash
+   sha=$(git rev-parse <merge-commit>)
+   cur=$(git show "$sha:pyproject.toml"   | grep -m1 '^version = ' | sed -E 's/.*"([^"]+)".*/\1/')
+   par=$(git show "$sha^1:pyproject.toml" | grep -m1 '^version = ' | sed -E 's/.*"([^"]+)".*/\1/')
+   [ "$cur" = "<version>" ] && [ "$par" != "<version>" ] \
+     && echo "OK: $sha is the release merge for $cur" \
+     || { echo "REFUSING: $sha is not where <version> first appears (parent=$par)"; }
+   ```
+
+   Never tag `main` or `HEAD` by name. Always name the merge commit explicitly, and run the check
+   above first — it is the only thing standing between a slip and a permanently wrong `:X.Y.Z`.
+
+   `remote: Cannot force-push to this tag` means you tried to move an existing tag. **Do not go
+   looking for a way around it.** Two cases:
+
+   - **The tag is on the wrong commit and nothing was published.** Delete it and re-tag — but
+     **wait for the bad tag's publish run to finish first.**
+
+     Pushing the wrong tag already started `publish-image.yml`, and the release job runs with
+     `cancel-in-progress: false`, so deleting the tag does **not** stop it. If you check the registry
+     while that run is still queued or building, `absent` is only true *at that moment*: the old run
+     can promote the wrong commit's digest to `:X.Y.Z` seconds later. Your replacement run then finds
+     the version already published, re-promotes that digest instead of rebuilding, and fails at the
+     attestation check — because `--source-digest` no longer matches. The version ends up burned on
+     wrong bytes, which is precisely the outcome the immutability rules exist to prevent.
+
+     So drain first, then check, then re-tag:
+
+     ```bash
+     # 1. every publish run for the bad tag must be terminal (no queued / in_progress)
+     gh api "repos/octoverse-id/octonomy/actions/workflows/publish-image.yml/runs?per_page=50" \
+       --jq "[.workflow_runs[] | select(.head_branch == \"v<version>\")]
+             | map({status, conclusion})"
+     # re-run until every entry shows status: completed
+
+     # 2. only now is `absent` trustworthy
+     ./scripts/check-tag-unpublished.sh ghcr.io/octoverse-id/octonomy <version>
+
+     # 3. if still absent, delete and re-tag
+     git push --delete origin v<version>     # allowed: repo admin
+     git tag -d v<version>
+     git tag -a v<version> -m "Octonomy <version>" <correct-merge-commit>
+     git push origin v<version>
+     ```
+
+     If step 1 shows the old run promoted the tag, you are in the second case below — the version is
+     spent, and the answer is the next patch.
+
+   - **The image already published under that version.** Then the tag is correct and must not move.
+     Different bytes under a shipped `X.Y.Z` is the one promise that cannot be walked back — cut the
+     next patch instead. `./scripts/check-tag-unpublished.sh ghcr.io/octoverse-id/octonomy <version>`
+     tells you which case you are in: `absent` means nothing shipped, `present <digest>` means it did.
+
+   The moving-tag prohibition has no escape hatch on purpose. If you find yourself wanting to weaken
+   the ruleset to finish a release, the answer is a patch release, not a settings change.
+
 6. **Verify the image before announcing the release. This gate is mandatory for a final
    `X.Y.Z` release** (prereleases skip it — see step 5).
 
