@@ -196,6 +196,26 @@ jobs:
           } >>"$GITHUB_OUTPUT"
           echo "publishing $version (dry_run=$dry_run, primary tag :$primary_tag)"
 
+      - name: Assert the tag names the release merge, not a later commit
+        # The gates above prove the commit is on main, is green, and carries this
+        # version. None of them can tell the RELEASE MERGE from any later commit that
+        # still carries the same version — and only release PRs bump the version, so
+        # every commit merged after the release PR passes all three. Tag a docs merge or
+        # a feature and the immutable :X.Y.Z is built from the wrong tree while every
+        # check reports success. Real example from this repository: b21f690 (the v3.1.0
+        # release merge) and b1b27bb (a docs merge two commits later) both read
+        # version = "3.1.0".
+        #
+        # Skipped on dry runs: a workflow_dispatch from main is not a release merge and
+        # has no such relationship to assert.
+        #
+        # Runs on the recovery path too (build=false). Re-promoting a digest still
+        # asserts the tag/commit pair it is promoting for.
+        if: steps.params.outputs.dry_run != 'true'
+        env:
+          VERSION: ${{ steps.params.outputs.version }}
+        run: ./scripts/check-release-merge.sh "$VERSION" "$GITHUB_SHA"
+
       - name: Assert the version stamps agree
         # The tag-vs-pyproject check above proves the tag names this tree's version;
         # this proves the tree agrees with itself (settings, OpenAPI, CHANGELOG).

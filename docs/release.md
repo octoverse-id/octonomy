@@ -134,24 +134,23 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    > version.** Its gates are *on main*, *CI green*, and *tag matches `pyproject`*. Only release PRs
    > bump the version, so **every commit merged after the release PR still matches** — a docs-only
    > merge, a bug fix, a feature. Tag any of them and all three gates pass, and the immutable
-   > `:X.Y.Z` gets built from the wrong tree. This repo's own history demonstrates it: `7032af7`
+   > `:X.Y.Z` gets built from the wrong tree. This repo's own history demonstrates it: `b21f690`
    > (the v3.1.0 release merge) and `b1b27bb` (a docs merge two commits later) both read
    > `version = "3.1.0"`.
 
    So verify the commit **before** pushing the tag. The release merge is the commit where the version
-   *first appears* on main — its first parent still carries the previous version:
+   *first appears* — its first parent still carries the previous version:
 
    ```bash
-   sha=$(git rev-parse <merge-commit>)
-   cur=$(git show "$sha:pyproject.toml"   | grep -m1 '^version = ' | sed -E 's/.*"([^"]+)".*/\1/')
-   par=$(git show "$sha^1:pyproject.toml" | grep -m1 '^version = ' | sed -E 's/.*"([^"]+)".*/\1/')
-   [ "$cur" = "<version>" ] && [ "$par" != "<version>" ] \
-     && echo "OK: $sha is the release merge for $cur" \
-     || { echo "REFUSING: $sha is not where <version> first appears (parent=$par)"; }
+   ./scripts/check-release-merge.sh <version> <merge-commit>
    ```
 
-   Never tag `main` or `HEAD` by name. Always name the merge commit explicitly, and run the check
-   above first — it is the only thing standing between a slip and a permanently wrong `:X.Y.Z`.
+   `publish-image.yml` runs **this same script** on every non-dry-run publish, so the runbook and the
+   gate cannot drift apart. Running it here just means you find out before the tag is pushed rather
+   than after — and once a wrong tag is pushed you are into the recovery path below, which is far more
+   expensive than one command.
+
+   Never tag `main` or `HEAD` by name. Always name the merge commit explicitly.
 
    `remote: Cannot force-push to this tag` means you tried to move an existing tag. **Do not go
    looking for a way around it.** Two cases:
