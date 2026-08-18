@@ -16,6 +16,11 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    # Every job sets an explicit timeout. The default is 360 minutes, and `docker` and
+    # the test jobs are required status checks (.github/rulesets/main-require-pr-green-ci.json)
+    # — a hung step there blocks the branch for six hours, and `cancel-in-progress`
+    # above means a re-push just restarts that clock instead of surfacing a failure.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Set up uv
@@ -40,6 +45,7 @@ jobs:
 
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       DATABASE_URL: sqlite:////tmp/octonomy-check.sqlite3
       SERVICE_TOKEN_PEPPER: ci-pepper
@@ -64,6 +70,7 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Set up uv
@@ -77,6 +84,7 @@ jobs:
 
   test-sqlite:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       DATABASE_URL: sqlite:////tmp/octonomy-ci.sqlite3
       SERVICE_TOKEN_PEPPER: ci-pepper
@@ -94,6 +102,7 @@ jobs:
 
   test-postgres:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -129,6 +138,7 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # This job must NEVER hold a registry credential. ci.yml runs on `pull_request`,
     # so a fork PR triggers it; keeping permissions at `contents: read` and never
     # logging into any registry is what lets the DEP-1 publish workflow safely gate
@@ -137,10 +147,28 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+      # SHA-pinned, and deliberately to the same versions as
+      # .github/actions/build-publish/action.yml. Two reasons they must not float here:
+      #
+      #   * This job writes the `type=gha` cache that the publish composite restores
+      #     (action.yml `cache-from`). A hijacked mutable tag resolved at run time could
+      #     poison those layers, and the publish path would then push and Sigstore-attest
+      #     the result — every action in the composite being SHA-pinned does not help,
+      #     because the poison enters through the shared cache, not an action reference.
+      #   * A shared mode=max cache round-tripped between two BuildKit exporter
+      #     generations degrades to misses, quietly voiding the warm-cache economics
+      #     below. Drifting apart is a silent slowdown, not a failure.
+      #
+      # Keep the `# vX.Y.Z` comments — that is what Dependabot reads to bump the pins.
+      # These two steps and the matching ones in the composite are one unit: bump both.
+      #
+      # Both actions run on Node 24 and require Actions Runner >= v2.327.1. Fine on
+      # ubuntu-latest; check the runner version first if this job ever moves to a
+      # self-hosted or ARC runner.
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           push: false
