@@ -32,15 +32,30 @@ updates:
           - "patch"
 
   - package-ecosystem: "github-actions"
-    directory: "/"
+    # The github-actions ecosystem scans `<directory>/.github/workflows/*.y*ml` plus an
+    # `action.y*ml` at the directory itself — a nested composite action needs its own
+    # entry or its pins are never updated. Without the second path here, the four
+    # SHA-pinned actions in .github/actions/build-publish/action.yml stay frozen while
+    # that file's own comment claims Dependabot keeps them current — and that is the one
+    # action running with `packages: write` and `id-token: write`.
+    directories:
+      - "/"
+      - "/.github/actions/build-publish"
     schedule:
       interval: "weekly"
     labels:
       - "dependencies"
       - "github-actions"
+    # Same policy as python-packages above: bundle minor + patch, leave majors as
+    # individual PRs. Without update-types a major lands inside the group PR (PR #121
+    # bundled two: setup-buildx v3->v4 and build-push v6->v7), which forces a security
+    # patch and an unreviewed major to be accepted or rejected as one unit.
     groups:
       github-actions:
         applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "*"
 
