@@ -1,14 +1,19 @@
 # syntax=docker/dockerfile:1
 
-# Pin the base image by digest for reproducible builds; the same digest is reused for
-# both stages via this global ARG. Dependabot's docker ecosystem
-# (.github/dependabot.yml) keeps the digest fresh with security patches.
-ARG PYTHON_IMAGE=python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+# Pin the base image by digest for reproducible builds. The digest sits on a literal
+# `FROM` and both real stages descend from this `base` stage, so the pin stays in one
+# place without hiding behind a variable. That matters: Dependabot's docker ecosystem
+# does not resolve ARG interpolation in `FROM ${VAR}` (dependabot-core#2057, #4597,
+# #10190), so while this pin lived in a global ARG the ecosystem detected no dependency
+# in this file at all and never opened a single PR — the digest went 21 days stale while
+# the comment here claimed Dependabot was keeping it fresh (#132). Do not move the digest
+# back behind a variable.
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS base
 
 # --- Builder ---------------------------------------------------------------------
 # Resolve and install ONLY the runtime dependencies (no [dev] extras) into an
 # isolated virtualenv, driven by the committed uv.lock for reproducible builds.
-FROM ${PYTHON_IMAGE} AS builder
+FROM base AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -34,7 +39,7 @@ RUN uv sync --frozen --no-install-project --no-dev
 
 # --- Runtime ---------------------------------------------------------------------
 # Carry only the venv + application source. No uv, no build toolchain, no dev extras.
-FROM ${PYTHON_IMAGE} AS runtime
+FROM base AS runtime
 
 # DJANGO_DEBUG defaults to false in the image: a production container must never fall
 # into debug mode if the deployment omits the variable (debug mode leaks tracebacks and
