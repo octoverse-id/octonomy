@@ -23,8 +23,28 @@ jobs:
         # of this action — a repointed tag could report `semver-patch` for anything and
         # auto-merge it into main. Dependabot reads the version comment to bump the pin.
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      # An allowlist, not a denylist. `package-ecosystem != 'docker'` would fail OPEN:
+      # a missing output is the empty string, which is != 'docker', so the base image
+      # would auto-merge again with nothing to show that the gate had stopped applying.
+      # Naming the ecosystems that MAY auto-merge means an absent output — or a newly
+      # added ecosystem — fails closed and waits for a human.
+      #
+      # docker is not on the list because a base image tag bump reports as `semver-minor`:
+      # python:3.12-slim -> 3.14-slim did exactly that and auto-merged as PR #134, so the
+      # "majors get individual review" policy in dependabot.yml does not protect the
+      # interpreter the production image ships. Gating it here rather than adding an
+      # `ignore` rule to dependabot.yml is the safer half of the trade — every docker PR
+      # still arrives, security digest bumps included, and only needs a human to click
+      # merge. An `ignore` rule could suppress a digest patch outright, which is the
+      # silent-inertness failure #132 was about.
       - name: Enable auto-merge for minor and patch updates
-        if: ${{ steps.metadata.outputs.update-type == 'version-update:semver-minor' || steps.metadata.outputs.update-type == 'version-update:semver-patch' }}
+        # Folded to one line by YAML: every continuation sits at the same indent as the
+        # opening `${{`. Indenting them further would make YAML keep the newlines.
+        if: >-
+          ${{ (steps.metadata.outputs.package-ecosystem == 'uv'
+          || steps.metadata.outputs.package-ecosystem == 'github-actions')
+          && (steps.metadata.outputs.update-type == 'version-update:semver-minor'
+          || steps.metadata.outputs.update-type == 'version-update:semver-patch') }}
         run: gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
