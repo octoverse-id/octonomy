@@ -1,6 +1,17 @@
 version: 2
 updates:
-  - package-ecosystem: "pip"
+  # `uv`, not `pip`. uv.lock is this project's only lockfile (there is no
+  # requirements.txt, poetry.lock, Pipfile.lock, or setup.py) and the pip ecosystem does
+  # not parse it — uv is a separate native ecosystem that reads pyproject.toml and
+  # uv.lock together.
+  #
+  # Under `pip`, every PR this repo ever received was a pyproject range widening (#22-#26,
+  # #38, #52, #67, #92-#94), because widening was the only edit pip could make here.
+  # Adding versioning-strategy: lockfile-only in 14302ab correctly stopped that, and left
+  # the ecosystem with no legal action at all: it went silent from 2026-08-05 until this
+  # change, and the Django 5.2.17 (PYSEC-2026-3717) and sqlparse CVE bumps had to be
+  # applied by hand in that window. See #132.
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -9,18 +20,19 @@ updates:
       - "dependencies"
     # Update uv.lock only; never rewrite the constraints in pyproject.toml.
     #
-    # pip's default strategy ("auto") widens ranges for an application, which
-    # produced PRs #92 and #94: `django <5.3 -> <6.1` and `gunicorn <24.0 -> <27.0`.
-    # Those upper bounds are deliberate, not incidental — <5.3 is what holds the
-    # project on the Django 5.2 LTS line (README, the 3.0.0 CHANGELOG entry, and
-    # docs/versioning.md, which makes a minimum-Django change a major bump). A
-    # range widening also passes CI misleadingly: it leaves uv.lock untouched, so
-    # `uv sync` installs the already-locked versions and the suite never exercises
-    # the newly-permitted ones. The break would surface later, on whatever
-    # unrelated PR next runs `uv lock --upgrade`.
+    # The default strategy ("auto") widens ranges for an application, which produced PRs
+    # #92 and #94: `django <5.3 -> <6.1` and `gunicorn <24.0 -> <27.0`. Those upper bounds
+    # are deliberate, not incidental — <5.3 is what holds the project on the Django 5.2
+    # LTS line (README, the 3.0.0 CHANGELOG entry, and docs/versioning.md, which makes a
+    # minimum-Django change a major bump). A range widening also passes CI misleadingly:
+    # it leaves uv.lock untouched, so `uv sync` installs the already-locked versions and
+    # the suite never exercises the newly-permitted ones. The break would surface later,
+    # on whatever unrelated PR next runs `uv lock --upgrade`.
     #
     # lockfile-only keeps security and patch updates flowing while leaving the
-    # supported-version contract a human decision, made per docs/versioning.md.
+    # supported-version contract a human decision, made per docs/versioning.md. It is
+    # honoured for uv as of dependabot-core#12162; if Dependabot ever reports a config
+    # error on this key, that is what regressed.
     versioning-strategy: lockfile-only
     # Bundle minor + patch bumps into a single PR. Major bumps still arrive as
     # their own PRs so they get individual review.
@@ -60,6 +72,8 @@ updates:
           - "*"
 
   # Keep the Dockerfile base image (pinned by digest) patched with security updates.
+  # This only works because the digest sits on a literal `FROM` line — see the comment at
+  # the top of the Dockerfile before moving it back behind a variable.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
