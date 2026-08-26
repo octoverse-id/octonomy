@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The official container image now ships **Python 3.14** (was 3.12). The supported runtime floor is
+  unchanged — `requires-python` is still `>=3.12`, and CI continues to test both 3.12 and 3.14 — so
+  this changes what you get when you *pull the image*, not what the project supports. It arrived as
+  Dependabot PR #134, the first base image update Dependabot was ever able to see: the pin had been
+  hidden behind an interpolated `ARG` that its Docker parser cannot resolve (#132).
+
 ## [3.1.0] - 2026-08-11
 
 A **minor** release: the REST contract is unchanged on both surfaces, and no request or response
