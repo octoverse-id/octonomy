@@ -1214,6 +1214,7 @@ components:
         metadata: {}
         is_active:
           type: boolean
+          default: true
         usage_count:
           type: integer
           readOnly: true
@@ -1264,6 +1265,7 @@ components:
         metadata: {}
         is_active:
           type: boolean
+          default: true
         created_at:
           type: string
           format: date-time
@@ -1402,6 +1404,7 @@ components:
         metadata: {}
         is_active:
           type: boolean
+          default: true
         created_at:
           type: string
           format: date-time

@@ -109,6 +109,23 @@ def test_namespace_identity_is_documented_on_v2_responses_only(v1_schema, v2_sch
         assert "namespace_id" in v2_properties, name
 
 
+def test_tag_response_scope_fields_remain_required_and_bounded(v1_schema, v2_schema):
+    # These response-only serializers always emit their nullable scope identity.
+    # Keep generated clients from treating the fields as absent or unbounded.
+    for name in ("Tag", "TagAlias", "Vocabulary"):
+        v1_component = v1_schema["components"]["schemas"][name]
+        v2_component = v2_schema["components"]["schemas"][name]
+
+        assert "application_id" in v1_component["required"], name
+        assert {"application_id", "namespace_type", "namespace_id"} <= set(
+            v2_component["required"]
+        ), name
+
+        assert v1_component["properties"]["application_id"]["maxLength"] == 100, name
+        for field in ("application_id", "namespace_type", "namespace_id"):
+            assert v2_component["properties"][field]["maxLength"] == 100, (name, field)
+
+
 def test_rollback_503_is_documented_on_v2_operations_only(v1_schema, v2_schema):
     # NAMESPACE_V2_API_ENABLED=false makes namespaced v2 operations return
     # 503 namespace_api_disabled; that public rollback contract is documented on
