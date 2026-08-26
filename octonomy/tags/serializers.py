@@ -3,6 +3,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from octonomy.core.auth import GLOBAL_SCOPE
+from octonomy.core.models import NAMESPACE_FIELD_MAX_LENGTH
 from octonomy.core.selectors import apply_namespace_filter
 from octonomy.core.serializers import NamespaceIdentityResponseMixin
 from octonomy.core.validators import validate_external_id, validate_slug_like
@@ -11,6 +12,17 @@ from octonomy.tags.services import validate_metadata
 
 
 class TagSerializer(NamespaceIdentityResponseMixin, serializers.ModelSerializer):
+    # These nullable model fields are always emitted by this response-only serializer.
+    # Declare them explicitly so the response schema keeps them required and bounded.
+    application_id = serializers.CharField(
+        max_length=NAMESPACE_FIELD_MAX_LENGTH, allow_blank=True, allow_null=True
+    )
+    namespace_type = serializers.CharField(
+        max_length=NAMESPACE_FIELD_MAX_LENGTH, allow_blank=True, allow_null=True
+    )
+    namespace_id = serializers.CharField(
+        max_length=NAMESPACE_FIELD_MAX_LENGTH, allow_blank=True, allow_null=True
+    )
     parent_id = serializers.UUIDField(source="parent.id", read_only=True)
     vocabulary_id = serializers.UUIDField(source="vocabulary.id", read_only=True)
     usage_count = serializers.SerializerMethodField()

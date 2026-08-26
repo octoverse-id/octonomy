@@ -72,9 +72,9 @@ def test_fixture_spec_path_resolves_to_its_registered_endpoint(name):
     # existing one and still pass.
     scenario = FIXTURE_SPECS[name]()
     match = resolve(scenario.path.split("?", 1)[0])
-    assert (
-        match.url_name == name
-    ), f"Spec '{name}' path {scenario.path!r} resolves to {match.url_name!r}, not {name!r}."
+    assert match.url_name == name, (
+        f"Spec '{name}' path {scenario.path!r} resolves to {match.url_name!r}, not {name!r}."
+    )
 
 
 @pytest.mark.parametrize("name", sorted(FIXTURE_SPECS))
