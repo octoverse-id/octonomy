@@ -7,12 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-08-26
+
+A **patch** release: both live REST surfaces keep the same paths, fields, validation, and runtime
+behavior. The OpenAPI changes restore scope fields that the API already always emitted and document
+the existing `is_active=true` default; they do not add a capability. Python 3.12 remains supported,
+there is no database migration, and rollback is a redeploy of 3.1.0.
+
+### Security
+- Updated the lockfile to Django 5.2.17 for PYSEC-2026-3717 and sqlparse 0.6.0 for
+  CVE-2026-71491, CVE-2026-59894, CVE-2026-59893, and CVE-2026-54284. The declared Django and
+  Python support ranges are unchanged.
+- SHA-pinned the Docker build actions that can populate the publish cache, bounded every CI job
+  with an explicit timeout, and expanded Dependabot coverage to include the privileged image-
+  publishing composite action. Major GitHub Actions updates are now isolated for review instead of
+  being bundled with security and maintenance updates.
+
+### Fixed
+- Restored `application_id`, `namespace_type`, and `namespace_id` as required, length-bounded
+  fields in generated tag, alias, and vocabulary response schemas after drf-spectacular 0.30 began
+  honoring serializer requiredness more precisely. The runtime payloads never stopped emitting
+  these nullable scope fields.
+- The publish workflow now refuses a version tag unless it targets the release merge where that
+  version first appears. This prevents a later commit carrying the same package version from being
+  published under the immutable release image tag.
+- Corrected Dependabot to read the native `uv.lock`, detect the literal pinned Docker base image,
+  use the correct `github-actions` ecosystem identifier in the auto-merge gate, and require review
+  for base-image updates.
+
 ### Changed
 - The official container image now ships **Python 3.14** (was 3.12). The supported runtime floor is
   unchanged — `requires-python` is still `>=3.12`, and CI continues to test both 3.12 and 3.14 — so
   this changes what you get when you *pull the image*, not what the project supports. It arrived as
   Dependabot PR #134, the first base image update Dependabot was ever able to see: the pin had been
   hidden behind an interpolated `ARG` that its Docker parser cannot resolve (#132).
+- Refreshed locked runtime and development dependencies within their existing declared ranges,
+  including Django REST framework, drf-spectacular, django-unfold, dj-database-url, pytest,
+  pytest-cov, pytest-django, pip-audit, python-dotenv, and Ruff.
+- Made repository protections reviewable and recoverable by recording the live main-branch and
+  release-tag rulesets in the repository with a deterministic export script. The live GitHub
+  rulesets remain the enforcement source of truth.
+- Hardened release recovery guidance around immutable tags, draining in-flight publish runs, image
+  verification, and attestation/source binding before a GitHub release is announced.
 
 ## [3.1.0] - 2026-08-11
 
@@ -317,7 +353,8 @@ Initial public release.
 - OpenAPI schema and Swagger/ReDoc docs via drf-spectacular.
 - Apache License 2.0.
 
-[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.1.1...HEAD
+[3.1.1]: https://github.com/octoverse-id/octonomy/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/octoverse-id/octonomy/compare/v3.0.1...v3.1.0
 [3.0.1]: https://github.com/octoverse-id/octonomy/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/octoverse-id/octonomy/compare/v2.0.0...v3.0.0
