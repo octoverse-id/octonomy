@@ -38,11 +38,19 @@ jobs:
       # merge. An `ignore` rule could suppress a digest patch outright, which is the
       # silent-inertness failure #132 was about.
       - name: Enable auto-merge for minor and patch updates
+        # `github_actions` with an UNDERSCORE. Do not "correct" this to the hyphenated
+        # `github-actions` that dependabot.yml uses — they are different strings from
+        # different sources. fetch-metadata derives this output from the PR's branch name
+        # (`packageEcosystem: chunks[1]`), and Dependabot names that path segment
+        # `dependabot/github_actions/...`, so the metadata value is underscored while the
+        # config key is hyphenated. `uv` and `docker` happen to be spelled the same in
+        # both. Verified against this repo's own branches.
+        #
         # Folded to one line by YAML: every continuation sits at the same indent as the
         # opening `${{`. Indenting them further would make YAML keep the newlines.
         if: >-
           ${{ (steps.metadata.outputs.package-ecosystem == 'uv'
-          || steps.metadata.outputs.package-ecosystem == 'github-actions')
+          || steps.metadata.outputs.package-ecosystem == 'github_actions')
           && (steps.metadata.outputs.update-type == 'version-update:semver-minor'
           || steps.metadata.outputs.update-type == 'version-update:semver-patch') }}
         run: gh pr merge --auto --merge "$PR_URL"
