@@ -12,7 +12,7 @@
 #      To run your own build instead, build from the repository root (the Dockerfile
 #      uses the repo as its context) and swap the image reference:
 #        docker build -t octonomy:local .
-#      then replace ghcr.io/octoverse-id/octonomy:3.1.0 with octonomy:local in the
+#      then replace ghcr.io/octoverse-id/octonomy:3.1.1 with octonomy:local in the
 #      `image:` lines below.
 #
 #      UPGRADING: the version appears on THREE `image:` lines (migrate, app,
@@ -56,7 +56,7 @@ services:
   # One-shot database migration. Runs to completion, then exits 0. The entrypoint runs
   # `manage.py check` first (fail-closed on an invalid flag combination), then migrate.
   migrate:
-    image: ghcr.io/octoverse-id/octonomy:3.1.0
+    image: ghcr.io/octoverse-id/octonomy:3.1.1
     command: ["python", "manage.py", "migrate", "--noinput"]
     restart: "no"
     env_file: [.env]
@@ -66,7 +66,7 @@ services:
 
   # The API server (Gunicorn). Serves /api/* and the /health/* probes on 8000.
   app:
-    image: ghcr.io/octoverse-id/octonomy:3.1.0
+    image: ghcr.io/octoverse-id/octonomy:3.1.1
     restart: unless-stopped
     env_file: [.env]
     ports:
@@ -94,7 +94,7 @@ services:
   # handled internally (the command still exits 0) and surface in the JSON logs + the
   # outbox_dispatch_summary metric — monitor those, per docs/operations.md.
   dispatcher:
-    image: ghcr.io/octoverse-id/octonomy:3.1.0
+    image: ghcr.io/octoverse-id/octonomy:3.1.1
     restart: unless-stopped
     command: ["sh", "-c", "set -e; while true; do python manage.py dispatch_outbox_events --limit 100 --retry-failed; sleep 60; done"]
     env_file: [.env]

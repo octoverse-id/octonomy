@@ -77,7 +77,7 @@ Octonomy publishes an official image to GHCR. The package is **public**: no acco
 `docker login`, and no `imagePullSecrets`.
 
 ```bash
-docker pull ghcr.io/octoverse-id/octonomy:3.1.0
+docker pull ghcr.io/octoverse-id/octonomy:3.1.1
 ```
 
 Releases are built for **`linux/amd64` and `linux/arm64`**, and each architecture is started and
@@ -114,12 +114,12 @@ Every release carries SLSA build provenance and a per-architecture SPDX SBOM, si
 and attached to the image. Verify both, and pin **who** signed them:
 
 ```bash
-gh attestation verify oci://ghcr.io/octoverse-id/octonomy:3.1.0 \
+gh attestation verify oci://ghcr.io/octoverse-id/octonomy:3.1.1 \
   --repo octoverse-id/octonomy \
   --signer-workflow octoverse-id/octonomy/.github/workflows/publish-image.yml \
   --predicate-type https://slsa.dev/provenance/v1
 
-gh attestation verify oci://ghcr.io/octoverse-id/octonomy:3.1.0 \
+gh attestation verify oci://ghcr.io/octoverse-id/octonomy:3.1.1 \
   --repo octoverse-id/octonomy \
   --signer-workflow octoverse-id/octonomy/.github/workflows/publish-image.yml \
   --predicate-type https://spdx.dev/Document
@@ -136,7 +136,7 @@ Both extra flags carry weight, and dropping either weakens the check in a way th
 
 Together these say the image was built by this repository's publish workflow and carries both
 predicates. To additionally bind the image to the **release tag** it claims to come from, add
-`--source-ref refs/tags/v3.1.0` (needs `gh` 2.68+). `:edge` is **not** attested and fails all of
+`--source-ref refs/tags/v3.1.1` (needs `gh` 2.68+). `:edge` is **not** attested and fails all of
 this by design.
 
 Needs **`gh` 2.51+** as written — `gh attestation` arrived in 2.49 and `--signer-workflow` in 2.51.
