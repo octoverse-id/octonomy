@@ -24,9 +24,11 @@ check:
 migrate:
 	uv run python manage.py migrate
 
-# Gather the admin's static assets into STATIC_ROOT. Non-destructive: --noinput and
-# no --clear, so it never wipes an existing STATIC_ROOT. Needed when serving the
-# optional admin (OCTONOMY_ADMIN_ENABLED) with DEBUG=false.
+# Gather the bundled static assets (admin, Unfold, DRF) into STATIC_ROOT, which the app
+# then serves itself via WhiteNoise. Non-destructive: --noinput and no --clear, so it
+# never wipes an existing STATIC_ROOT. Needed on any DEBUG=false host that does not run
+# the container image (which collects at build time) — and not only for the optional
+# admin: the always-on DRF browsable API needs /static/rest_framework/* too.
 collectstatic:
 	uv run python manage.py collectstatic --noinput
 

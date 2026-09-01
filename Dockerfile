@@ -60,12 +60,14 @@ RUN groupadd --system --gid 1001 app \
 COPY --from=builder /opt/venv /opt/venv
 COPY . .
 
-# Stage the admin/Unfold static assets into STATIC_ROOT. The API is headless, so this
-# only matters if OCTONOMY_ADMIN_ENABLED=true is later set; even then the app does NOT
-# serve them itself (no WhiteNoise — an external server/CDN serves STATIC_ROOT per
-# docs/operations.md). This just bakes the assets so that server has them. Run with
-# DJANGO_DEBUG=true so the boot secret guards (which fire only when DEBUG=false, the
-# image default above) do not trip during the build; collectstatic does not touch the DB.
+# Collect the bundled static assets (django.contrib.admin, Unfold, DRF) into STATIC_ROOT.
+# REQUIRED, not optional: the app serves these itself through WhiteNoise (#143), and the
+# staticfiles backend is manifest-based — an image built without this step renders a 500
+# on the first admin or browsable-API page rather than merely looking unstyled. It is not
+# admin-only either: DRF's browsable API is on by default, so /static/rest_framework/* is
+# needed even when OCTONOMY_ADMIN_ENABLED is unset. Run with DJANGO_DEBUG=true so the boot
+# secret guards (which fire only when DEBUG=false, the image default above) do not trip
+# during the build; collectstatic does not touch the DB.
 # Files stay root-owned and world-readable — the runtime never writes to /app (sessions
 # are DB-backed, PYTHONDONTWRITEBYTECODE stops .pyc writes), so the non-root user only
 # needs read/execute. Leaving source read-only is the least-privilege posture.
