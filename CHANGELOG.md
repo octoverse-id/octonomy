@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **CI now asserts that a real image actually serves its static assets.** The bug fixed
+  above survived a full release because no deploy channel was ever booted and probed end to
+  end. The existing `docker` job already builds the production image and polls
+  `/health/live`; it now also starts it with `OCTONOMY_ADMIN_ENABLED=true` and runs
+  `scripts/assert-static-served.sh`, which renders `/admin/login/`, extracts a **hashed**
+  asset URL from that HTML and fetches it, checks the browsable API's own asset, and
+  asserts that no `Access-Control-Allow-Origin` header is present at all. Probing a known
+  unhashed path would prove nothing — `collectstatic` writes both names, so it answers 200
+  even with a broken manifest. What this establishes is that the built image carries a
+  usable production manifest and that those two surfaces render; it does not render every
+  admin page, and the test suite cannot cover this class because it runs the plain
+  staticfiles backend.
+- `make static-check` (`scripts/check-static-serving.sh`), a drift gate over the deploy
+  channels: every channel file must still declare how static is served, and none may mount
+  anything over `/app` or `/app/staticfiles`, which would hide the assets baked into the
+  image. It reads text and proves nothing about an HTTP response — that is the CI job's
+  job — so it is labelled accordingly in its own header.
+
 ### Fixed
 - **Static assets are now served by the app itself.** With `DJANGO_DEBUG=false` nothing in
   the Octonomy process answered `/static/*`, so every request 404'd: the admin console

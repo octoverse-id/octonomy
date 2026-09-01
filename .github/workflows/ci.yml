@@ -62,6 +62,11 @@ jobs:
         run: uv run python manage.py check
       - name: Migration drift check
         run: uv run python manage.py makemigrations --check --dry-run
+      - name: Static-serving drift check
+        # Text-level only: it asserts each deploy channel still declares HOW static is
+        # served, and that none has grown a mount hiding the assets baked into the image.
+        # It proves nothing about an HTTP response — that is the `docker` job's step.
+        run: make static-check
       - name: OpenAPI contract drift check
         run: |
           uv run python manage.py spectacular --api-version v1 --file docs/openapi.yaml --format openapi
@@ -199,6 +204,7 @@ jobs:
             -e DJANGO_SECRET_KEY=ci-docker-smoke-not-a-real-secret \
             -e SERVICE_TOKEN_PEPPER=ci-pepper \
             -e DATABASE_URL=sqlite:////tmp/octonomy-ci.sqlite3 \
+            -e OCTONOMY_ADMIN_ENABLED=true \
             -p 8000:8000 \
             octonomy:ci
           ready=0
@@ -221,6 +227,29 @@ jobs:
           echo "container is live:"
           curl -fsS http://localhost:8000/health/live
           echo
+      - name: Assert the running image serves its static assets
+        # Compensating control for decision dec-805139c7: the pytest suite runs the plain
+        # staticfiles backend, so an image whose production manifest is missing or stale
+        # passes every test job above. This step boots the real thing and asks it for the
+        # assets its own pages reference — which is why the container above now starts with
+        # OCTONOMY_ADMIN_ENABLED=true.
+        #
+        # It renders /admin/login/ and the browsable API and fetches a HASHED url out of
+        # each, rather than probing a known filename: collectstatic writes both the original
+        # and the hashed name, so an unhashed path answers 200 even with a broken manifest.
+        # Scope is two pages, not every page — see the script header for what that does and
+        # does not establish.
+        #
+        # Verified against real images by deleting the WhiteNoise middleware line (hashed
+        # asset 404s) and by deleting collectstatic from the Dockerfile (the admin page
+        # 500s); both make this step fail.
+        #
+        # Adds a couple of seconds and no credential: the container is already running, and
+        # this is plain curl against localhost.
+        run: ./scripts/assert-static-served.sh http://localhost:8000
+      - name: Dump container logs when the smoke test failed
+        if: failure()
+        run: docker logs octonomy-ci || true
       - name: Trivy vulnerability scan (advisory)
         # Advisory only: findings go to the job summary and NEVER fail the build.
         # continue-on-error covers even a Trivy DB-download hiccup; exit-code stays 0.

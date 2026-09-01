@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Assert a RUNNING Octonomy actually serves the static assets its own pages ask for.
+#
+# Compensating control for decision dec-805139c7. The pytest suite runs the plain
+# staticfiles backend (config/settings_pytest.py), so most tests never resolve a
+# `{% static %}` through staticfiles.json.
+#
+# WHAT THIS ESTABLISHES, precisely: the BUILT IMAGE carries a usable production manifest,
+# and the two surfaces probed here — the admin login page and the DRF browsable API —
+# render and serve the hashed assets they reference. That is a packaging and
+# global-collection guarantee.
+#
+# WHAT IT DOES NOT: it renders two pages, not every page. A changelist or form template
+# referencing an uncollected asset still passes the suite (plain backend) and passes here
+# (never rendered), and fails only for the operator who opens that page. Closing that would
+# mean a session-scoped production collectstatic fixture, as config/settings_pytest.py
+# describes. tests/admin/test_static_serving.py already covers these same two surfaces
+# under manifest storage in-process; what this adds is the real image, really built.
+#
+# Probing /static/admin/css/base.css would prove nothing. collectstatic writes BOTH the
+# original and the hashed name, so the unhashed path returns 200 even when the manifest is
+# broken. The only honest probe is the path a browser actually requests, so every URL
+# checked below is extracted from HTML the running app produced.
+#
+# Usage: assert-static-served.sh BASE_URL
+#
+#   BASE_URL  a running instance, e.g. http://localhost:8000. It must have the admin
+#             enabled (OCTONOMY_ADMIN_ENABLED=true) and DEBUG off — that is the
+#             configuration this gate exists to protect.
+#
+# Exit codes: 0 ok | 1 an assertion failed | 2 usage
+
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: assert-static-served.sh BASE_URL" >&2
+  exit 2
+fi
+
+base=${1%/}
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# Every probe is bounded. The CI job's own 20-minute timeout is the wrong instrument for
+# this: a regression that accepts the connection and then never finishes a response would
+# hold the required `docker` job open until the job is cancelled, and a cancelled job skips
+# the log-dumping step — turning a fast, legible failure into a slow opaque one.
+CURL=(curl -sS --connect-timeout 5 --max-time 30)
+
+fail() {
+  # ::error:: renders as an annotation on the CI job and as plain text anywhere else.
+  echo "::error::$1" >&2
+  exit 1
+}
+
+# --- The admin page must render at all ------------------------------------------------
+# Under manifest storage a missing entry raises at render time, so the real failure mode
+# is a 500 on the page, not a 404 on an asset. Check the page before the assets.
+# `rc` is captured with `|| rc=$?` rather than tested via `if ! ...`: inside an `if !`
+# branch $? is the negation's own 0, so the exit code would always be reported as zero.
+rc=0
+status=$("${CURL[@]}" -o "$work/admin.html" -w '%{http_code}' "$base/admin/login/") || rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail "GET /admin/login/ did not complete (curl exit $rc). Is the container up?"
+fi
+if [ "$status" != "200" ]; then
+  echo "--- first 2 KB of the response ---" >&2
+  head -c 2048 "$work/admin.html" >&2 || true
+  echo >&2
+  fail "GET /admin/login/ returned $status (expected 200). A 500 here usually means collectstatic did not run, or ran against a different asset set than the templates reference."
+fi
+echo "ok    GET /admin/login/ -> 200"
+
+# --- It must reference hashed assets --------------------------------------------------
+# If nothing in the page is content-addressed, manifest storage is not in effect and every
+# assertion below would be testing the wrong backend.
+hashed=$(grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/admin.html" | head -n 1 || true)
+if [ -z "$hashed" ]; then
+  fail "the rendered admin page references no hashed asset URL — the manifest staticfiles backend is not in effect, so this gate would be checking the wrong thing."
+fi
+echo "ok    rendered page references a hashed asset: $hashed"
+
+# --- The browsable API must render, and reference hashed assets of its own --------------
+# /static/rest_framework/* is needed even with the admin console disabled: DRF's
+# BrowsableAPIRenderer is in DEFAULT_RENDERER_CLASSES, so it is never an optional surface.
+#
+# Probing the ORIGINAL /static/rest_framework/css/bootstrap.min.css here would repeat the
+# very mistake this script rejects for the admin. collectstatic writes that file whether or
+# not the manifest maps it, so it answers 200 while a real browsable-API render raises
+# "Missing staticfiles manifest entry" resolving DRF's own {% static %} tags. Render the
+# page and take the URL from what it produced.
+#
+# Accept: text/html selects BrowsableAPIRenderer. No token is sent, so DRF denies the
+# request — but it denies it by RENDERING the browsable page, which is exactly the template
+# under test. Any 2xx/4xx means the template rendered; a 5xx is the manifest failure.
+rc=0
+api_status=$("${CURL[@]}" -H 'Accept: text/html' -o "$work/api.html" \
+  -w '%{http_code}' "$base/api/v2/tags") || rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail "GET /api/v2/tags did not complete (curl exit $rc)"
+fi
+if [ "$api_status" -ge 500 ]; then
+  echo "--- first 2 KB of the response ---" >&2
+  head -c 2048 "$work/api.html" >&2 || true
+  echo >&2
+  fail "the browsable API returned $api_status — its template failed to render, which under manifest storage means a {% static %} tag resolved to an asset that was never collected."
+fi
+# 404 is called out separately from the other 4xx. A denial renders the template; a missing
+# route renders Django's bare error page, which references no assets — so without this the
+# failure would surface below as a confusing "no hashed rest_framework asset" instead of
+# "the endpoint this gate probes has moved".
+if [ "$api_status" = "404" ]; then
+  fail "GET /api/v2/tags returned 404 — the route this gate probes has moved, so the browsable-API half is no longer being checked. Point it at a live endpoint."
+fi
+echo "ok    browsable API rendered ($api_status)"
+
+drf_hashed=$(grep -oE '/static/rest_framework/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/api.html" |
+  head -n 1 || true)
+if [ -z "$drf_hashed" ]; then
+  fail "the rendered browsable API references no hashed rest_framework asset — either the manifest backend is not in effect or the page is not the browsable renderer."
+fi
+echo "ok    browsable API references a hashed asset: $drf_hashed"
+
+# --- Both hashed assets must actually be served -----------------------------------------
+for url in "$hashed" "$drf_hashed"; do
+  # curl's exit status is checked SEPARATELY from the HTTP code it reports. -w writes the
+  # status and content type even when the transfer dies part-way through the body, so a
+  # truncated asset would otherwise be parsed as a healthy "200 text/css".
+  rc=0
+  probe=$("${CURL[@]}" -o /dev/null -w '%{http_code} %{content_type}' "$base$url") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    fail "GET $url did not complete (curl exit $rc) — the response was truncated or timed out"
+  fi
+  status=${probe%% *}
+  ctype=${probe#* }
+
+  [ "$status" = "200" ] || fail "GET $url returned $status (expected 200)"
+
+  # A 200 carrying application/octet-stream still leaves the page unstyled, so the status
+  # code alone is not the guarantee that matters to a browser.
+  case "$ctype" in
+    text/css* | text/javascript* | application/javascript*) ;;
+    *) fail "GET $url was served as '$ctype' — a browser will not apply that" ;;
+  esac
+
+  echo "ok    GET $url -> $status $ctype"
+done
+
+# --- No CORS header at all on static -----------------------------------------------------
+# Note the contract: ABSENT, not merely "not a wildcard". WHITENOISE_ALLOW_ALL_ORIGINS is
+# False in the shipped settings, and WhiteNoise then emits no Access-Control-Allow-Origin
+# at all; its own default is True, so a careless edit re-opens every asset to any origin.
+# CI runs the shipped configuration, so absence is the exact assertion. A deployment that
+# deliberately adopts a narrow CORS policy (STATIC_URL on a CDN, say) is changing this
+# contract and should change this line with it.
+"${CURL[@]}" -D "$work/headers.txt" -o /dev/null "$base$hashed" ||
+  fail "could not re-fetch $hashed to inspect its headers"
+if grep -qi '^access-control-allow-origin' "$work/headers.txt"; then
+  grep -i '^access-control-allow-origin' "$work/headers.txt" >&2
+  fail "static responses carry an Access-Control-Allow-Origin header; the shipped configuration sets WHITENOISE_ALLOW_ALL_ORIGINS = False and should emit none"
+fi
+echo "ok    no Access-Control-Allow-Origin on static responses"
+
+echo "assert-static-served OK: $base renders its admin page and serves the hashed assets it references"

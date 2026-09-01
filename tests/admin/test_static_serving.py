@@ -17,8 +17,9 @@ Two static roots are exercised, both built by the real ``collectstatic``:
   ``config/settings_pytest.py``).
 * ``production_static`` — the real ``STORAGES`` from ``config.settings``, i.e. hashed
   manifest storage. It narrows, but does not close, the ``dec-805139c7`` ceiling: every
-  other admin page the suite renders still goes through plain storage, so #144's planned
-  image assertion is still worth having.
+  other admin page the suite renders still goes through plain storage. #144's CI job now
+  checks the same two surfaces against the real built image, which catches packaging
+  failures these in-process tests cannot; neither covers the other admin pages.
 
 Both are imported from their source of truth rather than copied, so a change to either
 settings module moves these tests with it instead of leaving them testing the old one.
