@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import warnings
 from pathlib import Path
+from urllib.parse import urlparse
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
@@ -89,8 +90,21 @@ INSTALLED_APPS = [
 # REST: DEFAULT_AUTHENTICATION_CLASSES is empty so DRF never runs SessionAuthentication
 # or its CSRF check, and APIView is csrf_exempt. RequestContextMiddleware stays last so
 # request_id is available to admin writes too.
+#
+# WhiteNoise sits at index 1, directly after SecurityMiddleware, as WhiteNoise documents:
+# SecurityMiddleware's redirects and headers still apply, and a /static/ hit then
+# short-circuits the rest of the chain. It is UNCONDITIONAL — not gated on ADMIN_ENABLED
+# — because DEFAULT_RENDERER_CLASSES includes BrowsableAPIRenderer, so
+# /static/rest_framework/* is needed by a non-optional surface. See "Static files" below.
+#
+# Deliberate trade-off in that placement: a static response never reaches
+# RequestContextMiddleware (last), so it emits no `octonomy.requests` log line — which
+# drops roughly 25 log lines per admin page load. Putting WhiteNoise last instead would
+# run session/CSRF/auth per asset and risk `Vary: Cookie` or a CSRF cookie on static
+# responses, so the lost log lines are the cheaper cost.
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -145,10 +159,128 @@ USE_TZ = True
 # fires when it is enabled with DEBUG=false. See docs/operations.md "Admin console".
 ADMIN_ENABLED = env_bool("OCTONOMY_ADMIN_ENABLED", DEBUG)
 
-# Static files back the admin's CSS/JS assets. No WhiteNoise / external service:
-# operators run `manage.py collectstatic` and serve STATIC_ROOT themselves in prod.
-STATIC_URL = "static/"
+# --- Static files (bundled, app-served) --------------------------------------------
+# Octonomy serves its own bundled static assets, on every channel, via the WhiteNoise
+# middleware above.
+#
+# This REVERSES the original "no WhiteNoise — operators collect STATIC_ROOT and serve it
+# externally" posture (#142/#143). Two reasons it had to go. It was unactionable on the
+# container channels: the assets are baked into the image with no volume, no export
+# step, a non-root user and a read-only root filesystem, so nothing could serve them and
+# every /static/* request 404'd once DEBUG=false. And it was never admin-only — the DRF
+# browsable API is on by default, so /static/rest_framework/* is required even when the
+# admin console is off.
+#
+# Boundary: first-party BUNDLED assets only (django.contrib.admin, unfold, DRF).
+# Octonomy stores no user uploads and defines no MEDIA_ROOT; WhiteNoise must never be
+# pointed at user-supplied files.
+#
+# The systemd/VPS channel is the one exception in practice: nginx-octonomy.conf's
+# `location /static/` alias answers before the request ever reaches Gunicorn, so
+# WhiteNoise's compression, CORS and cache headers do not apply there. That escape hatch
+# is preserved, not removed; reconciling its caching contract belongs to #145.
+#
+# STATIC_URL is ABSOLUTE and env-overridable, and both halves of that matter under a
+# subpath deployment (the app mounted at /octonomy rather than /).
+#
+# Django script-prefixes a RELATIVE STATIC_URL — but only on first read, and it caches
+# the result for the life of the process (LazySettings.__getattr__). Which prefix gets
+# baked in therefore depends on what reads it first. Adding WhiteNoise moved that moment
+# earlier: its startup index calls staticfiles_storage.url() per file to decide
+# immutability, so the value now freezes while the middleware chain is being built, when
+# the script prefix is still "/". Before this change the first read happened inside a
+# request — but even then it was a race, not a feature: Kubernetes liveness and readiness
+# probes hit the pod directly with no prefix, so whichever request arrived first decided
+# the answer for every page that worker ever rendered.
+#
+# So rather than restore a coin flip, make it explicit. Absolute means Django leaves it
+# alone and the value is exactly what it says.
+#
+# The subpath recipe, verified end to end and locked by
+# tests/admin/test_static_serving.py::test_subpath_deployment_serves_and_links_static:
+# set BOTH OCTONOMY_STATIC_URL=/octonomy/static/ and OCTONOMY_FORCE_SCRIPT_NAME=/octonomy.
+# Templates then emit /octonomy/static/..., which the proxy routes; WhiteNoise strips
+# FORCE_SCRIPT_NAME from its own prefix, so it still matches the /static/... path_info the
+# WSGI server hands it.
+#
+# They are a pair. Setting FORCE_SCRIPT_NAME alone leaves templates linking /static/...
+# while the app lives at /octonomy/, so a proxy routing only /octonomy/* never sees those
+# requests — octonomy.W003 warns about that shape. It warns rather than refuses because
+# whether it actually breaks depends on proxy routing this process cannot see: an operator
+# who deliberately routes /static/ at the host root to this app is fine.
+STATIC_URL = os.getenv("OCTONOMY_STATIC_URL", "/static/")
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# A relative value would put back exactly the first-read caching nondeterminism the
+# absolute default exists to remove, and it would do so silently. A full http(s) URL is
+# allowed: pointing STATIC_URL at a CDN is a legitimate topology (and the one that needs
+# WHITENOISE_ALLOW_ALL_ORIGINS turned back on, below).
+if not STATIC_URL.startswith(("/", "http://", "https://")):
+    raise ImproperlyConfigured(
+        "OCTONOMY_STATIC_URL must be root-absolute (e.g. /octonomy/static/) or a full "
+        f"http(s) URL; got {STATIC_URL!r}."
+    )
+
+# Off by default (Django's own default is None). Only a subpath deployment needs it, and
+# then only together with OCTONOMY_STATIC_URL above; see the recipe there. It is what lets
+# reverse() and {% static %} emit the prefix without depending on a per-request
+# SCRIPT_NAME that the health probes do not carry.
+#
+# Validated, and not merely for tidiness. Django prepends this to every reverse() result
+# verbatim, so a value carrying a scheme or a host turns every generated link absolute and
+# off-site: OCTONOMY_FORCE_SCRIPT_NAME=https://evil.example renders the admin login form
+# with action="https://evil.example/admin/login/", i.e. it posts an operator's password to
+# someone else. This is process configuration rather than request input, so it is a typo
+# and mis-provisioning guard rather than a defence against an attacker — but refusing to
+# boot is plainly better than serving that page.
+FORCE_SCRIPT_NAME = os.getenv("OCTONOMY_FORCE_SCRIPT_NAME") or None
+if FORCE_SCRIPT_NAME is not None:
+    _script_name = urlparse(FORCE_SCRIPT_NAME)
+    # netloc catches the protocol-relative "//evil.example", which starts with "/" and so
+    # would otherwise slip past the prefix test.
+    if (
+        not FORCE_SCRIPT_NAME.startswith("/")
+        or _script_name.scheme
+        or _script_name.netloc
+        or _script_name.query
+        or _script_name.fragment
+    ):
+        raise ImproperlyConfigured(
+            "OCTONOMY_FORCE_SCRIPT_NAME must be a local absolute path with no scheme, "
+            f"host, query or fragment (e.g. /octonomy); got {FORCE_SCRIPT_NAME!r}."
+        )
+
+# Hashed + compressed static. Content-addressed filenames mean a browser or CDN holding
+# an asset from an earlier release cannot serve those stale bytes under the new one at
+# the same URL — the reason this backend is preferred over plain compressed storage on
+# the Docker and Kubernetes channels, where upgrades are frequent and unattended.
+#
+# Footgun: BOTH keys must be declared. Django does not merge settings.STORAGES with
+# global_settings, so naming only "staticfiles" raises InvalidStorageError
+# ("Could not find config for 'default' in settings.STORAGES").
+#
+# Manifest storage is strict: {% static %} raises at render time for any asset missing
+# from staticfiles.json, so a deploy that skipped collectstatic fails loudly with a 500
+# instead of quietly rendering unstyled. That is intended. octonomy.W002 catches the
+# common shapes of it at boot — absent, empty, unreadable or manifest-less STATIC_ROOT —
+# but it is a readiness heuristic, not a guarantee: it is gated on ADMIN_ENABLED and
+# cannot see a populated-but-stale root. Most tests run the plain, non-manifest backend;
+# see config/settings_pytest.py for that divergence and what still covers this one.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
+
+# Set explicitly rather than inherited: WhiteNoise defaults this to True, which stamps
+# `Access-Control-Allow-Origin: *` onto every static response. In the shipped topology the
+# app serves both the HTML and its assets, so every request is same-origin and the
+# wildcard buys nothing. Declaring it keeps the header contract visible.
+#
+# The one topology that needs the default back: fronting /static/ with a CDN on a
+# DIFFERENT origin than the admin. Unfold's Inter and Material Symbols faces are local
+# @font-face files, and a browser will not use a cross-origin font without a permissive
+# CORS header — so such a deployment must re-enable this (or set the header at the edge).
+WHITENOISE_ALLOW_ALL_ORIGINS = False
 
 # Secure the session/CSRF cookies by default in production (DEBUG=false), while
 # leaving an explicit env override for unusual deployments (e.g. TLS-terminating

@@ -39,6 +39,8 @@ _OWNED_KEYS = (
     "CSRF_COOKIE_SECURE",
     "OCTONOMY_TRUST_FORWARDED_PROTO",
     "CSRF_TRUSTED_ORIGINS",
+    "OCTONOMY_STATIC_URL",
+    "OCTONOMY_FORCE_SCRIPT_NAME",
 )
 
 
@@ -61,6 +63,7 @@ def _read_settings(**overrides: str) -> dict:
         "'CSRF_COOKIE_SECURE': settings.CSRF_COOKIE_SECURE,"
         "'CSRF_TRUSTED_ORIGINS': settings.CSRF_TRUSTED_ORIGINS,"
         "'SECURE_PROXY_SSL_HEADER': getattr(settings, 'SECURE_PROXY_SSL_HEADER', None),"
+        "'FORCE_SCRIPT_NAME': settings.FORCE_SCRIPT_NAME,"
         "'DEBUG': settings.DEBUG}))"
     )
     result = subprocess.run(
@@ -199,3 +202,62 @@ def test_standard_password_validators_are_configured():
         "CommonPasswordValidator",
         "NumericPasswordValidator",
     } <= names
+
+
+# --- Subpath deployment settings are validated at import (#143) ----------------------
+#
+# Both are derived at settings-import time and both refuse to boot on a malformed value,
+# so they need the same hermetic subprocess treatment as the secrets above.
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # Relative: would silently restore the first-read script-prefix caching that the
+        # absolute default exists to remove.
+        "static/",
+        "octonomy/static/",
+    ],
+)
+def test_relative_static_url_refuses_to_boot(value):
+    result = _import_settings(DJANGO_DEBUG="false", OCTONOMY_STATIC_URL=value)
+
+    assert result.returncode != 0, f"{value!r} should refuse to boot"
+    assert "OCTONOMY_STATIC_URL must be root-absolute" in result.stderr
+
+
+@pytest.mark.parametrize("value", ["/octonomy/static/", "https://cdn.example.com/static/"])
+def test_absolute_static_url_is_accepted(value):
+    # Root-absolute for a subpath, and a full URL for a CDN — both legitimate.
+    assert _import_settings(DJANGO_DEBUG="false", OCTONOMY_STATIC_URL=value).returncode == 0
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # Django prepends FORCE_SCRIPT_NAME to every reverse() result verbatim, so a value
+        # carrying a host makes the admin login form POST the operator's password
+        # off-site. Refusing to boot is the only acceptable response to each of these.
+        "https://evil.example",
+        "http://evil.example/octonomy",
+        "//evil.example",
+        "octonomy",
+        "/octonomy?next=x",
+        "/octonomy#frag",
+    ],
+)
+def test_malformed_force_script_name_refuses_to_boot(value):
+    result = _import_settings(DJANGO_DEBUG="false", OCTONOMY_FORCE_SCRIPT_NAME=value)
+
+    assert result.returncode != 0, f"{value!r} should refuse to boot"
+    assert "OCTONOMY_FORCE_SCRIPT_NAME must be a local absolute path" in result.stderr
+
+
+@pytest.mark.parametrize("value", ["/octonomy", "/octonomy/", "/a/b"])
+def test_local_absolute_force_script_name_is_accepted(value):
+    assert _import_settings(DJANGO_DEBUG="false", OCTONOMY_FORCE_SCRIPT_NAME=value).returncode == 0
+
+
+def test_force_script_name_is_unset_by_default():
+    # Django's own default. Every non-subpath deployment must be untouched by this.
+    assert _read_settings(DJANGO_DEBUG="false")["FORCE_SCRIPT_NAME"] is None

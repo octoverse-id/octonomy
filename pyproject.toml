@@ -14,6 +14,7 @@ dependencies = [
   "dj-database-url>=2.2,<4.0",
   "python-dotenv>=1.0,<2.0",
   "gunicorn>=23.0,<24.0",
+  "whitenoise>=6.12,<7.0",
 ]
 
 [project.optional-dependencies]
@@ -27,10 +28,20 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "config.settings"
+# config.settings_pytest is config.settings plus one documented override (the
+# staticfiles storage backend). See that module for why.
+DJANGO_SETTINGS_MODULE = "config.settings_pytest"
 python_files = ["test_*.py", "*_test.py"]
 testpaths = ["tests"]
 addopts = "-ra --cov=octonomy --cov-report=term-missing"
+filterwarnings = [
+  # WhiteNoise warns once per middleware instantiation when STATIC_ROOT is absent, and
+  # under pytest it usually is: /staticfiles/ is gitignored and no test needs it. The
+  # tests that do care build their own collected STATIC_ROOT
+  # (tests/admin/test_static_serving.py), so nothing is hidden here except ~50 repeats
+  # of a message about a directory the suite deliberately does without.
+  "ignore:No directory at:UserWarning",
+]
 
 [tool.coverage.run]
 source = ["octonomy"]

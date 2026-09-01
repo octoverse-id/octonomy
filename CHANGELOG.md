@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Static assets are now served by the app itself.** With `DJANGO_DEBUG=false` nothing in
+  the Octonomy process answered `/static/*`, so every request 404'd: the admin console
+  rendered unstyled and unusable, and DRF's browsable API — which is enabled by default on
+  every view, not opt-in — lost its own CSS/JS. The assets were already baked into the
+  container image; they were simply unreachable, on all three production channels
+  (`deploy/docker`, `deploy/kubernetes`, and `deploy/systemd` on a clean install).
+  `whitenoise.middleware.WhiteNoiseMiddleware` now runs directly after `SecurityMiddleware`
+  and serves `STATIC_ROOT`, with `STORAGES["staticfiles"]` set to WhiteNoise's hashed,
+  compressed `CompressedManifestStaticFilesStorage`.
+
+  This **reverses** the "Octonomy bundles no static-serving middleware — collect
+  `STATIC_ROOT` and serve it externally" decision recorded under 3.0.0 below. That
+  instruction could not be carried out on the container channels at all: the assets live
+  inside the image with no volume, no export step, a non-root user, and a read-only root
+  filesystem. Static responses carry no `Access-Control-Allow-Origin` header
+  (`WHITENOISE_ALLOW_ALL_ORIGINS = False`); the `location /static/` alias in
+  `deploy/systemd/nginx-octonomy.conf` still answers first where it is deployed. REST
+  responses are unchanged — WhiteNoise only ever acts on paths under `STATIC_URL`.
+
+### Added
+- System check `octonomy.W002`: a non-blocking warning at boot when the admin is enabled
+  with `DEBUG=false` but `STATIC_ROOT` cannot back it — missing, empty, holding no readable
+  file (an interrupted `collectstatic`, or a tree the service account cannot read), or
+  lacking the `staticfiles.json` the manifest backend needs. A host that never ran
+  `collectstatic` is told at startup instead of failing on an operator's first page load.
+  Registered as an ordinary check, not a deploy check, so the plain `manage.py check` that
+  `docker-entrypoint.sh` and the systemd `ExecStartPre` already run will surface it. It
+  stays silent for a populated-but-stale `STATIC_ROOT`; that case is a runbook fix (#145).
+- `OCTONOMY_STATIC_URL` and `OCTONOMY_FORCE_SCRIPT_NAME` for subpath deployments (the app
+  mounted at `/octonomy` rather than `/`). `STATIC_URL` is now absolute by default
+  (`/static/`) instead of relative. A relative value is script-prefixed by Django on first
+  read and then cached for the life of the process, so which prefix got baked in depended
+  on which request arrived first — and a Kubernetes health probe reaches the pod with no
+  prefix at all. Set both variables together to serve a subpath correctly; the effective
+  value is unchanged for every deployment that is not on a subpath. Both are validated at
+  boot: a relative `OCTONOMY_STATIC_URL`, or an `OCTONOMY_FORCE_SCRIPT_NAME` carrying a
+  scheme, host, query or fragment, refuses to start. Django prepends `FORCE_SCRIPT_NAME`
+  to every `reverse()` result verbatim, so a value like `https://evil.example` would
+  otherwise render the admin login form posting to another host. A second check,
+  `octonomy.W003`, warns when `FORCE_SCRIPT_NAME` is set but `STATIC_URL` is not under it —
+  the half-configured subpath that links assets outside the app's own mount. A warning
+  rather than a refusal, because whether it breaks depends on proxy routing the process
+  cannot see.
+
 ## [3.1.1] - 2026-08-26
 
 A **patch** release: both live REST surfaces keep the same paths, fields, validation, and runtime

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from django.conf import settings
+from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.checks import Error, Tags, Warning, register
 
 DEFAULT_SECRET_KEY = "local-dev-secret"
@@ -169,6 +173,183 @@ def admin_enabled_in_production_check(app_configs, **kwargs):
             hint="Serve it over HTTPS, restrict access to trusted operators, and unset "
             "OCTONOMY_ADMIN_ENABLED to disable it. See docs/operations.md 'Admin console'.",
             id="octonomy.W001",
+        )
+    ]
+
+
+def _contains_a_readable_file(root: Path) -> bool:
+    """True when at least one regular file under ``root`` is readable by this process.
+
+    Deliberately NOT ``any(root.iterdir())``: an interrupted ``collectstatic`` can leave
+    ``STATIC_ROOT/admin/`` behind with nothing in it, and a bare directory entry would
+    make an unusable root look collected. ``rglob`` yields nothing for a missing path or a
+    path that is a file, so those cases fall through to False without a guard.
+
+    ``os.access`` matters on the VPS channel specifically: ``collectstatic`` run as root
+    under a restrictive umask produces a fully populated tree that the service account
+    cannot read, which fails exactly like an uncollected one. Short-circuits on the first
+    hit, so the walk costs a handful of ``scandir`` calls in the healthy case.
+    """
+
+    try:
+        return any(entry.is_file() and os.access(entry, os.R_OK) for entry in root.rglob("*"))
+    except OSError:
+        return False
+
+
+def _static_readiness_problem() -> str | None:
+    """Describe why STATIC_ROOT cannot back the admin, or None when it looks collected."""
+
+    static_root = getattr(settings, "STATIC_ROOT", None)
+    if not static_root:
+        return "STATIC_ROOT is not set"
+
+    root = Path(static_root)
+    if not _contains_a_readable_file(root):
+        return f"STATIC_ROOT ({root}) is missing, empty, or holds no readable file"
+
+    # Only a manifest backend has a manifest_name, so this asks the configured storage
+    # what it needs rather than matching on a backend string. A populated tree collected
+    # WITHOUT the manifest (e.g. an upgrade that changed backends, or a tree copied from
+    # an older release) passes the file check above and still 500s on the first render,
+    # because HashedFilesMixin resolves {% static %} through staticfiles.json.
+    #
+    # The try is load-bearing, not defensive habit. Touching staticfiles_storage is what
+    # instantiates the backend, and ManifestFilesMixin.__init__ reads staticfiles.json
+    # eagerly and raises ValueError on a corrupt or wrong-version file. Raising out of a
+    # system check makes `manage.py check` exit non-zero, which aborts
+    # docker-entrypoint.sh — so a broken asset manifest would take down a perfectly
+    # healthy REST API along with the optional console. Verified: without this guard, a
+    # staticfiles.json carrying an unknown version fails the boot. Report it as the
+    # warning instead; that is the whole point of W002 being a Warning.
+    #
+    # ValueError ONLY, deliberately narrow: downgrade exactly the failures the serving
+    # path also survives. WhiteNoiseMiddleware's startup probe calls the same storage and
+    # catches ValueError alone (whitenoise/middleware.py get_static_url), so a corrupt
+    # manifest really does leave a bootable app. Anything else — an unreadable manifest
+    # raising PermissionError is the case to think about — kills middleware construction
+    # too, and swallowing it here would pass `manage.py check` green and then crash-loop
+    # Gunicorn. Better to let that escape and fail the check with the real error.
+    try:
+        manifest_name = getattr(staticfiles_storage, "manifest_name", None)
+    except ValueError as exc:
+        return (
+            f"the configured staticfiles backend could not load its manifest from "
+            f"STATIC_ROOT ({root}): {exc}"
+        )
+
+    if manifest_name and not (root / manifest_name).is_file():
+        return (
+            f"STATIC_ROOT ({root}) has no {manifest_name}, which the configured manifest "
+            "staticfiles backend needs to resolve asset URLs"
+        )
+
+    return None
+
+
+@register(Tags.staticfiles)
+def static_root_populated_check(app_configs, **kwargs):
+    """Warn when the admin is on with DEBUG=false but STATIC_ROOT cannot back it.
+
+    Octonomy serves its own bundled assets through WhiteNoise, which indexes STATIC_ROOT
+    at process start. A deploy that never ran ``collectstatic`` therefore has an empty
+    index, and — under the manifest staticfiles backend — the first admin page render
+    raises instead of merely looking unstyled. Name that at boot rather than at the first
+    operator request.
+
+    This is a readiness heuristic, not a proof: it catches an absent, empty, unreadable or
+    manifest-less STATIC_ROOT. It deliberately says nothing about a populated-but-STALE
+    root (an upgrade that skipped ``collectstatic`` leaves assets that look fine here);
+    that one is addressed by the runbook corrections in #145.
+
+    Registered WITHOUT ``deploy=True`` on purpose, following the
+    ``namespace_flag_dependencies`` precedent rather than W001's. Deployment checks only
+    run when ``--deploy`` is passed (``django/core/management/commands/check.py``), and
+    neither ``docker-entrypoint.sh`` nor ``deploy/systemd/octonomy.service`` passes it —
+    a deploy-tagged version of this check would never fire on the channels that need it.
+    It reads settings and the filesystem only, never the database, so it is safe to run
+    before migrations apply.
+
+    A ``Warning``, never an ``Error``: a missing optional console must not take down a
+    healthy REST API.
+    """
+
+    # gstack-shortcut(dec-797303d8): W002 is gated on ADMIN_ENABLED, so a default
+    # production deploy with the admin off gets no warning even though the DRF browsable
+    # API still needs static; upgrade when an operator reports an unstyled browsable API
+    # with the admin disabled, or when DEFAULT_RENDERER_CLASSES is set explicitly.
+    if settings.DEBUG or not getattr(settings, "ADMIN_ENABLED", False):
+        return []
+
+    problem = _static_readiness_problem()
+    if problem is None:
+        return []
+
+    return [
+        Warning(
+            f"The Octonomy admin is enabled with DEBUG=false but {problem}, so the app "
+            "has no bundled CSS/JS to serve and admin pages will fail to render.",
+            hint="Run `python manage.py collectstatic --noinput` on this host and restart "
+            "the service — the asset index is built at process start, so collecting "
+            "afterwards is not picked up promptly (Gunicorn workers only re-index as they "
+            "recycle). Container images bake the assets in at build time, so an empty "
+            "STATIC_ROOT there points at a broken image rather than a missing step; do "
+            "not run collectstatic inside a read-only container filesystem. Note this "
+            "check runs from `manage.py check`, which the container entrypoint and the "
+            "systemd ExecStartPre invoke — a bare `gunicorn config.wsgi:application` that "
+            "bypasses them is not covered.",
+            id="octonomy.W002",
+        )
+    ]
+
+
+@register(Tags.staticfiles)
+def static_url_under_script_prefix_check(app_configs, **kwargs):
+    """Warn when a subpath deployment points asset links outside its own mount.
+
+    ``OCTONOMY_STATIC_URL`` and ``OCTONOMY_FORCE_SCRIPT_NAME`` are a pair: the first
+    decides the URL browsers are told to fetch, the second decides the prefix everything
+    else is generated under. Set the second alone and templates emit ``/static/...`` while
+    the app lives at ``/octonomy/`` — a proxy routing only ``/octonomy/*`` never sees the
+    request, and the assets 404 from the browser's side even though the app would have
+    served them happily.
+
+    A ``Warning``, not an ``Error``, and the distinction is not politeness. Whether that
+    combination actually breaks depends on proxy routing this process cannot see: an
+    operator who deliberately routes ``/static/`` at the host root to this app has a
+    working deployment, and refusing to boot would reject it. Name the suspicious shape;
+    do not overrule the operator.
+
+    Only the decidable direction is checked. The mirror case — a prefixed STATIC_URL with
+    no FORCE_SCRIPT_NAME — is indistinguishable from simply renaming the static path
+    (``STATIC_URL=/assets/``), which is perfectly ordinary at a root mount, so there is no
+    honest rule for it.
+    """
+
+    script_name = getattr(settings, "FORCE_SCRIPT_NAME", None)
+    if not script_name:
+        return []
+
+    static_url = getattr(settings, "STATIC_URL", "") or ""
+    # An absolute URL puts the assets on another host entirely (a CDN). There is no local
+    # prefix left to reconcile, and pairing a CDN with a subpath app is a real topology.
+    if static_url.startswith(("http://", "https://", "//")):
+        return []
+
+    prefix = f"/{script_name.strip('/')}/"
+    if static_url.startswith(prefix):
+        return []
+
+    return [
+        Warning(
+            f"FORCE_SCRIPT_NAME is {script_name!r}, so this app is mounted at {prefix} — "
+            f"but STATIC_URL is {static_url!r}, which is not under it. Templates will link "
+            "assets outside the app's own mount point.",
+            hint="Set OCTONOMY_STATIC_URL to a path under OCTONOMY_FORCE_SCRIPT_NAME (e.g. "
+            f"OCTONOMY_STATIC_URL={prefix}static/), or point it at a full http(s) CDN URL. "
+            "Ignore this if your proxy deliberately routes STATIC_URL to this app at the "
+            "host root — that works, it is just not something this process can confirm.",
+            id="octonomy.W003",
         )
     ]
 
