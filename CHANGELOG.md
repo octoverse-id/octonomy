@@ -46,7 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boot: a relative `OCTONOMY_STATIC_URL`, or an `OCTONOMY_FORCE_SCRIPT_NAME` carrying a
   scheme, host, query or fragment, refuses to start. Django prepends `FORCE_SCRIPT_NAME`
   to every `reverse()` result verbatim, so a value like `https://evil.example` would
-  otherwise render the admin login form posting to another host.
+  otherwise render the admin login form posting to another host. A second check,
+  `octonomy.W003`, warns when `FORCE_SCRIPT_NAME` is set but `STATIC_URL` is not under it —
+  the half-configured subpath that links assets outside the app's own mount. A warning
+  rather than a refusal, because whether it breaks depends on proxy routing the process
+  cannot see.
 
 ## [3.1.1] - 2026-08-26
 

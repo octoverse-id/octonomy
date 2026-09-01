@@ -201,7 +201,13 @@ ADMIN_ENABLED = env_bool("OCTONOMY_ADMIN_ENABLED", DEBUG)
 # set BOTH OCTONOMY_STATIC_URL=/octonomy/static/ and OCTONOMY_FORCE_SCRIPT_NAME=/octonomy.
 # Templates then emit /octonomy/static/..., which the proxy routes; WhiteNoise strips
 # FORCE_SCRIPT_NAME from its own prefix, so it still matches the /static/... path_info the
-# WSGI server hands it. Setting only one of the two does not work.
+# WSGI server hands it.
+#
+# They are a pair. Setting FORCE_SCRIPT_NAME alone leaves templates linking /static/...
+# while the app lives at /octonomy/, so a proxy routing only /octonomy/* never sees those
+# requests — octonomy.W003 warns about that shape. It warns rather than refuses because
+# whether it actually breaks depends on proxy routing this process cannot see: an operator
+# who deliberately routes /static/ at the host root to this app is fine.
 STATIC_URL = os.getenv("OCTONOMY_STATIC_URL", "/static/")
 STATIC_ROOT = BASE_DIR / "staticfiles"
 

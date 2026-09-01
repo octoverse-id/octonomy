@@ -57,10 +57,14 @@ system check `octonomy.W001` surfaces on `python manage.py check --deploy` as a 
 - **Apply migrations.** Run `python manage.py migrate` — the admin uses Django's built-in
   `admin`/`sessions`/`auth` tables (created by Django's own migrations; Octonomy adds no domain
   migration for the console).
-- **Collect and serve static assets.** Run `make collectstatic` (or
-  `python manage.py collectstatic --noinput`) to gather the admin/unfold assets into `STATIC_ROOT`,
-  then serve `STATIC_ROOT` from your web server / CDN. Octonomy does not bundle WhiteNoise or any
-  static-serving middleware — static files are served externally in production.
+- **Static assets are served by the app.** Octonomy bundles WhiteNoise, so the admin/unfold and
+  DRF browsable-API assets in `STATIC_ROOT` are served by the application process itself — no
+  external web server or CDN step is required. The container image runs `collectstatic` at build
+  time, so Docker and Kubernetes need nothing further. On a venv install run `make collectstatic`
+  (or `python manage.py collectstatic --noinput`) before starting the service, and again after
+  every upgrade; `octonomy.W002` warns at boot if `STATIC_ROOT` is missing, empty or unreadable.
+  Serving `STATIC_ROOT` from your own web server or a CDN remains supported as an optional
+  override.
 - **Restrict access** to trusted operators (e.g. network ACLs / VPN) as appropriate; the console is
   platform-wide superuser access, not tenant-scoped.
 

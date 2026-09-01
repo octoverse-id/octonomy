@@ -15,6 +15,7 @@ from octonomy.core.checks import (
     namespace_write_requires_swap,
     production_settings_check,
     static_root_populated_check,
+    static_url_under_script_prefix_check,
 )
 
 POSTGRES_DATABASES = {"default": {"ENGINE": "django.db.backends.postgresql"}}
@@ -441,3 +442,62 @@ def test_w002_does_not_swallow_a_manifest_failure_the_serving_path_cannot_surviv
                 static_root_populated_check(None)
     finally:
         manifest.chmod(0o644)  # let tmp_path cleanup work
+
+
+# --- octonomy.W003: STATIC_URL and FORCE_SCRIPT_NAME are a pair (#143) ----------------
+
+
+@pytest.mark.parametrize(
+    ("static_url", "script_name"),
+    [
+        # The pair, set consistently — the documented subpath recipe.
+        ("/octonomy/static/", "/octonomy"),
+        # A trailing slash on the script name must not change the verdict.
+        ("/octonomy/static/", "/octonomy/"),
+        # Assets on a CDN: nothing local left to reconcile, and pairing a CDN with a
+        # subpath app is a real topology.
+        ("https://cdn.example.com/static/", "/octonomy"),
+        ("//cdn.example.com/static/", "/octonomy"),
+        # Root mount: no script prefix, so nothing to be inconsistent with. Renaming the
+        # static path at a root mount is ordinary and must never be flagged.
+        ("/static/", None),
+        ("/assets/", None),
+    ],
+)
+def test_w003_is_silent_on_coherent_configurations(static_url, script_name):
+    with override_settings(STATIC_URL=static_url, FORCE_SCRIPT_NAME=script_name):
+        assert static_url_under_script_prefix_check(None) == []
+
+
+@pytest.mark.parametrize(
+    ("static_url", "script_name"),
+    [
+        # The half-configured case: FORCE_SCRIPT_NAME set, STATIC_URL left at its default.
+        # Templates link /static/... while the app lives at /octonomy/.
+        ("/static/", "/octonomy"),
+        # Two different local prefixes.
+        ("/other/static/", "/octonomy"),
+        # A near miss that is not actually a path segment match.
+        ("/octonomyx/static/", "/octonomy"),
+    ],
+)
+def test_w003_flags_static_links_outside_the_apps_mount(static_url, script_name):
+    with override_settings(STATIC_URL=static_url, FORCE_SCRIPT_NAME=script_name):
+        messages = static_url_under_script_prefix_check(None)
+
+    assert {m.id for m in messages} == {"octonomy.W003"}
+    # A Warning, never an Error: whether this actually breaks depends on proxy routing the
+    # process cannot see, so it must not be able to refuse a working deployment.
+    assert all(m.is_serious() is False for m in messages)
+
+
+def test_w003_runs_on_a_plain_check_not_only_on_deploy():
+    from django.core.checks.registry import registry
+
+    assert static_url_under_script_prefix_check in registry.registered_checks
+    assert static_url_under_script_prefix_check not in registry.deployment_checks
+
+    with override_settings(STATIC_URL="/static/", FORCE_SCRIPT_NAME="/octonomy"):
+        ids = {m.id for m in django_checks.run_checks(include_deployment_checks=False)}
+
+    assert "octonomy.W003" in ids

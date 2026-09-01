@@ -303,6 +303,57 @@ def static_root_populated_check(app_configs, **kwargs):
     ]
 
 
+@register(Tags.staticfiles)
+def static_url_under_script_prefix_check(app_configs, **kwargs):
+    """Warn when a subpath deployment points asset links outside its own mount.
+
+    ``OCTONOMY_STATIC_URL`` and ``OCTONOMY_FORCE_SCRIPT_NAME`` are a pair: the first
+    decides the URL browsers are told to fetch, the second decides the prefix everything
+    else is generated under. Set the second alone and templates emit ``/static/...`` while
+    the app lives at ``/octonomy/`` — a proxy routing only ``/octonomy/*`` never sees the
+    request, and the assets 404 from the browser's side even though the app would have
+    served them happily.
+
+    A ``Warning``, not an ``Error``, and the distinction is not politeness. Whether that
+    combination actually breaks depends on proxy routing this process cannot see: an
+    operator who deliberately routes ``/static/`` at the host root to this app has a
+    working deployment, and refusing to boot would reject it. Name the suspicious shape;
+    do not overrule the operator.
+
+    Only the decidable direction is checked. The mirror case — a prefixed STATIC_URL with
+    no FORCE_SCRIPT_NAME — is indistinguishable from simply renaming the static path
+    (``STATIC_URL=/assets/``), which is perfectly ordinary at a root mount, so there is no
+    honest rule for it.
+    """
+
+    script_name = getattr(settings, "FORCE_SCRIPT_NAME", None)
+    if not script_name:
+        return []
+
+    static_url = getattr(settings, "STATIC_URL", "") or ""
+    # An absolute URL puts the assets on another host entirely (a CDN). There is no local
+    # prefix left to reconcile, and pairing a CDN with a subpath app is a real topology.
+    if static_url.startswith(("http://", "https://", "//")):
+        return []
+
+    prefix = f"/{script_name.strip('/')}/"
+    if static_url.startswith(prefix):
+        return []
+
+    return [
+        Warning(
+            f"FORCE_SCRIPT_NAME is {script_name!r}, so this app is mounted at {prefix} — "
+            f"but STATIC_URL is {static_url!r}, which is not under it. Templates will link "
+            "assets outside the app's own mount point.",
+            hint="Set OCTONOMY_STATIC_URL to a path under OCTONOMY_FORCE_SCRIPT_NAME (e.g. "
+            f"OCTONOMY_STATIC_URL={prefix}static/), or point it at a full http(s) CDN URL. "
+            "Ignore this if your proxy deliberately routes STATIC_URL to this app at the "
+            "host root — that works, it is just not something this process can confirm.",
+            id="octonomy.W003",
+        )
+    ]
+
+
 def _namespace_flag(name: str) -> bool:
     return bool(getattr(settings, name, _NAMESPACE_FLAG_DEFAULTS[name]))
 
