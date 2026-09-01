@@ -53,16 +53,34 @@ below shows where the filled-in copy goes (a Compose `.env`, a Kubernetes `Secre
 `EnvironmentFile`). It ships the two secrets **empty** on purpose — see the note below.
 
 **Required in production** (with `DJANGO_DEBUG=false` the app refuses to boot if either secret is
-empty or a known default — the template ships them empty on purpose, so a half-edited file fails fast
-instead of running on a weak or publicly-known secret):
+empty, or is still its local-dev default — exactly `local-dev-secret` for `DJANGO_SECRET_KEY`, and
+exactly `local-dev-service-token-pepper` for `SERVICE_TOKEN_PEPPER`. The template ships them empty
+on purpose, so a half-edited file fails fast instead of running on a publicly-known secret):
 
 | Variable | What it is |
 | --- | --- |
 | `DJANGO_DEBUG` | Must be `false`. The container image already defaults it to `false`. |
-| `DJANGO_SECRET_KEY` | Unique 64-char secret. `python -c "import secrets; print(secrets.token_urlsafe(64))"` |
+| `DJANGO_SECRET_KEY` | Generated, never hand-written — 64 bytes of entropy, ~86 chars: `python -c "import secrets; print(secrets.token_urlsafe(64))"` |
 | `SERVICE_TOKEN_PEPPER` | Keying secret for service-token hashes. Generate the same way. Changing it invalidates every existing token. |
 | `DATABASE_URL` | `postgres://user:password@host:5432/octonomy` |
 | `ALLOWED_HOSTS` | Comma-separated real hostnames; keep `127.0.0.1` too so container-local health probes are accepted. Never `*`. |
+
+> **What that boot guard does not do.** Those two tests — non-empty, and not the local-dev default —
+> are the whole of it. It never judges how good the value is, so
+> `DJANGO_SECRET_KEY=thisisthedjangomostsecretkey` starts normally with `DJANGO_DEBUG=false`, and so
+> does a whitespace-only value such as `" "`. The generator command in the table above is what makes
+> a value unpredictable; keeping it out of version control and in your platform's secret store is
+> what keeps it secret. Neither is something Octonomy can check for you.
+>
+> `python manage.py check --deploy` adds one narrow signal, for `DJANGO_SECRET_KEY` only: Django's
+> `security.W009` warns when the key is under 50 characters, contains fewer than 5 distinct
+> characters, or starts with `django-insecure-`. Those three tests and nothing else. It measures
+> neither entropy nor secrecy, so a long but publicly-known string passes it cleanly, and the
+> absence of a warning is not evidence that a key is good. `W009` is a warning, so on its own it
+> does not make the command exit nonzero — read the output rather than the exit status.
+>
+> `SERVICE_TOKEN_PEPPER` has no equivalent check anywhere. `security.W009` covers
+> `DJANGO_SECRET_KEY` alone, so beyond the empty/default test the pepper is never inspected at all.
 
 Common tuning: `WEB_CONCURRENCY` (Gunicorn workers, ~`2 * cores + 1`), `LOG_LEVEL`, `MAX_BULK_TAGS`.
 The namespace rollout flags and outbox settings have safe defaults — the full reference is in the
@@ -342,12 +360,20 @@ Gunicorn worker reload when no migration is involved.
 
 Run these against any topology once it is up.
 
-**1. Config + flag contract is valid** (also checks the constraint swap when namespaced writes are
-enabled — see operations.md). Run it where the app runs:
+**1. Run the config + flag contract checks** (these also cover the constraint swap when namespaced
+writes are enabled — see operations.md). Run them where the app runs:
 
 - **Compose** (from `deploy/docker/`): `docker compose exec app python manage.py check --deploy`
 - **Kubernetes**: `kubectl -n octonomy exec deploy/octonomy -- python manage.py check --deploy`
 - **VPS**: `sudo -u octonomy bash -c 'set -a; . /etc/octonomy/octonomy.env; set +a; cd /opt/octonomy && .venv/bin/python manage.py check --deploy'`
+
+**Read the output — a zero exit code is not a pass.** `check --deploy` exits 0 when it emits only
+warnings, and warnings are where the interesting findings are. In particular `security.W009` fires
+when `DJANGO_SECRET_KEY` is short, has fewer than 5 distinct characters, or carries Django's
+`django-insecure-` prefix (see [Configuration and secrets](#configuration-and-secrets) for exactly
+what that does and does not catch). `--fail-level WARNING` turns warnings into a non-zero
+exit, but it also fails `security.W004`/`W008`, which are legitimately unset when a proxy terminates
+TLS in front of Octonomy — so use it deliberately, not as the default.
 
 **2. Readiness and a smoke test:**
 
