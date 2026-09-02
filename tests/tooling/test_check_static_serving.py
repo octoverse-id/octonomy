@@ -248,6 +248,61 @@ services:
     volumes:
       - 'C:\\work:/app'
 """,
+    # Interpolation must be expanded BEFORE the entry is split on colons: splitting first
+    # tears ${TARGET:-/app} at the operator's own colon, leaving a `${TARGET` fragment that
+    # no "still interpolated?" test recognises, and a bind mount onto /app reads as an
+    # ordinary path.
+    "compose short, interpolated target": """
+services:
+  api:
+    image: {image}:3.1.1
+    volumes:
+      - './src:${{TARGET:-/app}}'
+""",
+    "compose short, interpolated source": """
+services:
+  api:
+    image: {image}:3.1.1
+    volumes:
+      - '${{SOURCE:-./src}}:/app'
+""",
+    # Everything after the first colon of a tmpfs entry is mount options.
+    "compose tmpfs with options": """
+services:
+  api:
+    image: {image}:3.1.1
+    tmpfs:
+      - /app:mode=755,size=64m
+""",
+    # A config or secret mounted over a file REPLACES it — this one swaps the production
+    # manifest out from under WhiteNoise before Django starts.
+    "compose config over the staticfiles manifest": """
+services:
+  api:
+    image: {image}:3.1.1
+    configs:
+      - source: broken_manifest
+        target: /app/staticfiles/staticfiles.json
+configs:
+  broken_manifest:
+    content: '{{}}'
+""",
+    "compose secret inside the collected tree": """
+services:
+  api:
+    image: {image}:3.1.1
+    secrets:
+      - source: creds
+        target: /app/staticfiles/creds
+""",
+    # An ancestor mount covers the tree just as thoroughly.
+    "a mount over the container root": """
+services:
+  api:
+    image: {image}:3.1.1
+    volumes:
+      - .:/
+""",
     "kubernetes mountPath, flow style with a sibling field": """
 spec:
   containers:
@@ -331,6 +386,53 @@ metadata:
 spec:
   containers:
     - image: {image}:3.1.1
+""",
+    # A sibling under /app hides nothing: the collected tree is /app/staticfiles.
+    "a log directory beside the collected assets": """
+services:
+  api:
+    image: {image}:3.1.1
+    volumes:
+      - ./logs:/app/logs
+""",
+    "a similarly named sibling directory": """
+services:
+  api:
+    image: {image}:3.1.1
+    volumes:
+      - ./old:/app/staticfiles-old
+""",
+    # `target` here is an opaque volume-driver option, not a destination. Latching the
+    # collection scope through every descendant read it as a mount.
+    "a top-level volume driver option named target": """
+services:
+  api:
+    image: {image}:3.1.1
+    volumes:
+      - data:/srv/data
+volumes:
+  data:
+    driver: local
+    driver_opts:
+      target: /app
+""",
+    # The Kubernetes equivalent of the same shape.
+    "a csi volumeAttributes entry named target": """
+spec:
+  containers:
+    - image: {image}:3.1.1
+  volumes:
+    - csi:
+        volumeAttributes:
+          target: /app
+""",
+    "a config mounted somewhere unrelated": """
+services:
+  api:
+    image: {image}:3.1.1
+    configs:
+      - source: cfg
+        target: /etc/octonomy.json
 """,
     "a tmpfs somewhere harmless": """
 services:
@@ -504,22 +606,6 @@ def test_the_real_deploy_channels_pass(run_script, scripts_dir):
     assert result.returncode == 0, result.output
 
 
-def test_a_mount_target_that_cannot_be_resolved_is_reported(run_script, channel_file):
-    """A bare ``${VAR}`` has no knowable value here, so the gate says it could not check
-    rather than reporting success. Fails closed only where the destination is genuinely
-    undeterminable — an interpolation WITH a default resolves and is judged normally."""
-
-    path = channel_file(
-        f"services:\n  api:\n    image: {IMAGE}:3.1.1\n"
-        "    volumes:\n      - type: bind\n        target: ${OCTONOMY_TARGET}\n"
-    )
-
-    result = run_script("check_static_serving.py", path)
-
-    assert result.returncode == 1
-    assert "cannot tell whether it lands on the baked assets" in result.stdout
-
-
 def test_an_upper_case_yaml_extension_is_still_mount_checked(run_script, channel_file):
     """`Path("compose.YAML").suffix` is `.YAML`. A case-sensitive comparison would
     marker-check a renamed manifest while silently skipping its mounts."""
@@ -533,3 +619,25 @@ def test_an_upper_case_yaml_extension_is_still_mount_checked(run_script, channel
 
     assert result.returncode == 1
     assert "hides the static assets" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("label", "entry"),
+    [
+        # Only the default-value forms can be resolved here. These three depend on the
+        # deploying environment, so they must be reported rather than quietly passed.
+        ("bare variable", "target: ${OCTONOMY_TARGET}"),
+        ("error form", "- './src:${OCTONOMY_TARGET:?must be set}'"),
+        ("alternate form", "- './src:${OCTONOMY_TARGET:+/app}'"),
+    ],
+)
+def test_a_mount_target_that_cannot_be_resolved_is_reported(run_script, channel_file, label, entry):
+    body = f"services:\n  api:\n    image: {IMAGE}:3.1.1\n    volumes:\n"
+    body += (
+        f"      - type: bind\n        {entry}\n" if entry.startswith("target") else f"    {entry}\n"
+    )
+
+    result = run_script("check_static_serving.py", channel_file(body))
+
+    assert result.returncode == 1, f"{label}: {result.output}"
+    assert "cannot tell whether it lands on the baked assets" in result.stdout

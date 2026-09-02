@@ -63,9 +63,6 @@ import yaml
 
 IMAGE = "ghcr.io/octoverse-id/octonomy"
 
-# The directory the image bakes assets into, and anything beneath it.
-BAKED_ASSET_PATHS = ("/app", "/app/staticfiles")
-
 MARKERS = (
     ("collectstatic", re.compile(r"collectstatic", re.IGNORECASE)),
     ("whitenoise", re.compile(r"whitenoise", re.IGNORECASE)),
@@ -96,29 +93,60 @@ def markers_in(text: str) -> list[str]:
     return [name for name, pattern in MARKERS if pattern.search(text)]
 
 
-# Where a mount destination can appear. Naming the collections is what keeps this exact:
-# `target` and `mountPath` are also perfectly ordinary label, annotation and environment
-# keys, so each counts only inside the collection that gives it mount meaning. Without that
-# scoping, `metadata.annotations.mountPath: /app` reads as a mount.
+# Where a mount destination can appear, and how to read one out. Naming the collections is
+# what keeps this exact: `target` and `mountPath` are also perfectly ordinary label,
+# annotation and driver-option keys, so each counts only as a DIRECT item of the collection
+# that gives it mount meaning.
 #
-#   volumes       Compose. Mapping entries carry `target`; bare strings are short syntax.
+#   volumes       Compose service mounts. Mapping entries carry `target`; bare strings are
+#                 short syntax, `[source:]target[:options]`.
+#   configs       Compose. Mapping entries carry `target`. A config or secret mounted over a
+#   secrets       file REPLACES it, so one aimed at staticfiles.json swaps the production
+#                 manifest out from under WhiteNoise before Django even starts.
+#   tmpfs         Compose. Bare strings are `target[:options]` — no source to strip. A tmpfs
+#                 over the collected tree is the quietest break available: the container
+#                 starts normally and every asset 404s off an empty in-memory filesystem.
 #   volumeMounts  Kubernetes. Mapping entries carry `mountPath`.
-#   tmpfs         Compose. Bare strings ARE the destination — no source to strip. A tmpfs
-#                 over the collected tree is the quietest way to break this: the container
-#                 starts fine and every asset 404s off an empty in-memory filesystem.
-DESTINATION_KEYS = {"volumes": "target", "volumeMounts": "mountPath"}
-SHORT_SYNTAX_COLLECTIONS = ("volumes",)
-PLAIN_PATH_COLLECTIONS = ("tmpfs",)
-MOUNT_COLLECTIONS = tuple(DESTINATION_KEYS) + PLAIN_PATH_COLLECTIONS
+#
+# Direct items only, deliberately. Latching the collection through every descendant made a
+# top-level named-volume declaration's `driver_opts: {target: /app}` — an opaque driver
+# option, not a destination — read as a mount, and would do the same to a Kubernetes CSI
+# `volumeAttributes`. A false alarm is how a gate like this gets deleted.
+MOUNT_LISTS = {
+    "volumes": {"key": "target", "string": "short"},
+    "configs": {"key": "target", "string": None},
+    "secrets": {"key": "target", "string": None},
+    "tmpfs": {"key": None, "string": "path"},
+    "volumeMounts": {"key": "mountPath", "string": None},
+}
 
 # `${VAR:-/app}` / `${VAR-/app}`: Compose substitutes the default when VAR is unset, which
 # is the normal state of a committed example file, so the default is what a reader deploys.
 INTERPOLATION_WITH_DEFAULT = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:?-([^}]*)\}")
-# Anything still interpolated after that has no knowable value here.
-REMAINING_INTERPOLATION = re.compile(r"\$\{[^}]*\}|\$[A-Za-z_]")
 
 # A leading `C:` is a Windows drive letter, not the source/target separator.
 WINDOWS_DRIVE = re.compile(r"^[A-Za-z]$")
+
+# The collected static tree. A mount at an ANCESTOR of it hides it; so does the tree itself
+# or anything inside it. A sibling under /app — `./logs:/app/logs`, say — hides nothing.
+BAKED_ASSETS = "/app/staticfiles"
+
+
+def substitute(text: str) -> str | None:
+    """``text`` with resolvable interpolation expanded, or None if it stays unknowable.
+
+    Runs BEFORE any colon splitting, and that order is the whole point. Splitting first
+    tears `${TARGET:-/app}` at the operator's own colon, leaving a `${TARGET` fragment that
+    no "is this still interpolated?" test recognises — so `./src:${TARGET:-/app}`, a bind
+    mount straight onto /app, read as an ordinary harmless path.
+
+    Only the default-value forms can be resolved. `${VAR}`, `${VAR:?err}` and `${VAR:+alt}`
+    depend on the deploying environment, so they stay unknowable and are reported as such
+    rather than quietly passing.
+    """
+
+    expanded = INTERPOLATION_WITH_DEFAULT.sub(lambda match: match.group(1), text).strip()
+    return None if "$" in expanded else expanded
 
 
 def _short_syntax_target(entry: str) -> str | None:
@@ -141,60 +169,73 @@ def _short_syntax_target(entry: str) -> str | None:
     return parts[1]
 
 
-def mount_targets(node: object, collection: str | None = None) -> list[str]:
-    """Every container path anything in this document mounts over.
+def _destinations(collection: object, spec: dict) -> list[tuple[str | None, str]]:
+    """``(resolved destination or None, original text)`` for one mount collection's items."""
 
-    Walks the whole document rather than the specific Compose/Kubernetes schema paths, so a
-    mount stays visible however it is nested — a Deployment inside a List, a Compose
-    override fragment, an unfamiliar future key.
-    """
+    # `tmpfs: /app` is as valid as a one-item list.
+    items = collection if isinstance(collection, list) else [collection]
 
-    found: list[str] = []
-
-    if isinstance(node, dict):
-        for key, value in node.items():
-            if collection and isinstance(value, str) and key == DESTINATION_KEYS.get(collection):
-                found.append(value)
-            # A scalar `tmpfs: /app` is as valid as a one-item list.
-            if key in PLAIN_PATH_COLLECTIONS and isinstance(value, str):
-                found.append(value)
-            nested = key if key in MOUNT_COLLECTIONS else collection
-            found.extend(mount_targets(value, collection=nested))
-    elif isinstance(node, list):
-        for item in node:
-            if isinstance(item, str):
-                # A bare string is a destination only inside a mount collection. Elsewhere
-                # it is just a string.
-                if collection in SHORT_SYNTAX_COLLECTIONS:
-                    target = _short_syntax_target(item)
-                    if target:
-                        found.append(target)
-                elif collection in PLAIN_PATH_COLLECTIONS:
-                    found.append(item)
-            found.extend(mount_targets(item, collection=collection))
+    found: list[tuple[str | None, str]] = []
+    for item in items:
+        if isinstance(item, str):
+            if spec["string"] is None:
+                continue
+            resolved = substitute(item)
+            if resolved is None:
+                found.append((None, item))
+            elif spec["string"] == "short":
+                found.append((_short_syntax_target(resolved), item))
+            else:
+                # tmpfs: everything after the first colon is mount options.
+                found.append((resolved.split(":")[0], item))
+        elif isinstance(item, dict) and spec["key"]:
+            value = item.get(spec["key"])
+            if isinstance(value, str):
+                found.append((substitute(value), value))
 
     return found
 
 
-def resolve(target: str) -> str | None:
-    """``target`` as it would be mounted, or None when its value is unknowable here."""
+def mount_targets(node: object) -> list[tuple[str | None, str]]:
+    """Every container path anything in this document mounts over.
 
-    resolved = INTERPOLATION_WITH_DEFAULT.sub(lambda match: match.group(1), target).strip()
-    if REMAINING_INTERPOLATION.search(resolved):
-        return None
-    # Compose normalises the path, so `/srv/../app` really does mount over /app. Comparing
-    # the literal string would miss it.
-    return posixpath.normpath(resolved) if resolved else resolved
+    Walks the whole document looking for the collections above rather than following the
+    Compose/Kubernetes schema from the root, so a mount stays visible however it is nested —
+    a Deployment inside a List, a Compose override fragment, an unfamiliar future key.
+    """
+
+    found: list[tuple[str | None, str]] = []
+
+    if isinstance(node, dict):
+        for key, value in node.items():
+            spec = MOUNT_LISTS.get(key)
+            if spec:
+                found.extend(_destinations(value, spec))
+            found.extend(mount_targets(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(mount_targets(item))
+
+    return found
 
 
-def hides_baked_assets(target: str) -> bool:
-    """True when mounting at ``target`` would hide the image's collected static tree."""
+def normalise(target: str) -> str:
+    """``target`` as Compose resolves it — `/srv/../app` really does land on /app."""
 
-    # A mount at /app/staticfiles/admin hides that subtree just as effectively as the whole
-    # directory, so descendants count.
-    normalised = "/" + target.strip("/")
-    return any(
-        normalised == baked or normalised.startswith(baked + "/") for baked in BAKED_ASSET_PATHS
+    return posixpath.normpath("/" + target.strip("/"))
+
+
+def hides_baked_assets(normalised: str) -> bool:
+    """True when mounting at ``normalised`` would hide the image's collected static tree."""
+
+    if normalised == "/":
+        return True
+    return (
+        normalised == BAKED_ASSETS
+        # An ancestor mount covers the tree...
+        or BAKED_ASSETS.startswith(normalised + "/")
+        # ...and so does a mount inside it. A sibling like /app/logs does not.
+        or normalised.startswith(BAKED_ASSETS + "/")
     )
 
 
@@ -210,19 +251,22 @@ def shadowing_mounts(path: Path, text: str) -> tuple[list[str], list[str]]:
 
     # safe_load_all: a manifest may hold several documents, and safe_ rather than full_
     # because this only ever reads configuration, never constructs objects from it.
-    raw = [t for document in yaml.safe_load_all(text) for t in mount_targets(document)]
+    raw = [d for document in yaml.safe_load_all(text) for d in mount_targets(document)]
 
     shadows: list[str] = []
     unverifiable: list[str] = []
-    for target in raw:
-        resolved = resolve(target)
+    for resolved, original in raw:
         if resolved is None:
             # Fail closed only where the destination genuinely cannot be determined. An
             # operator deserves to know the gate could not check it, rather than being told
             # everything is fine.
-            unverifiable.append(target)
-        elif hides_baked_assets(resolved):
-            shadows.append(resolved)
+            unverifiable.append(original)
+        else:
+            # Report the normalised path: it is what the mount actually lands on, which is
+            # the thing an operator needs to see.
+            landed = normalise(resolved)
+            if hides_baked_assets(landed):
+                shadows.append(landed)
     return shadows, unverifiable
 
 

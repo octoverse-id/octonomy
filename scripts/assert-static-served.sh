@@ -58,6 +58,10 @@ MAX_ASSETS=200
 # 200 assets at the 30s per-request ceiling is 100 minutes, five times the docker job's 20,
 # so a server completing each response just under the per-call limit could still be killed
 # by the outer job timeout instead of failing here legibly. This is the actual bound.
+#
+# Checked before each probe rather than mid-flight, so the true ceiling is this budget plus
+# one in-flight request (10s below) — about 130s against a 20-minute job. Deliberately not
+# made exact: capping curl to the remaining time buys nothing here and reads worse.
 # Overridable so the mechanism itself can be tested.
 PROBE_BUDGET_SECONDS=${OCTONOMY_PROBE_BUDGET_SECONDS:-120}
 
