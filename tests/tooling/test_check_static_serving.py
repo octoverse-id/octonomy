@@ -140,6 +140,10 @@ def test_unrelated_mounts_are_left_alone(run_script, channel_file, mount):
 @pytest.mark.parametrize(
     "body",
     [
+        # Trailing (inline) comments, not just whole-line ones. This is the shape the PR
+        # bot caught: the marker greps used to run before inline comments were stripped.
+        "services:\n  api:\n    build: .\n    command: echo ok # collectstatic used to run here\n",
+        "FROM python:3.14-slim\nRUN true  # whitenoise serves these\n",
         "# this stage used to run collectstatic\nFROM python:3.14-slim\n",
         "# image: ghcr.io/octoverse-id/octonomy:3.1.1\nservices:\n  api:\n    build: .\n",
         "  # WhiteNoiseMiddleware used to be here\nMIDDLEWARE = []\n",
@@ -150,7 +154,7 @@ def test_a_marker_that_only_appears_in_a_comment_does_not_count(run_script, chan
     result = run_script("check-static-serving.sh", channel_file(body))
 
     assert result.returncode == 1
-    assert "non-comment line" in result.stdout
+    assert "outside comments" in result.stdout
 
 
 def test_a_commented_out_mount_is_not_treated_as_shadowing(run_script, channel_file):

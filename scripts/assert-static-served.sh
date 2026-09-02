@@ -136,11 +136,31 @@ for url in "$hashed" "$drf_hashed"; do
 
   [ "$status" = "200" ] || fail "GET $url returned $status (expected 200)"
 
-  # A 200 carrying application/octet-stream still leaves the page unstyled, so the status
-  # code alone is not the guarantee that matters to a browser.
-  case "$ctype" in
-    text/css* | text/javascript* | application/javascript*) ;;
-    *) fail "GET $url was served as '$ctype' — a browser will not apply that" ;;
+  # The type must match the EXTENSION, not merely land in a combined allowlist. A shared
+  # allowlist accepted a stylesheet served as application/javascript, which a browser
+  # refuses just as firmly as octet-stream — so the gate reported success on an asset no
+  # page could actually use. Verified: with both hashed .css fixtures served as JS, the
+  # shared-allowlist version exited 0.
+  case "$url" in
+    *.css)
+      case "$ctype" in
+        text/css*) ;;
+        *) fail "GET $url is a stylesheet but was served as '$ctype' — a browser will not apply it" ;;
+      esac
+      ;;
+    *.js)
+      # Both spellings are current: WhiteNoise emits text/javascript, older mimetypes
+      # tables and some proxies still say application/javascript.
+      case "$ctype" in
+        text/javascript* | application/javascript*) ;;
+        *) fail "GET $url is a script but was served as '$ctype' — a browser will not execute it" ;;
+      esac
+      ;;
+    *)
+      # Unreachable through the extraction regexes above, which only ever yield .css or
+      # .js. Kept so widening them cannot silently skip this check.
+      fail "GET $url has an extension this gate does not know how to type-check"
+      ;;
   esac
 
   echo "ok    GET $url -> $status $ctype"

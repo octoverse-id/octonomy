@@ -58,39 +58,39 @@ for file in "$@"; do
     continue
   fi
 
-  # Comments are stripped before anything is matched, and that is load-bearing rather
-  # than tidiness. Every format scanned here — Dockerfile, YAML, systemd unit, nginx conf
-  # — comments with '#', and the Dockerfile's own comment block explains collectstatic at
-  # length. Matching raw text let someone delete the real `RUN ... collectstatic` line and
-  # keep this gate green off the prose describing it, which is precisely the "passes while
-  # broken" shape this gate exists to prevent. Verified: before this, deleting that line
-  # left the gate reporting ok. `grep -n` runs first so reported line numbers stay true to
-  # the file.
-  effective=$(grep -nvE '^[[:space:]]*#' -- "$file" || true)
-
-  markers=""
-  grep -qi 'collectstatic' <<<"$effective" && markers="$markers collectstatic"
-  grep -qi 'whitenoise' <<<"$effective" && markers="$markers whitenoise"
-  grep -qE 'location[[:space:]]+/static/' <<<"$effective" && markers="$markers location-static"
-  grep -qF "$IMAGE" <<<"$effective" && markers="$markers published-image"
-  grep -qE 'manage\.py check' <<<"$effective" && markers="$markers boot-check"
-
-  if [ -z "$markers" ]; then
-    fail "$file: no static-serving marker on a non-comment line — this channel has lost its static story"
-    continue
-  fi
-
-  # Normalise before matching, because every spelling below is valid YAML for the same
-  # mount and each one hides the assets identically:
+  # Comments are stripped before ANYTHING is matched — both whole-line and trailing — and
+  # that is load-bearing rather than tidiness. Every format scanned here (Dockerfile, YAML,
+  # systemd unit, nginx conf) comments with '#', and the Dockerfile's own comment block
+  # explains collectstatic at length. Matching raw text let someone delete the operative
+  # `RUN ... collectstatic` line and keep this gate green off the prose describing it, or
+  # satisfy it outright with `command: echo ok # collectstatic used to run here` — precisely
+  # the "passes while broken" shape this gate exists to prevent. Both were verified as real
+  # before this ordering.
+  #
+  # Then: drop quotes and collapse trailing slashes, because every spelling below is valid
+  # YAML for the same mount and each hides the assets identically:
   #
   #   - ./x:/app                    - "./x:/app/staticfiles:ro"      mountPath: "/app"
   #   - type: bind                  mountPath: /app/staticfiles/     target: /app/
   #     target: /app/staticfiles
   #
-  # So: drop trailing comments, drop quotes, collapse trailing slashes. Matching the raw
-  # line instead would let a reviewer's preferred quoting style walk straight through a
-  # gate whose whole purpose is to notice this.
-  normalised=$(sed -e 's/[[:space:]]#.*$//' -e 's/["'"'"']//g' -e 's#/\+$##' <<<"$effective")
+  # `grep -n` runs first so reported line numbers stay true to the file as written. A '#'
+  # only opens a comment when whitespace precedes it, which is YAML's own rule and holds
+  # for the other three formats too.
+  normalised=$(grep -nvE '^[[:space:]]*#' -- "$file" |
+    sed -e 's/[[:space:]]#.*$//' -e 's/["'"'"']//g' -e 's#/\+$##' || true)
+
+  markers=""
+  grep -qi 'collectstatic' <<<"$normalised" && markers="$markers collectstatic"
+  grep -qi 'whitenoise' <<<"$normalised" && markers="$markers whitenoise"
+  grep -qE 'location[[:space:]]+/static/' <<<"$normalised" && markers="$markers location-static"
+  grep -qF "$IMAGE" <<<"$normalised" && markers="$markers published-image"
+  grep -qE 'manage\.py check' <<<"$normalised" && markers="$markers boot-check"
+
+  if [ -z "$markers" ]; then
+    fail "$file: no static-serving marker outside comments — this channel has lost its static story"
+    continue
+  fi
 
   # /app itself, or anything underneath it — a mount at /app/staticfiles/admin hides that
   # subtree just as effectively. The character class after /app is what keeps /apple out.

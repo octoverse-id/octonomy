@@ -229,6 +229,50 @@ def test_a_wrong_content_type_fails(run_script, stub_server):
     assert "will not apply" in result.output
 
 
+@pytest.mark.parametrize("ctype", ["application/javascript", "text/javascript"])
+def test_a_stylesheet_served_as_javascript_fails(run_script, stub_server, ctype):
+    """The type has to match the EXTENSION, not just land in a combined allowlist.
+
+    A browser refuses a stylesheet labelled as script exactly as firmly as one labelled
+    octet-stream, so a shared allowlist reported success on an asset no page could use.
+    Both hashed fixtures are .css here, so this also proves the check is applied per URL
+    rather than once for the pair.
+    """
+
+    base = stub_server(
+        _healthy(
+            **{
+                HASHED_CSS: (200, ctype, "body{}", {}, False),
+                HASHED_DRF_CSS: (200, ctype, "body{}", {}, False),
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "is a stylesheet but was served as" in result.output
+
+
+def test_a_script_asset_is_accepted_under_either_javascript_spelling(run_script, stub_server):
+    """WhiteNoise emits text/javascript; older mimetypes tables say application/javascript.
+    Neither may be rejected, or the gate fails on a correctly served .js asset."""
+
+    hashed_js = "/static/unfold/js/alpine.0123456789ab.js"
+    admin_html = f'<html><head><script src="{hashed_js}"></script></head></html>'
+
+    base = stub_server(
+        _healthy(
+            **{
+                "/admin/login/": (200, "text/html", admin_html, {}, False),
+                hashed_js: (200, "text/javascript", "1;", {}, False),
+            }
+        )
+    )
+
+    assert run_script("assert-static-served.sh", base).returncode == 0
+
+
 @pytest.mark.parametrize("origin", ["*", "https://admin.example.com"])
 def test_any_cors_header_on_static_fails(run_script, stub_server, origin):
     """The contract is ABSENT, not merely 'not a wildcard'. WHITENOISE_ALLOW_ALL_ORIGINS is
