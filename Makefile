@@ -1,4 +1,4 @@
-.PHONY: install run test test-sqlite lint format check migrate migration-check makemigrations openapi openapi-check audit version-check release-check seed db-up db-down collectstatic
+.PHONY: install run test test-sqlite lint format check static-check migrate migration-check makemigrations openapi openapi-check audit version-check release-check seed db-up db-down collectstatic
 
 install:
 	uv sync --extra dev
@@ -31,6 +31,17 @@ migrate:
 # admin: the always-on DRF browsable API needs /static/rest_framework/* too.
 collectstatic:
 	uv run python manage.py collectstatic --noinput
+
+# Drift gate for the deploy channels' static story. Text-level: it cannot tell you an
+# asset is reachable, only that a channel still says how it would be served. Correctness
+# lives in CI's `docker` job, which fetches real URLs from a real container.
+static-check:
+	uv run python scripts/check_static_serving.py \
+		Dockerfile \
+		deploy/docker/compose.yaml \
+		deploy/kubernetes/deployment.yaml \
+		deploy/systemd/octonomy.service \
+		deploy/systemd/nginx-octonomy.conf
 
 migration-check:
 	uv run python manage.py makemigrations --check --dry-run
@@ -91,7 +102,7 @@ version-check:
 	esac; \
 	echo "version-check OK: $$semver"
 
-release-check: lint check migration-check test openapi-check audit version-check
+release-check: lint check static-check migration-check test openapi-check audit version-check
 
 seed:
 	uv run python manage.py seed_demo

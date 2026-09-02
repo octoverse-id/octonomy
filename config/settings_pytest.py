@@ -38,8 +38,10 @@ from config.settings import STORAGES as _PRODUCTION_STORAGES
 # the suite renders (changelists, forms, diagnostics) — those go through plain storage and
 # would not notice a manifest break.
 #
-# #144 is the planned additional control: a CI job that boots the real image and fetches a
-# hashed URL out of rendered admin HTML. It is not in place yet.
+# The additional control from #144 is now in place: CI boots the real image and fetches
+# hashed URLs out of the rendered admin login and browsable-API pages
+# (scripts/assert-static-served.sh). It covers image packaging and those two surfaces —
+# not every admin page the suite renders, which is the part still uncovered.
 STORAGES = {
     **_PRODUCTION_STORAGES,
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},

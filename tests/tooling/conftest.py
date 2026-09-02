@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,8 +38,12 @@ def run_script():
     def _run(name: str, *args: str, env: dict[str, str] | None = None) -> Result:
         script = SCRIPTS / name
         assert script.exists(), f"{script} is missing"
+        # A .py guard runs under THIS interpreter, not the shebang's `python`: the venv is
+        # where its third-party imports live, and the Makefile invokes it the same way
+        # (`uv run python`). Shell guards keep executing directly.
+        launcher = [sys.executable] if script.suffix == ".py" else []
         completed = subprocess.run(
-            [str(script), *args],
+            [*launcher, str(script), *args],
             capture_output=True,
             text=True,
             env=env,
