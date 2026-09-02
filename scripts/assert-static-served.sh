@@ -45,7 +45,14 @@ trap 'rm -rf "$work"' EXIT
 # this: a regression that accepts the connection and then never finishes a response would
 # hold the required `docker` job open until the job is cancelled, and a cancelled job skips
 # the log-dumping step — turning a fast, legible failure into a slow opaque one.
-CURL=(curl -sS --connect-timeout 5 --max-time 30)
+CURL=(curl -sS --connect-timeout 5 --max-time 30 --max-filesize 5000000)
+
+# An upper bound on how many assets a page may reference before this is treated as a
+# problem in its own right. The two real pages reference 23 between them; a page emitting
+# hundreds means a template regression, and probing them all sequentially is how a bounded
+# per-request timeout still adds up to a job timeout. Fails loudly rather than truncating,
+# because silently probing a subset is the sampling defect this loop exists to avoid.
+MAX_ASSETS=200
 
 fail() {
   # ::error:: renders as an annotation on the CI job and as plain text anywhere else.
@@ -115,9 +122,14 @@ if [ "$api_status" = "404" ]; then
 fi
 echo "ok    browsable API rendered ($api_status)"
 
-grep -oE '/static/rest_framework/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/api.html" |
+# ALL hashed assets on this page, not only the rest_framework ones. Scoping the extractor
+# to /static/rest_framework/ meant a broken asset from anywhere else on the same page — a
+# project-level override, say — was never probed at all: status, type and CORS all skipped.
+grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/api.html" |
   sort -u >"$work/api-assets.txt" || true
-if [ ! -s "$work/api-assets.txt" ]; then
+# The rest_framework requirement stays, as a separate assertion: it is what proves the page
+# really is the browsable renderer rather than some other 4xx that happens to carry assets.
+if ! grep -q '/static/rest_framework/' "$work/api-assets.txt"; then
   fail "the rendered browsable API references no hashed rest_framework asset — either the manifest backend is not in effect or the page is not the browsable renderer."
 fi
 echo "ok    browsable API references $(wc -l <"$work/api-assets.txt" | tr -d ' ') hashed asset(s)"
@@ -130,6 +142,10 @@ echo "ok    browsable API references $(wc -l <"$work/api-assets.txt" | tr -d ' '
 # These are localhost requests against an already-running container, so probing all of them
 # costs milliseconds.
 sort -u "$work/admin-assets.txt" "$work/api-assets.txt" >"$work/all-assets.txt"
+asset_count=$(wc -l <"$work/all-assets.txt" | tr -d ' ')
+if [ "$asset_count" -gt "$MAX_ASSETS" ]; then
+  fail "the two pages reference $asset_count hashed assets, over the $MAX_ASSETS ceiling. That is a template regression rather than a static-serving fault; probing them all sequentially would turn this gate into a job timeout."
+fi
 while IFS= read -r url; do
   # curl's exit status is checked SEPARATELY from the HTTP code it reports. -w writes the
   # status and content type even when the transfer dies part-way through the body, so a
@@ -156,7 +172,12 @@ while IFS= read -r url; do
   # first ';', drop surrounding whitespace, lower-case (media types are case-insensitive),
   # then compare exactly.
   essence=${ctype%%;*}
-  essence=$(tr -d '[:space:]' <<<"$essence" | tr '[:upper:]' '[:lower:]')
+  # Trim the EDGES only. `tr -d` over the whole value would fold `text / css` and
+  # `text/<TAB>css` — both invalid, both rejected by a browser's MIME parser — into a
+  # passing `text/css`, which is not the exact comparison this is meant to be.
+  essence=${essence#"${essence%%[![:space:]]*}"}
+  essence=${essence%"${essence##*[![:space:]]}"}
+  essence=$(tr '[:upper:]' '[:lower:]' <<<"$essence")
 
   case "$url" in
     *.css)

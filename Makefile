@@ -36,7 +36,7 @@ collectstatic:
 # asset is reachable, only that a channel still says how it would be served. Correctness
 # lives in CI's `docker` job, which fetches real URLs from a real container.
 static-check:
-	./scripts/check-static-serving.sh \
+	uv run python scripts/check_static_serving.py \
 		Dockerfile \
 		deploy/docker/compose.yaml \
 		deploy/kubernetes/deployment.yaml \

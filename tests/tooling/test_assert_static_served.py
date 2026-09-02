@@ -335,6 +335,51 @@ def test_a_suffixed_subtype_is_not_mistaken_for_the_real_one(
     assert expected in result.output
 
 
+@pytest.mark.parametrize("ctype", ["text / css", "text/\tcss", "te xt/css"])
+def test_embedded_whitespace_in_a_media_type_is_rejected(run_script, stub_server, ctype):
+    """Trimming must happen at the EDGES only.
+
+    Deleting whitespace across the whole value folds `text / css` — which a browser's MIME
+    parser rejects — into a passing `text/css`, so the comparison would no longer be the
+    exact one it claims to be.
+    """
+
+    base = stub_server(_healthy(**{HASHED_CSS: (200, ctype, "body{}", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "is a stylesheet but was served as" in result.output
+
+
+def test_a_broken_non_drf_asset_on_the_api_page_fails(run_script, stub_server):
+    """The browsable-API extractor must collect every hashed asset on that page.
+
+    Scoping it to /static/rest_framework/ meant an asset from anywhere else on the same
+    page — a project-level override, say — was never probed: status, type and CORS all
+    skipped while the page itself looked healthy.
+    """
+
+    custom = "/static/custom/theme.aabbccdd1122.css"
+    api_html = (
+        f'<html><head><link rel="stylesheet" href="{HASHED_DRF_CSS}">'
+        f'<link rel="stylesheet" href="{custom}"></head></html>'
+    )
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/v2/tags": (403, "text/html", api_html, {}, False),
+                custom: (404, "text/html", "nope", {}, False),
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert custom in result.output
+
+
 def test_a_parameterised_media_type_is_still_accepted(run_script, stub_server):
     """The essence comparison must not reject the charset parameter WhiteNoise really
     sends, nor an upper-case spelling — media types are case-insensitive."""
@@ -362,6 +407,31 @@ def test_any_cors_header_on_static_fails(run_script, stub_server, origin):
 
     assert result.returncode == 1
     assert "Access-Control-Allow-Origin" in result.output
+
+
+def test_a_page_referencing_more_assets_than_the_ceiling_fails_before_probing(
+    run_script, stub_server
+):
+    """The aggregate bound. Each probe is time-limited, but the COUNT was not, so a
+    template regression emitting hundreds of assets turned a bounded per-request timeout
+    into a job timeout. It must fail loudly and early rather than truncate the list, since
+    silently probing a subset is the sampling defect this loop exists to avoid.
+    """
+
+    many = [f"/static/unfold/css/g{n:04d}.0123456789ab.css" for n in range(201)]
+    links = "".join(f'<link rel="stylesheet" href="{u}">' for u in many)
+    base = stub_server(
+        _healthy(
+            **{"/admin/login/": (200, "text/html", f"<html><head>{links}</head></html>", {}, False)}
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "over the 200 ceiling" in result.output
+    # Bailed out before the loop, so nothing was probed.
+    assert "ok    GET /static/" not in result.stdout
 
 
 def test_an_unreachable_host_fails_and_reports_the_real_curl_exit(run_script):
