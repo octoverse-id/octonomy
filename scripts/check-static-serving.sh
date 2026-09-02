@@ -77,7 +77,13 @@ for file in "$@"; do
   # `grep -n` runs first so reported line numbers stay true to the file as written. A '#'
   # only opens a comment when whitespace precedes it, which is YAML's own rule and holds
   # for the other three formats too.
-  normalised=$(grep -nvE '^[[:space:]]*#' -- "$file" |
+  #
+  # ';' is stripped as well, at line start only, because systemd treats a leading ';' as a
+  # comment exactly like '#'. Without it `; ExecStartPre=... manage.py check` satisfied the
+  # boot-check marker on a unit that runs no check at all. Stripping it for every format is
+  # safe: a line whose first non-space character is ';' is meaningless in YAML, a Dockerfile
+  # and an nginx conf alike, and none of the scanned files has one.
+  normalised=$(grep -nvE '^[[:space:]]*[#;]' -- "$file" |
     sed -e 's/[[:space:]]#.*$//' -e 's/["'"'"']//g' -e 's#/\+$##' || true)
 
   markers=""
@@ -99,7 +105,15 @@ for file in "$@"; do
   # prefix, so a line whose content is bare `/app` arrives as `4:/app` and would otherwise
   # satisfy the `:/app` alternative all by itself. Anchoring the prefix forces the colon
   # that matters to come from the content.
-  shadow=$(grep -E '^[0-9]+:.*(:|(mountPath|target):[[:space:]]*)/app(/[^:[:space:]]*)*(:[a-z,]+)?[[:space:]]*$' <<<"$normalised" || true)
+  #
+  # What may follow the path, and why each part is there:
+  #   (:[a-zA-Z,]+)?   mount options. UPPER-case matters — `:Z` and `:z` are the SELinux
+  #                    relabel options, and a lower-case-only class let `- .:/app:Z` past.
+  #   [][}, \t]*$      flow style. `volumes: [{target: /app}]` is valid Compose and closes
+  #                    with `}`/`]`/`,`, so permitting only whitespace before end-of-line
+  #                    missed it entirely.
+  # Both were confirmed against `docker compose config` as real bind mounts onto /app.
+  shadow=$(grep -E '^[0-9]+:.*(:|(mountPath|target):[[:space:]]*)/app(/[^:[:space:]]*)*(:[a-zA-Z,]+)?[][}, '$'\t'']*$' <<<"$normalised" || true)
   if [ -n "$shadow" ]; then
     fail "$file: mounts over /app, which hides the static assets baked into the image:"
     echo "$shadow" | sed 's/^/        /'

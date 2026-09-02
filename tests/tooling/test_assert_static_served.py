@@ -20,9 +20,17 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 HASHED_CSS = "/static/unfold/css/styles.0123456789ab.css"
+HASHED_CSS_2 = "/static/unfold/css/fonts.1122334455aa.css"
+HASHED_JS = "/static/unfold/js/app.abcdef012345.js"
 HASHED_DRF_CSS = "/static/rest_framework/css/bootstrap.min.fedcba987654.css"
 
-ADMIN_HTML = f'<html><head><link rel="stylesheet" href="{HASHED_CSS}"></head></html>'
+# Mirrors the real templates: several stylesheets, then scripts. The ORDER matters — with
+# stylesheets first, a gate that sampled one URL per page never reached a .js asset at all.
+ADMIN_HTML = (
+    f'<html><head><link rel="stylesheet" href="{HASHED_CSS}">'
+    f'<link rel="stylesheet" href="{HASHED_CSS_2}">'
+    f'<script src="{HASHED_JS}"></script></head></html>'
+)
 DRF_HTML = f'<html><head><link rel="stylesheet" href="{HASHED_DRF_CSS}"></head></html>'
 
 # What a non-manifest deployment renders. The script must reject it: the whole point is to
@@ -32,6 +40,7 @@ UNHASHED_HTML = (
 )
 
 CSS = 'text/css; charset="utf-8"'
+JS = 'text/javascript; charset="utf-8"'
 
 
 class _Stub(BaseHTTPRequestHandler):
@@ -87,6 +96,8 @@ def _healthy(**overrides):
         "/admin/login/": (200, "text/html", ADMIN_HTML, {}, False),
         "/api/v2/tags": (403, "text/html", DRF_HTML, {}, False),
         HASHED_CSS: (200, CSS, "body{}", {}, False),
+        HASHED_CSS_2: (200, CSS, "body{}", {}, False),
+        HASHED_JS: (200, JS, "1;", {}, False),
         HASHED_DRF_CSS: (200, CSS, "body{}", {}, False),
     }
     routes.update(overrides)
@@ -254,20 +265,82 @@ def test_a_stylesheet_served_as_javascript_fails(run_script, stub_server, ctype)
     assert "is a stylesheet but was served as" in result.output
 
 
-def test_a_script_asset_is_accepted_under_either_javascript_spelling(run_script, stub_server):
+@pytest.mark.parametrize("ctype", ["text/javascript", "application/javascript"])
+def test_a_script_asset_is_accepted_under_either_javascript_spelling(
+    run_script, stub_server, ctype
+):
     """WhiteNoise emits text/javascript; older mimetypes tables say application/javascript.
     Neither may be rejected, or the gate fails on a correctly served .js asset."""
 
-    hashed_js = "/static/unfold/js/alpine.0123456789ab.js"
-    admin_html = f'<html><head><script src="{hashed_js}"></script></head></html>'
+    base = stub_server(_healthy(**{HASHED_JS: (200, ctype, "1;", {}, False)}))
+
+    assert run_script("assert-static-served.sh", base).returncode == 0
+
+
+def test_a_broken_script_fails_even_when_every_stylesheet_is_healthy(run_script, stub_server):
+    """The defect behind probing every asset rather than the first of each page.
+
+    In the shipped templates stylesheets come first, so sampling one URL per page picked
+    two .css files and never exercised a script at all — a deployment serving every .js as
+    text/css, or 404ing it, passed with its scripted behaviour entirely broken.
+    """
+
+    base = stub_server(_healthy(**{HASHED_JS: (200, CSS, "1;", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "is a script but was served as" in result.output
+
+
+def test_a_missing_script_fails_even_when_every_stylesheet_is_healthy(run_script, stub_server):
+    base = stub_server(_healthy(**{HASHED_JS: (404, "text/html", "nope", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert HASHED_JS in result.output
+
+
+def test_a_broken_second_stylesheet_fails(run_script, stub_server):
+    """Sampling the first asset also meant a later broken stylesheet went unnoticed."""
+
+    base = stub_server(_healthy(**{HASHED_CSS_2: (404, "text/html", "nope", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert HASHED_CSS_2 in result.output
+
+
+@pytest.mark.parametrize(
+    ("url_key", "ctype", "expected"),
+    [
+        # `text/css*` as a glob also matches `text/cssbogus`, which is a DIFFERENT subtype
+        # rather than a parameterised form of the allowed one.
+        ("css", "text/cssbogus", "is a stylesheet but was served as"),
+        ("js", "application/javascriptbogus", "is a script but was served as"),
+        ("js", "text/javascriptx", "is a script but was served as"),
+    ],
+)
+def test_a_suffixed_subtype_is_not_mistaken_for_the_real_one(
+    run_script, stub_server, url_key, ctype, expected
+):
+    target = HASHED_CSS if url_key == "css" else HASHED_JS
+    base = stub_server(_healthy(**{target: (200, ctype, "x", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert expected in result.output
+
+
+def test_a_parameterised_media_type_is_still_accepted(run_script, stub_server):
+    """The essence comparison must not reject the charset parameter WhiteNoise really
+    sends, nor an upper-case spelling — media types are case-insensitive."""
 
     base = stub_server(
-        _healthy(
-            **{
-                "/admin/login/": (200, "text/html", admin_html, {}, False),
-                hashed_js: (200, "text/javascript", "1;", {}, False),
-            }
-        )
+        _healthy(**{HASHED_CSS: (200, 'TEXT/CSS ; charset="utf-8"', "body{}", {}, False)})
     )
 
     assert run_script("assert-static-served.sh", base).returncode == 0
@@ -291,11 +364,20 @@ def test_any_cors_header_on_static_fails(run_script, stub_server, origin):
     assert "Access-Control-Allow-Origin" in result.output
 
 
-def test_an_unreachable_host_fails(run_script):
-    """A container that never came up must fail loudly, not be reported as fine."""
+def test_an_unreachable_host_fails_and_reports_the_real_curl_exit(run_script):
+    """A container that never came up must fail loudly, not be reported as fine.
 
-    # Port 1 on loopback: reserved, and nothing in CI binds it.
-    assert run_script("assert-static-served.sh", "http://127.0.0.1:1").returncode == 1
+    The reported exit code is asserted, not just the failure: `$?` inside
+    `if ! x=$(cmd); then` is the negation's own 0, so an earlier version printed
+    "curl exit 0" for every transport error. Without this assertion that regression
+    would slip back in unnoticed.
+    """
+
+    # Port 1 on loopback: reserved, and nothing in CI binds it. curl 7 = couldn't connect.
+    result = run_script("assert-static-served.sh", "http://127.0.0.1:1")
+
+    assert result.returncode == 1
+    assert "curl exit 7" in result.output
 
 
 def test_a_trailing_slash_on_the_base_url_is_accepted(run_script, stub_server):

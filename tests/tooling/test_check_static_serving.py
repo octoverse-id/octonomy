@@ -97,6 +97,15 @@ def test_a_renamed_or_deleted_file_fails(run_script, tmp_path):
         # just as effectively as the whole directory.
         "      volumeMounts:\n        - name: x\n          mountPath: /app/\n",
         "      volumeMounts:\n        - name: x\n          mountPath: /app/staticfiles/admin\n",
+        # Compose FLOW style. Valid YAML, resolves to the same bind mount, and closes with
+        # `}`/`]` where a whitespace-or-EOL rule expected nothing.
+        "    volumes: [{type: bind, source: ., target: /app}]\n",
+        "    volumes: [ { type: bind, source: ., target: /app/staticfiles } ]\n",
+        # SELinux relabel options are UPPER and lower case. A lower-case-only option class
+        # let the most common Podman/RHEL spelling straight through.
+        "    volumes:\n      - .:/app:Z\n",
+        "    volumes:\n      - .:/app:z\n",
+        "    volumes:\n      - ./o:/app/staticfiles:ro,Z\n",
     ],
 )
 def test_a_mount_over_the_baked_assets_fails(run_script, channel_file, mount):
@@ -122,6 +131,11 @@ def test_a_mount_over_the_baked_assets_fails(run_script, channel_file, mount):
         # A bare `/app` line is not a mount. It matters because the matcher runs over
         # grep -n output, so this arrives as `4:/app` and would satisfy a naive `:/app`.
         "/app\n",
+        # Flow style over an unrelated path — the relaxed terminators must not widen the
+        # path match itself.
+        "    volumes: [{target: /apple}]\n",
+        # A database URL whose path happens to be /app.
+        "    environment:\n      DATABASE_URL: postgres://u:p@h:5432/app\n",
     ],
 )
 def test_unrelated_mounts_are_left_alone(run_script, channel_file, mount):
@@ -148,6 +162,12 @@ def test_unrelated_mounts_are_left_alone(run_script, channel_file, mount):
         "# image: ghcr.io/octoverse-id/octonomy:3.1.1\nservices:\n  api:\n    build: .\n",
         "  # WhiteNoiseMiddleware used to be here\nMIDDLEWARE = []\n",
         "    # location /static/ was removed\n    location / {\n    }\n",
+        # systemd treats a leading ';' as a comment exactly like '#', and it is one of the
+        # five formats this gate scans — so a unit that runs no check at all satisfied the
+        # boot-check marker off a disabled line.
+        "[Service]\n; ExecStartPre=/opt/octonomy/.venv/bin/python manage.py check\n"
+        "ExecStart=/bin/true\n",
+        "[Service]\n;ExecStartPre=/opt/octonomy/.venv/bin/python manage.py check\n",
     ],
 )
 def test_a_marker_that_only_appears_in_a_comment_does_not_count(run_script, channel_file, body):

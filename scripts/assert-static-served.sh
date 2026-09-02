@@ -74,11 +74,12 @@ echo "ok    GET /admin/login/ -> 200"
 # --- It must reference hashed assets --------------------------------------------------
 # If nothing in the page is content-addressed, manifest storage is not in effect and every
 # assertion below would be testing the wrong backend.
-hashed=$(grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/admin.html" | head -n 1 || true)
-if [ -z "$hashed" ]; then
+grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/admin.html" |
+  sort -u >"$work/admin-assets.txt" || true
+if [ ! -s "$work/admin-assets.txt" ]; then
   fail "the rendered admin page references no hashed asset URL — the manifest staticfiles backend is not in effect, so this gate would be checking the wrong thing."
 fi
-echo "ok    rendered page references a hashed asset: $hashed"
+echo "ok    rendered page references $(wc -l <"$work/admin-assets.txt" | tr -d ' ') hashed asset(s)"
 
 # --- The browsable API must render, and reference hashed assets of its own --------------
 # /static/rest_framework/* is needed even with the admin console disabled: DRF's
@@ -114,20 +115,28 @@ if [ "$api_status" = "404" ]; then
 fi
 echo "ok    browsable API rendered ($api_status)"
 
-drf_hashed=$(grep -oE '/static/rest_framework/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/api.html" |
-  head -n 1 || true)
-if [ -z "$drf_hashed" ]; then
+grep -oE '/static/rest_framework/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/api.html" |
+  sort -u >"$work/api-assets.txt" || true
+if [ ! -s "$work/api-assets.txt" ]; then
   fail "the rendered browsable API references no hashed rest_framework asset — either the manifest backend is not in effect or the page is not the browsable renderer."
 fi
-echo "ok    browsable API references a hashed asset: $drf_hashed"
+echo "ok    browsable API references $(wc -l <"$work/api-assets.txt" | tr -d ' ') hashed asset(s)"
 
-# --- Both hashed assets must actually be served -----------------------------------------
-for url in "$hashed" "$drf_hashed"; do
+# --- EVERY hashed asset those pages reference must actually be served -------------------
+# Not just the first of each. Two reasons, both observed rather than theorised: in the
+# shipped Unfold and DRF templates stylesheets precede scripts, so sampling one URL per
+# page selected two .css files and the .js branch below never executed in a real CI run at
+# all; and a page whose first stylesheet is fine while a later one 404s would have passed.
+# These are localhost requests against an already-running container, so probing all of them
+# costs milliseconds.
+sort -u "$work/admin-assets.txt" "$work/api-assets.txt" >"$work/all-assets.txt"
+while IFS= read -r url; do
   # curl's exit status is checked SEPARATELY from the HTTP code it reports. -w writes the
   # status and content type even when the transfer dies part-way through the body, so a
   # truncated asset would otherwise be parsed as a healthy "200 text/css".
   rc=0
-  probe=$("${CURL[@]}" -o /dev/null -w '%{http_code} %{content_type}' "$base$url") || rc=$?
+  probe=$("${CURL[@]}" -D "$work/headers.txt" -o /dev/null \
+    -w '%{http_code} %{content_type}' "$base$url") || rc=$?
   if [ "$rc" -ne 0 ]; then
     fail "GET $url did not complete (curl exit $rc) — the response was truncated or timed out"
   fi
@@ -141,18 +150,26 @@ for url in "$hashed" "$drf_hashed"; do
   # refuses just as firmly as octet-stream — so the gate reported success on an asset no
   # page could actually use. Verified: with both hashed .css fixtures served as JS, the
   # shared-allowlist version exited 0.
+  # Compare the media-type ESSENCE, not a prefix. `text/css*` as a glob also matches
+  # `text/cssbogus`, which is a different subtype rather than a parameterised form of the
+  # allowed one — so the gate could bless a type a browser refuses. Strip parameters at the
+  # first ';', drop surrounding whitespace, lower-case (media types are case-insensitive),
+  # then compare exactly.
+  essence=${ctype%%;*}
+  essence=$(tr -d '[:space:]' <<<"$essence" | tr '[:upper:]' '[:lower:]')
+
   case "$url" in
     *.css)
-      case "$ctype" in
-        text/css*) ;;
+      case "$essence" in
+        text/css) ;;
         *) fail "GET $url is a stylesheet but was served as '$ctype' — a browser will not apply it" ;;
       esac
       ;;
     *.js)
       # Both spellings are current: WhiteNoise emits text/javascript, older mimetypes
       # tables and some proxies still say application/javascript.
-      case "$ctype" in
-        text/javascript* | application/javascript*) ;;
+      case "$essence" in
+        text/javascript | application/javascript) ;;
         *) fail "GET $url is a script but was served as '$ctype' — a browser will not execute it" ;;
       esac
       ;;
@@ -163,22 +180,21 @@ for url in "$hashed" "$drf_hashed"; do
       ;;
   esac
 
-  echo "ok    GET $url -> $status $ctype"
-done
+  # Checked per asset, from the headers of the same response, rather than once against a
+  # representative file. Note the contract: ABSENT, not merely "not a wildcard".
+  # WHITENOISE_ALLOW_ALL_ORIGINS is False in the shipped settings and WhiteNoise then emits
+  # no Access-Control-Allow-Origin at all; its own default is True, so a careless edit
+  # re-opens every asset to any origin. CI runs the shipped configuration, so absence is the
+  # exact assertion. A deployment that deliberately adopts a narrow CORS policy (STATIC_URL
+  # on a CDN, say) is changing this contract and should change this line with it.
+  if grep -qi '^access-control-allow-origin' "$work/headers.txt"; then
+    grep -i '^access-control-allow-origin' "$work/headers.txt" >&2
+    fail "GET $url carries an Access-Control-Allow-Origin header; the shipped configuration sets WHITENOISE_ALLOW_ALL_ORIGINS = False and should emit none"
+  fi
 
-# --- No CORS header at all on static -----------------------------------------------------
-# Note the contract: ABSENT, not merely "not a wildcard". WHITENOISE_ALLOW_ALL_ORIGINS is
-# False in the shipped settings, and WhiteNoise then emits no Access-Control-Allow-Origin
-# at all; its own default is True, so a careless edit re-opens every asset to any origin.
-# CI runs the shipped configuration, so absence is the exact assertion. A deployment that
-# deliberately adopts a narrow CORS policy (STATIC_URL on a CDN, say) is changing this
-# contract and should change this line with it.
-"${CURL[@]}" -D "$work/headers.txt" -o /dev/null "$base$hashed" ||
-  fail "could not re-fetch $hashed to inspect its headers"
-if grep -qi '^access-control-allow-origin' "$work/headers.txt"; then
-  grep -i '^access-control-allow-origin' "$work/headers.txt" >&2
-  fail "static responses carry an Access-Control-Allow-Origin header; the shipped configuration sets WHITENOISE_ALLOW_ALL_ORIGINS = False and should emit none"
-fi
-echo "ok    no Access-Control-Allow-Origin on static responses"
+  echo "ok    GET $url -> $status $ctype"
+done <"$work/all-assets.txt"
+
+echo "ok    no Access-Control-Allow-Origin on any static response"
 
 echo "assert-static-served OK: $base renders its admin page and serves the hashed assets it references"
