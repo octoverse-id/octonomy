@@ -54,6 +54,13 @@ CURL=(curl -sS --connect-timeout 5 --max-time 30 --max-filesize 5000000)
 # because silently probing a subset is the sampling defect this loop exists to avoid.
 MAX_ASSETS=200
 
+# The count ceiling alone does NOT bound the work, which was the flaw in relying on it:
+# 200 assets at the 30s per-request ceiling is 100 minutes, five times the docker job's 20,
+# so a server completing each response just under the per-call limit could still be killed
+# by the outer job timeout instead of failing here legibly. This is the actual bound.
+# Overridable so the mechanism itself can be tested.
+PROBE_BUDGET_SECONDS=${OCTONOMY_PROBE_BUDGET_SECONDS:-120}
+
 fail() {
   # ::error:: renders as an annotation on the CI job and as plain text anywhere else.
   echo "::error::$1" >&2
@@ -146,12 +153,21 @@ asset_count=$(wc -l <"$work/all-assets.txt" | tr -d ' ')
 if [ "$asset_count" -gt "$MAX_ASSETS" ]; then
   fail "the two pages reference $asset_count hashed assets, over the $MAX_ASSETS ceiling. That is a template regression rather than a static-serving fault; probing them all sequentially would turn this gate into a job timeout."
 fi
+probe_started=$(date +%s)
 while IFS= read -r url; do
+  elapsed=$(($(date +%s) - probe_started))
+  if [ "$elapsed" -ge "$PROBE_BUDGET_SECONDS" ]; then
+    fail "still probing assets after ${elapsed}s, at or past the ${PROBE_BUDGET_SECONDS}s budget. Failing here with a diagnostic beats being killed by the job timeout without one."
+  fi
+
   # curl's exit status is checked SEPARATELY from the HTTP code it reports. -w writes the
   # status and content type even when the transfer dies part-way through the body, so a
   # truncated asset would otherwise be parsed as a healthy "200 text/css".
   rc=0
-  probe=$("${CURL[@]}" -D "$work/headers.txt" -o /dev/null \
+  # --max-time 10 overrides the 30s the pages get (curl honours the last occurrence). These
+  # are static files over loopback; ten seconds is already generous, and it keeps the worst
+  # case for the whole loop inside the budget above.
+  probe=$("${CURL[@]}" --max-time 10 -D "$work/headers.txt" -o /dev/null \
     -w '%{http_code} %{content_type}' "$base$url") || rc=$?
   if [ "$rc" -ne 0 ]; then
     fail "GET $url did not complete (curl exit $rc) — the response was truncated or timed out"

@@ -54,6 +54,7 @@ Exit codes: 0 ok | 1 violations found | 2 usage
 
 from __future__ import annotations
 
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -64,16 +65,6 @@ IMAGE = "ghcr.io/octoverse-id/octonomy"
 
 # The directory the image bakes assets into, and anything beneath it.
 BAKED_ASSET_PATHS = ("/app", "/app/staticfiles")
-
-# Keys whose value is a mount destination. Asking for them by name is what makes this
-# exact — no guessing from punctuation about whether a line is flow style or a literal path.
-#
-# `mountPath` is unambiguous: it exists only inside a Kubernetes volumeMounts entry.
-# `target` is not — Compose long syntax uses it for the container path, but `target` is also
-# a perfectly ordinary label or environment key, so it counts only inside a `volumes:`
-# collection. Without that scoping, `labels: {target: /app}` reads as a mount.
-UNAMBIGUOUS_MOUNT_KEYS = ("mountPath",)
-VOLUME_SCOPED_MOUNT_KEYS = ("target",)
 
 MARKERS = (
     ("collectstatic", re.compile(r"collectstatic", re.IGNORECASE)),
@@ -105,18 +96,52 @@ def markers_in(text: str) -> list[str]:
     return [name for name, pattern in MARKERS if pattern.search(text)]
 
 
-def _short_syntax_target(entry: str) -> str | None:
-    """The destination of a Compose short-syntax mount, e.g. ``./src:/app/staticfiles:ro``.
+# Where a mount destination can appear. Naming the collections is what keeps this exact:
+# `target` and `mountPath` are also perfectly ordinary label, annotation and environment
+# keys, so each counts only inside the collection that gives it mount meaning. Without that
+# scoping, `metadata.annotations.mountPath: /app` reads as a mount.
+#
+#   volumes       Compose. Mapping entries carry `target`; bare strings are short syntax.
+#   volumeMounts  Kubernetes. Mapping entries carry `mountPath`.
+#   tmpfs         Compose. Bare strings ARE the destination — no source to strip. A tmpfs
+#                 over the collected tree is the quietest way to break this: the container
+#                 starts fine and every asset 404s off an empty in-memory filesystem.
+DESTINATION_KEYS = {"volumes": "target", "volumeMounts": "mountPath"}
+SHORT_SYNTAX_COLLECTIONS = ("volumes",)
+PLAIN_PATH_COLLECTIONS = ("tmpfs",)
+MOUNT_COLLECTIONS = tuple(DESTINATION_KEYS) + PLAIN_PATH_COLLECTIONS
 
-    Compose reads the second colon-separated field as the container path; the first is the
-    host path or named volume and the optional third is the mount options.
+# `${VAR:-/app}` / `${VAR-/app}`: Compose substitutes the default when VAR is unset, which
+# is the normal state of a committed example file, so the default is what a reader deploys.
+INTERPOLATION_WITH_DEFAULT = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:?-([^}]*)\}")
+# Anything still interpolated after that has no knowable value here.
+REMAINING_INTERPOLATION = re.compile(r"\$\{[^}]*\}|\$[A-Za-z_]")
+
+# A leading `C:` is a Windows drive letter, not the source/target separator.
+WINDOWS_DRIVE = re.compile(r"^[A-Za-z]$")
+
+
+def _short_syntax_target(entry: str) -> str | None:
+    """The destination of a Compose short-syntax ``volumes`` entry.
+
+    Three shapes, and the lone-path one is easy to overlook: ``- /app`` is an ANONYMOUS
+    VOLUME mounted at /app, which hides the collected tree exactly like a bind mount does.
+
+        /app                    -> /app             (anonymous volume)
+        ./src:/app/staticfiles  -> /app/staticfiles
+        ./src:/app:ro           -> /app
+        C:\\work:/app            -> /app             (first colon is a drive letter)
     """
 
     parts = entry.split(":")
-    return parts[1] if len(parts) >= 2 else None
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) >= 3 and WINDOWS_DRIVE.match(parts[0]):
+        return parts[2]
+    return parts[1]
 
 
-def mount_targets(node: object, under_volumes: bool = False) -> list[str]:
+def mount_targets(node: object, collection: str | None = None) -> list[str]:
     """Every container path anything in this document mounts over.
 
     Walks the whole document rather than the specific Compose/Kubernetes schema paths, so a
@@ -128,49 +153,77 @@ def mount_targets(node: object, under_volumes: bool = False) -> list[str]:
 
     if isinstance(node, dict):
         for key, value in node.items():
-            if isinstance(value, str) and (
-                key in UNAMBIGUOUS_MOUNT_KEYS or (under_volumes and key in VOLUME_SCOPED_MOUNT_KEYS)
-            ):
+            if collection and isinstance(value, str) and key == DESTINATION_KEYS.get(collection):
                 found.append(value)
-            # Scoped to a `volumes:` collection, not latched onward: both Compose and
-            # Kubernetes put the destination directly inside one (the list branch below
-            # carries the flag across the intervening list), and latching would start
-            # reading an unrelated nested `target` as a mount.
-            found.extend(mount_targets(value, under_volumes=(key == "volumes")))
+            # A scalar `tmpfs: /app` is as valid as a one-item list.
+            if key in PLAIN_PATH_COLLECTIONS and isinstance(value, str):
+                found.append(value)
+            nested = key if key in MOUNT_COLLECTIONS else collection
+            found.extend(mount_targets(value, collection=nested))
     elif isinstance(node, list):
         for item in node:
-            # A bare string in a `volumes:` list is Compose short syntax. Elsewhere a
-            # string is just a string, so this stays scoped to where it means a mount.
-            if under_volumes and isinstance(item, str):
-                target = _short_syntax_target(item)
-                if target:
-                    found.append(target)
-            found.extend(mount_targets(item, under_volumes=under_volumes))
+            if isinstance(item, str):
+                # A bare string is a destination only inside a mount collection. Elsewhere
+                # it is just a string.
+                if collection in SHORT_SYNTAX_COLLECTIONS:
+                    target = _short_syntax_target(item)
+                    if target:
+                        found.append(target)
+                elif collection in PLAIN_PATH_COLLECTIONS:
+                    found.append(item)
+            found.extend(mount_targets(item, collection=collection))
 
     return found
+
+
+def resolve(target: str) -> str | None:
+    """``target`` as it would be mounted, or None when its value is unknowable here."""
+
+    resolved = INTERPOLATION_WITH_DEFAULT.sub(lambda match: match.group(1), target).strip()
+    if REMAINING_INTERPOLATION.search(resolved):
+        return None
+    # Compose normalises the path, so `/srv/../app` really does mount over /app. Comparing
+    # the literal string would miss it.
+    return posixpath.normpath(resolved) if resolved else resolved
 
 
 def hides_baked_assets(target: str) -> bool:
     """True when mounting at ``target`` would hide the image's collected static tree."""
 
-    # Trailing slashes are cosmetic in a mount path, and a mount at /app/staticfiles/admin
-    # hides that subtree just as effectively as the whole directory.
-    normalised = "/" + target.strip().strip("/")
+    # A mount at /app/staticfiles/admin hides that subtree just as effectively as the whole
+    # directory, so descendants count.
+    normalised = "/" + target.strip("/")
     return any(
         normalised == baked or normalised.startswith(baked + "/") for baked in BAKED_ASSET_PATHS
     )
 
 
-def shadowing_mounts(path: Path, text: str) -> list[str]:
-    """Mount targets in ``text`` that hide the baked assets, or [] for non-YAML files."""
+def shadowing_mounts(path: Path, text: str) -> tuple[list[str], list[str]]:
+    """``(targets that hide the assets, targets whose destination is unknowable)``.
 
-    if path.suffix not in {".yaml", ".yml"}:
-        return []
+    Non-YAML files yield nothing: a Dockerfile, systemd unit or nginx conf cannot declare a
+    container mount at all, so there is nothing to check and no false-positive surface.
+    """
+
+    if path.suffix.lower() not in {".yaml", ".yml"}:
+        return [], []
 
     # safe_load_all: a manifest may hold several documents, and safe_ rather than full_
     # because this only ever reads configuration, never constructs objects from it.
-    documents = yaml.safe_load_all(text)
-    return [t for document in documents for t in mount_targets(document) if hides_baked_assets(t)]
+    raw = [t for document in yaml.safe_load_all(text) for t in mount_targets(document)]
+
+    shadows: list[str] = []
+    unverifiable: list[str] = []
+    for target in raw:
+        resolved = resolve(target)
+        if resolved is None:
+            # Fail closed only where the destination genuinely cannot be determined. An
+            # operator deserves to know the gate could not check it, rather than being told
+            # everything is fine.
+            unverifiable.append(target)
+        elif hides_baked_assets(resolved):
+            shadows.append(resolved)
+    return shadows, unverifiable
 
 
 def check(path_name: str) -> list[str]:
@@ -194,7 +247,7 @@ def check(path_name: str) -> list[str]:
         ]
 
     try:
-        shadows = shadowing_mounts(path, text)
+        shadows, unverifiable = shadowing_mounts(path, text)
     except yaml.YAMLError as exc:
         return [
             f"{path_name}: is not parseable as YAML, so its mounts cannot be checked"
@@ -205,6 +258,13 @@ def check(path_name: str) -> list[str]:
         listed = ", ".join(sorted(set(shadows)))
         return [
             f"{path_name}: mounts over {listed}, which hides the static assets baked into the image"
+        ]
+
+    if unverifiable:
+        listed = ", ".join(sorted(set(unverifiable)))
+        return [
+            f"{path_name}: mount destination {listed} interpolates a variable with no "
+            "default, so this gate cannot tell whether it lands on the baked assets"
         ]
 
     print(f"ok    {path_name}: {' '.join(markers)}")

@@ -14,6 +14,7 @@ degrading into something that always passes.
 
 from __future__ import annotations
 
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -432,6 +433,37 @@ def test_a_page_referencing_more_assets_than_the_ceiling_fails_before_probing(
     assert "over the 200 ceiling" in result.output
     # Bailed out before the loop, so nothing was probed.
     assert "ok    GET /static/" not in result.stdout
+
+
+def test_the_probe_loop_stops_at_its_wall_clock_budget(run_script, stub_server):
+    """The count ceiling does not bound the WORK — 200 assets at the per-request limit is
+    far past the job timeout — so there is a total budget too. Driven here by setting the
+    budget to zero, which is the mechanism rather than a real slow server."""
+
+    base = stub_server(_healthy())
+
+    result = run_script(
+        "assert-static-served.sh",
+        base,
+        env={**os.environ, "OCTONOMY_PROBE_BUDGET_SECONDS": "0"},
+    )
+
+    assert result.returncode == 1
+    assert "at or past the 0s budget" in result.output
+
+
+def test_an_oversized_page_fails(run_script, stub_server):
+    """`--max-filesize` bounds each body. Without it a pathological render could fill the
+    runner's disk before extraction even began."""
+
+    base = stub_server(
+        _healthy(**{"/admin/login/": (200, "text/html", "x" * 6_000_000, {}, False)})
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "did not complete" in result.output
 
 
 def test_an_unreachable_host_fails_and_reports_the_real_curl_exit(run_script):

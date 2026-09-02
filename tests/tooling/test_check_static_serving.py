@@ -195,6 +195,59 @@ spec:
         - name: overrides
           mountPath: /app/staticfiles/admin
 """,
+    # A tmpfs over the collected tree is the quietest break of all: the container starts
+    # normally and every asset 404s off an empty in-memory filesystem.
+    "compose tmpfs list": """
+services:
+  api:
+    image: {image}:3.1.1
+    tmpfs:
+      - /app/staticfiles
+""",
+    "compose tmpfs scalar": """
+services:
+  api:
+    image: {image}:3.1.1
+    tmpfs: /app
+""",
+    # `- /app` with no source is an ANONYMOUS VOLUME mounted at /app. Easy to overlook,
+    # and it hides the tree exactly like a bind mount.
+    "compose anonymous volume": """
+services:
+  api:
+    image: {image}:3.1.1
+    volumes:
+      - /app
+""",
+    # Compose normalises the path, so this really does land on /app.
+    "compose long, path needing normalisation": """
+services:
+  api:
+    image: {image}:3.1.1
+    volumes:
+      - type: bind
+        source: .
+        target: /srv/../app
+""",
+    # Compose substitutes the default when the variable is unset, which is the normal state
+    # of a committed example file — so the default is what a reader actually deploys.
+    "compose long, interpolated with a default": """
+services:
+  api:
+    image: {image}:3.1.1
+    volumes:
+      - type: bind
+        source: .
+        target: ${{OCTONOMY_TARGET:-/app}}
+""",
+    # The first colon belongs to the drive letter, not the source/target separator.
+    "compose short, windows drive letter source": """
+services:
+  api:
+    image: {image}:3.1.1
+    volumes:
+      - 'C:\\work:/app'
+""",
     "kubernetes mountPath, flow style with a sibling field": """
 spec:
   containers:
@@ -266,6 +319,25 @@ services:
     image: {image}:3.1.1
     environment:
       DATABASE_URL: postgres://u:p@h:5432/app
+""",
+    # mountPath is scoped through volumeMounts for the same reason target is scoped through
+    # volumes: both are ordinary annotation and label keys elsewhere.
+    "the word mountPath in an annotation": """
+metadata:
+  annotations:
+    mountPath: /app
+  labels:
+    app: octonomy
+spec:
+  containers:
+    - image: {image}:3.1.1
+""",
+    "a tmpfs somewhere harmless": """
+services:
+  api:
+    image: {image}:3.1.1
+    tmpfs:
+      - /run
 """,
     "the word target outside a volumes block": """
 services:
@@ -430,3 +502,34 @@ def test_the_real_deploy_channels_pass(run_script, scripts_dir):
     )
 
     assert result.returncode == 0, result.output
+
+
+def test_a_mount_target_that_cannot_be_resolved_is_reported(run_script, channel_file):
+    """A bare ``${VAR}`` has no knowable value here, so the gate says it could not check
+    rather than reporting success. Fails closed only where the destination is genuinely
+    undeterminable — an interpolation WITH a default resolves and is judged normally."""
+
+    path = channel_file(
+        f"services:\n  api:\n    image: {IMAGE}:3.1.1\n"
+        "    volumes:\n      - type: bind\n        target: ${OCTONOMY_TARGET}\n"
+    )
+
+    result = run_script("check_static_serving.py", path)
+
+    assert result.returncode == 1
+    assert "cannot tell whether it lands on the baked assets" in result.stdout
+
+
+def test_an_upper_case_yaml_extension_is_still_mount_checked(run_script, channel_file):
+    """`Path("compose.YAML").suffix` is `.YAML`. A case-sensitive comparison would
+    marker-check a renamed manifest while silently skipping its mounts."""
+
+    path = channel_file(
+        f"services:\n  api:\n    image: {IMAGE}:3.1.1\n    volumes:\n      - .:/app\n",
+        name="compose.YAML",
+    )
+
+    result = run_script("check_static_serving.py", path)
+
+    assert result.returncode == 1
+    assert "hides the static assets" in result.stdout

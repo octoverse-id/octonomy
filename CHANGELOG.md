@@ -20,11 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   usable production manifest and that those two surfaces render; it does not render every
   admin page, and the test suite cannot cover this class because it runs the plain
   staticfiles backend.
-- `make static-check` (`scripts/check-static-serving.sh`), a drift gate over the deploy
-  channels: every channel file must still declare how static is served, and none may mount
-  anything over `/app` or `/app/staticfiles`, which would hide the assets baked into the
-  image. It reads text and proves nothing about an HTTP response — that is the CI job's
-  job — so it is labelled accordingly in its own header.
+- `make static-check` (`scripts/check_static_serving.py`), a drift gate over the deploy
+  channels: every channel file must still declare how static is served, and no Compose or
+  Kubernetes manifest may mount anything over `/app` or `/app/staticfiles`, which would hide
+  the assets baked into the image. Mounts are found by parsing the YAML rather than matching
+  lines, so `volumes`, `tmpfs`, short and long syntax, flow style and anonymous volumes are
+  all covered. It proves nothing about an HTTP response — that is the CI job's job — so it
+  is labelled accordingly in its own header.
 
 ### Fixed
 - **Static assets are now served by the app itself.** With `DJANGO_DEBUG=false` nothing in
