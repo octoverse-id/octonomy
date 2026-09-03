@@ -100,20 +100,45 @@ def _static_origin():
       ``xn--fa-hia.de``. Naming the wrong host has the same effect as naming none. An
       operator on an IDN domain can write STATIC_URL in punycode and get full enforcement.
 
+    A THIRD case is the dangerous one, because it does not look like a failure: a URL whose
+    origin a browser reads and ``urlsplit`` does not. ``urlsplit`` follows RFC 3986;
+    browsers follow WHATWG, which skips repeated slashes before an authority and treats a
+    backslash as a slash. Measured in Chromium against a page on octonomy.example.com — all
+    of these load from cdn.example.com, while ``urlsplit`` reports no netloc for any:
+
+        ///cdn.example.com/static/x.js          https:///cdn.example.com/static/x.js
+        ////cdn.example.com/static/x.js         https:////cdn.example.com/static/x.js
+        /\cdn.example.com/static/x.js           /<TAB>/cdn.example.com/static/x.js
+
+    Reading "no netloc" as "same-origin" would emit the ordinary ``'self'`` policy for those
+    and block every asset the deployment serves. So same-origin has to be PROVEN rather than
+    inferred from the absence of a host: one leading slash, and a second character that no
+    parser can read as the start of an authority. Anything else with no host is unexpressible
+    and gets no policy — a spelling a browser and Python disagree about is not one to guess
+    at. The fix is the operator's and it is spelling: ``//cdn.example.com/static/`` and
+    ``https://cdn.example.com/static/`` both keep full enforcement.
+
     Userinfo and the path drop out by construction: only host and port are read.
 
     Read per response, not at import: a settings override has to move the policy with it.
     """
 
     static_url = getattr(settings, "STATIC_URL", "") or ""
-    parts = urlsplit(static_url)
+    # Tab, LF and CR are removed by URL parsers before anything else is decided, so they are
+    # removed here too — otherwise "/<TAB>/cdn.example.com/" reads as a local path here and
+    # as an authority in the browser, which is the disagreement this whole branch is about.
+    probe = static_url.translate({0x09: None, 0x0A: None, 0x0D: None})
+    parts = urlsplit(probe)
     try:
         host, port = parts.hostname, parts.port
     except ValueError:
         # urlsplit defers port validation to attribute access.
         return UNEXPRESSIBLE
     if not host:
-        return ""
+        # Same-origin, but only when provably so — see the third case above.
+        if probe.startswith("/") and probe[1:2] not in ("/", "\\"):
+            return ""
+        return UNEXPRESSIBLE
     if _HEADER_STRUCTURAL.search(host) or not host.isascii() or ":" in host:
         # ":" in a hostname means an IPv6 literal — urlsplit strips its brackets.
         return UNEXPRESSIBLE

@@ -38,7 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for, or a non-ASCII hostname, where Python's IDNA-2003 encoder and browsers disagree —
   the pages send **no policy at all** rather than one that would block the deployment's own
   bundles and blank the docs; such a deployment keeps the self-hosted assets and loses only
-  the enforcement, and writing the origin as an ASCII host restores it. It is an egress control rather than an XSS
+  the enforcement, and spelling the origin plainly restores it. The same applies to a
+  `STATIC_URL` whose origin a browser reads and Python's `urlsplit` does not —
+  `///cdn.example.com/static/`, `https:////cdn.example.com/static/`,
+  `/\cdn.example.com/static/` all load from `cdn.example.com` in Chromium — since reading
+  those as same-origin is the one direction that would fail closed. It is an egress control rather than an XSS
   one — it permits `'unsafe-inline'`, because both pages are inline-script by construction
   upstream — and it is the only control that covers what a future bundle upgrade *adds*.
   Verified in a real browser against a `DEBUG=false` Gunicorn: Swagger renders its 29

@@ -343,6 +343,19 @@ def test_the_csp_admits_an_ascii_punycode_static_host():
         # urlsplit ends a netloc only at /?#, so a stray semicolon lands INSIDE it and would
         # otherwise be pasted into the header, adding a directive nobody wrote.
         ("https://cdn.example.com; script-src */static/", "would restructure the header"),
+        # --- Spellings where a browser finds an origin and urlsplit does not. ---
+        #
+        # urlsplit is RFC 3986; browsers are WHATWG, which skips repeated slashes before an
+        # authority and reads a backslash as a slash. Measured in Chromium: every one of
+        # these loads from cdn.example.com, while urlsplit reports no netloc for any. Left
+        # unhandled they would look same-origin here and get the ordinary 'self' policy —
+        # which would then block every asset the deployment actually serves. This is the
+        # one direction that fails CLOSED, so it is the one worth the extra cases.
+        ("///cdn.example.com/static/", "three slashes"),
+        ("////cdn.example.com/static/", "four slashes"),
+        ("https:///cdn.example.com/static/", "scheme, three slashes"),
+        ("https:////cdn.example.com/static/", "scheme, four slashes"),
+        ("/\\cdn.example.com/static/", "backslash reads as a slash"),
     ],
 )
 def test_no_policy_at_all_when_the_static_origin_cannot_be_expressed(static_url, why):
@@ -363,6 +376,22 @@ def test_no_policy_at_all_when_the_static_origin_cannot_be_expressed(static_url,
 
     assert response.status_code == 200, why
     assert "Content-Security-Policy" not in response.headers, why
+
+
+def test_a_tab_inside_the_static_url_is_stripped_the_way_a_parser_strips_it():
+    """The same disagreement, resolved in favour of naming the host rather than dropping it.
+
+    URL parsers remove tab/LF/CR before deciding anything, so ``/<TAB>/cdn.example.com/``
+    is an authority to a browser (measured in Chromium) — and once the same characters are
+    removed here it is one to ``urlsplit`` too. Both agree on the host, so the policy names
+    it and enforcement is kept; only the shapes where they would still disagree fall through
+    to no policy at all.
+    """
+
+    with override_settings(STATIC_URL="/\t/cdn.example.com/static/"):
+        policy = Client().get("/api/docs/swagger/").headers["Content-Security-Policy"]
+
+    assert "img-src 'self' cdn.example.com data:" in policy
 
 
 def test_the_csp_is_scoped_to_the_docs_pages():
