@@ -432,6 +432,14 @@ python manage.py verify_namespace_scope
 - `python manage.py check` passes (flag dependency contract is valid) and, on the deploy host,
   `python manage.py check --deploy` passes (constraint swap applied when writes are enabled).
 - `GET /health/ready` returns healthy.
+- Static delivery works: `GET /api/v2/tags` **with `Accept: text/html`** returns 401/403 rather
+  than 500, and `GET /static/rest_framework/css/bootstrap.min.css` returns 200. The header is not
+  optional — without it DRF renders JSON, which touches no template and no `{% static %}` tag, so
+  a deployment with stale or missing assets answers a healthy-looking 403 while a browser gets a
+  500. A 500 on the page while the asset path still answers 200 is the signature of a stale
+  `collectstatic`. With the admin on, `/admin/login/` should render styled. Do not substitute
+  `manage.py check` for this probe: `octonomy.W002` is gated on `OCTONOMY_ADMIN_ENABLED` and stays
+  silent on a default deploy.
 - `request_completed` and `outbox_dispatch_summary` are visible in the log pipeline and the
   namespace dashboards render.
 - Smoke tests below pass against the deployed environment.

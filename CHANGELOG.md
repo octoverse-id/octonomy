@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **Corrected the operator runbooks for static assets** (#145). The VPS/systemd runbook never
+  mentioned `collectstatic`, on install or on upgrade. The upgrade omission was the one that
+  bit: an upgrade moving Django or django-unfold ships new templates against the old assets,
+  `STATIC_ROOT` is still non-empty so `octonomy.W002` stays quiet, and nothing warns. Both
+  steps are now explicit, with the ordering spelled out — collecting *after* the restart
+  leaves the running workers disagreeing with each other (measured: ten requests to
+  `/admin/login/` on a two-worker container returned five 500s, two 200s, then three more
+  500s).
+- Added an **Enabling the admin console** recipe covering flag → superuser → verify on all
+  three channels, so the journey is one section instead of three spread across two documents.
+  Post-deploy verification now includes static delivery, and checks the *page* as well as the
+  asset — a stale collect shows up as a 500 while the asset path still answers 200.
+- Recorded on the 3.0.0 entry that its "no WhiteNoise" decision has since been reversed, and
+  noted in `deploy/kubernetes/deployment.yaml` that static needs no sidecar, static
+  Deployment, shared volume or Ingress path.
+
+### Changed
+- **Removed the `location /static/` alias from `deploy/systemd/nginx-octonomy.conf`.** Static
+  now falls through to the app on the VPS channel too, which puts all three channels on one
+  caching contract: WhiteNoise stamps `immutable` on content-addressed filenames and a
+  conservative 60s on the unhashed originals, and negotiates the pre-compressed files
+  `collectstatic` writes. The alias was removed rather than retuned because a single `expires`
+  value cannot serve both filename kinds — `7d` under-caches the hashed assets, and
+  `max`/`immutable` pins the unhashed paths in browser caches indefinitely so the next upgrade
+  never reaches those clients. Fronting `/static/` from nginx or a CDN remains supported as an
+  optional override, and such a block still wins over the app; the file explains what taking
+  that on now requires.
+
 ### Added
 - **CI now asserts that a real image actually serves its static assets.** The bug fixed
   above survived a full release because no deploy channel was ever booted and probed end to
@@ -44,8 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instruction could not be carried out on the container channels at all: the assets live
   inside the image with no volume, no export step, a non-root user, and a read-only root
   filesystem. Static responses carry no `Access-Control-Allow-Origin` header
-  (`WHITENOISE_ALLOW_ALL_ORIGINS = False`); the `location /static/` alias in
-  `deploy/systemd/nginx-octonomy.conf` still answers first where it is deployed. REST
+  (`WHITENOISE_ALLOW_ALL_ORIGINS = False`). The `location /static/` alias that
+  `deploy/systemd/nginx-octonomy.conf` shipped at the time answered first on that channel;
+  it has since been removed (see Changed above), so all three channels now reach WhiteNoise
+  by default and an external static route is an operator-added override. REST
   responses are unchanged — WhiteNoise only ever acts on paths under `STATIC_URL`.
 
 ### Added
@@ -285,7 +316,10 @@ admin/session tables may remain unused). As the immediate admin-surface rollback
   `DEBUG=false`, reminding operators it is a trusted development/operator interface rather than a
   public surface.
 - `make collectstatic` target and `STATIC_URL`/`STATIC_ROOT` settings for serving the admin's
-  static assets in production (no WhiteNoise or external service introduced).
+  static assets in production (no WhiteNoise or external service introduced). **Superseded:**
+  that decision was reversed under [Unreleased] above — nothing served `STATIC_ROOT` on any
+  container channel, so every asset 404'd with `DEBUG=false`. The app bundles WhiteNoise and
+  serves them itself now.
 
 ### Changed
 - **Runtime floor raised.** Minimum Python is now **3.12** (was 3.10) and Django is pinned to the

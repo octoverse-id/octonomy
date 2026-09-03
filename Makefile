@@ -39,9 +39,7 @@ static-check:
 	uv run python scripts/check_static_serving.py \
 		Dockerfile \
 		deploy/docker/compose.yaml \
-		deploy/kubernetes/deployment.yaml \
-		deploy/systemd/octonomy.service \
-		deploy/systemd/nginx-octonomy.conf
+		deploy/kubernetes/deployment.yaml
 
 migration-check:
 	uv run python manage.py makemigrations --check --dry-run

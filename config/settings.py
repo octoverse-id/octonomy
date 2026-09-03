@@ -187,10 +187,12 @@ ADMIN_ENABLED = env_bool("OCTONOMY_ADMIN_ENABLED", DEBUG)
 # Octonomy stores no user uploads and defines no MEDIA_ROOT; WhiteNoise must never be
 # pointed at user-supplied files.
 #
-# The systemd/VPS channel is the one exception in practice: nginx-octonomy.conf's
-# `location /static/` alias answers before the request ever reaches Gunicorn, so
-# WhiteNoise's compression, CORS and cache headers do not apply there. That escape hatch
-# is preserved, not removed; reconciling its caching contract belongs to #145.
+# All three channels reach WhiteNoise by default. The systemd/VPS channel used to be an
+# exception — nginx-octonomy.conf shipped a `location /static/` alias that answered before
+# the request reached Gunicorn — but #145 removed it, because one nginx `expires` value
+# cannot serve both hashed and unhashed filenames safely. An operator who re-adds such a
+# block, or fronts STATIC_URL with a CDN, still wins over the app and takes the compression,
+# CORS and cache headers below with it.
 #
 # STATIC_URL is ABSOLUTE and env-overridable, and both halves of that matter under a
 # subpath deployment (the app mounted at /octonomy rather than /).

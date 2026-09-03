@@ -230,6 +230,10 @@ docker compose up -d --wait
 The migrate service re-runs (a no-op when already applied) and the app/dispatcher restart. If you
 build your own image, rebuild from the repo root instead of pulling.
 
+Static assets need nothing on upgrade here: the image collects them at build time, so the new
+image already carries the assets matching its own templates. (The VPS channel is the exception —
+see Option C.)
+
 ---
 
 ## Option B — Kubernetes
@@ -289,7 +293,23 @@ kubectl -n octonomy apply -f deploy/kubernetes/deployment.yaml \
 #  secret.example.yaml, its empty values would blank your real secrets)
 ```
 
-A rolling update keeps the old pods serving until the new ones pass their readiness probe.
+A rolling update keeps the old pods serving until the new ones pass their readiness probe. Static
+assets need nothing on upgrade: each image carries the assets matching its own templates, and the
+filenames are content-addressed, so a client that loads new HTML from a new pod asks for a URL only
+the new image has.
+
+That does mean a mixed-version window: while both generations are in the Service, an asset request
+can land on a pod that does not have that filename, in either direction — new HTML to an old pod,
+or a cached old page to a new one — and it can happen to more than one asset. Browsers do not retry
+a failed stylesheet or script, so a page loaded during the rollout may stay unstyled until it is
+reloaded. Steady state is correct either side of it, and a browser refresh clears it.
+
+There is no rolling-update setting that removes the window: the shipped strategy already uses
+`maxUnavailable: 0`, Kubernetes rejects a strategy with both values at zero, and `maxSurge: 0`
+would not help anyway — with two replicas the controller can still terminate one old pod and
+serve a new one alongside the remaining old one. Eliminating the overlap means accepting
+downtime (`strategy.type: Recreate`), which is rarely the right trade for an optional admin
+console. Roll out when operators are not mid-session, or tell them to reload.
 
 ---
 
@@ -311,7 +331,15 @@ cd /opt/octonomy
 sudo -u octonomy uv sync --frozen --no-install-project --no-dev
 # creates /opt/octonomy/.venv
 
-# 3. Environment file (readable only by the service user)
+# 3. Environment file (readable only by the service user).
+#    KEEP THE VALUES PLAIN. systemd reads this file with its own EnvironmentFile parser,
+#    which passes `$` and backticks through literally — but the one-off management commands
+#    below (and in the sections that follow) source it with `. file`, where the SHELL
+#    expands both. The service and those commands would then see two different strings.
+#    Those commands run under `set -eu`, so a reference to an UNSET variable now fails loudly
+#    rather than truncating. What stays silent is the rest: a backtick or `$(...)` executes,
+#    and `$HOME` — or anything defined earlier in the same file — substitutes. Generate
+#    secrets from an alphanumeric alphabet and none of this can bite you.
 sudo mkdir -p /etc/octonomy
 sudo cp deploy/.env.production.example /etc/octonomy/octonomy.env
 sudo $EDITOR /etc/octonomy/octonomy.env          # secrets, DATABASE_URL, ALLOWED_HOSTS
@@ -324,13 +352,23 @@ sudo cp deploy/systemd/octonomy.service deploy/systemd/octonomy-migrate.service 
         /etc/systemd/system/
 sudo systemctl daemon-reload
 
-# 5. Migrate, then start the API and the dispatcher timer
+# 5. Collect the bundled static assets. This channel is the only one that needs the step:
+#    the container image runs it at build time, but a venv install has to do it itself.
+#    The app serves these itself (WhiteNoise) — there is nothing to hand to nginx.
+#    Skip it and the admin console and the DRF browsable API both fail to render. Do not
+#    rely on a warning to tell you: octonomy.W002 is gated on OCTONOMY_ADMIN_ENABLED, which
+#    is off by default, so a default deploy that skips this step boots silently and only
+#    fails when something requests HTML. The verification step below is what catches it.
+sudo -u octonomy bash -c 'set -eu; set -a; . /etc/octonomy/octonomy.env; set +a; \
+    cd /opt/octonomy && .venv/bin/python manage.py collectstatic --noinput'
+
+# 6. Migrate, then start the API and the dispatcher timer
 sudo systemctl start octonomy-migrate
 systemctl status octonomy-migrate            # confirm it exited 0
 sudo systemctl enable --now octonomy
 sudo systemctl enable --now octonomy-dispatcher.timer
 
-# 6. TLS reverse proxy (the unit binds Gunicorn to 127.0.0.1:8000). Get the certificate
+# 7. TLS reverse proxy (the unit binds Gunicorn to 127.0.0.1:8000). Get the certificate
 #    FIRST — the nginx config references cert files that must already exist, or `nginx -t`
 #    fails. certbot --standalone needs port 80 free, so stop nginx while it runs.
 sudo systemctl stop nginx 2>/dev/null || true
@@ -340,7 +378,7 @@ sudo ln -s /etc/nginx/sites-available/octonomy /etc/nginx/sites-enabled/octonomy
 sudo rm -f /etc/nginx/sites-enabled/default    # drop the distro default vhost if present
 sudo nginx -t && sudo systemctl restart nginx
 
-# 7. Renewals: issuing via --standalone needs port 80 free, but nginx now holds it. Add
+# 8. Renewals: issuing via --standalone needs port 80 free, but nginx now holds it. Add
 #    hooks that stop/start nginx around each automated renewal, then verify with a dry run.
 sudo mkdir -p /etc/letsencrypt/renewal-hooks/pre /etc/letsencrypt/renewal-hooks/post
 printf '#!/bin/sh\nsystemctl stop nginx\n'  | sudo tee /etc/letsencrypt/renewal-hooks/pre/nginx.sh  >/dev/null
@@ -349,10 +387,62 @@ sudo chmod +x /etc/letsencrypt/renewal-hooks/pre/nginx.sh /etc/letsencrypt/renew
 sudo certbot renew --dry-run
 ```
 
-**Upgrades:** `git pull` in `/opt/octonomy` (as the `octonomy` user), re-run
-`uv sync --frozen --no-install-project --no-dev`, `sudo systemctl start octonomy-migrate`, then
-`sudo systemctl restart octonomy`. `ExecReload` (`systemctl reload octonomy`) triggers a zero-downtime
-Gunicorn worker reload when no migration is involved.
+**Upgrades:**
+
+```bash
+cd /opt/octonomy
+sudo -u octonomy git pull
+sudo -u octonomy uv sync --frozen --no-install-project --no-dev
+
+# Re-collect. This is the step that bites if you skip it: an upgrade that moves Django or
+# django-unfold ships new templates against your OLD assets. STATIC_ROOT is still
+# non-empty, so octonomy.W002 stays quiet and nothing warns you — the admin simply renders
+# against stale bytes, or 500s outright when a template references an asset your last
+# collectstatic never wrote.
+sudo -u octonomy bash -c 'set -eu; set -a; . /etc/octonomy/octonomy.env; set +a; \
+    cd /opt/octonomy && .venv/bin/python manage.py collectstatic --noinput'
+
+sudo systemctl start octonomy-migrate
+sudo systemctl restart octonomy
+
+# See whether nginx changed in this release. The active config lives in /etc/nginx —
+# editing the template in this checkout does nothing to it — so a release that changes
+# nginx-octonomy.conf reaches existing hosts only through the NEXT step. Release 3.1.1
+# removed its `location /static/` block, for example: skip it and the host keeps serving
+# static from nginx on the old `expires 7d` contract instead of letting WhiteNoise handle it.
+sudo diff -u /etc/nginx/sites-available/octonomy deploy/systemd/nginx-octonomy.conf || true
+```
+
+**Read that diff before running the next block.** The installed copy holds your `server_name`
+and certificate paths, so it is never byte-identical to the template — the question is whether
+the release changed anything *else*. If it did, reconcile by hand (edit the installed file, or
+copy the template and re-apply your values); the block below replaces the file wholesale and is
+only correct once you have decided that is what you want. If the diff shows nothing but your own
+values, skip it entirely.
+
+```bash
+# Back up, install, validate, and roll back if nginx rejects the result — `nginx -t` reads the
+# whole active config, so it can only test the file once it is in place.
+sudo cp /etc/nginx/sites-available/octonomy /etc/nginx/sites-available/octonomy.bak
+sudo cp deploy/systemd/nginx-octonomy.conf /etc/nginx/sites-available/octonomy
+sudo nginx -t && sudo systemctl reload nginx || {
+  echo "nginx rejected the new config — restoring the previous one"
+  sudo cp /etc/nginx/sites-available/octonomy.bak /etc/nginx/sites-available/octonomy
+  sudo nginx -t && sudo systemctl reload nginx
+}
+```
+
+**Collect before you restart, not after.** WhiteNoise indexes `STATIC_ROOT` once, when the
+process starts, and the manifest is read per worker on first use — so collecting afterwards
+leaves the running workers disagreeing with each other. Measured on a two-worker container
+whose assets were collected after startup, ten requests to `/admin/login/` returned
+`500 500 500 500 500 200 200 500 500 500`: the worker that had already cached the empty
+manifest keeps failing, the one that had not picks up the new one. Gunicorn recycles workers
+every ~1000 requests, so a busy host drifts into working and a quiet one stays broken for
+hours. Restarting is the only deterministic fix — which is why the collect step comes first.
+
+`ExecReload` (`systemctl reload octonomy`) triggers a zero-downtime Gunicorn worker reload when
+no migration is involved; it re-executes the workers, so it picks up newly collected assets too.
 
 ---
 
@@ -365,7 +455,7 @@ writes are enabled — see operations.md). Run them where the app runs:
 
 - **Compose** (from `deploy/docker/`): `docker compose exec app python manage.py check --deploy`
 - **Kubernetes**: `kubectl -n octonomy exec deploy/octonomy -- python manage.py check --deploy`
-- **VPS**: `sudo -u octonomy bash -c 'set -a; . /etc/octonomy/octonomy.env; set +a; cd /opt/octonomy && .venv/bin/python manage.py check --deploy'`
+- **VPS**: `sudo -u octonomy bash -c 'set -eu; set -a; . /etc/octonomy/octonomy.env; set +a; cd /opt/octonomy && .venv/bin/python manage.py check --deploy'`
 
 **Read the output — a zero exit code is not a pass.** `check --deploy` exits 0 when it emits only
 warnings, and warnings are where the interesting findings are. In particular `security.W009` fires
@@ -380,6 +470,24 @@ TLS in front of Octonomy — so use it deliberately, not as the default.
 ```bash
 # 200 = app up and DB reachable; 503 = DB unreachable
 curl -fsS https://api.example.com/health/ready
+
+# Static delivery. The browsable API needs its assets whether or not you enabled the
+# admin, so this applies to every deployment.
+#
+# `Accept: text/html` is the load-bearing part. Without it curl sends `*/*`, DRF picks
+# JSONRenderer (first in DEFAULT_RENDERER_CLASSES), and the response never touches a
+# template or a {% static %} tag — so a deployment whose assets are stale or missing
+# answers a healthy-looking 403 to this probe while a real browser gets a 500. Measured
+# on a container with an emptied STATIC_ROOT: `*/*` returned 403, `text/html` returned 500.
+status=$(curl -sS -o /dev/null -w '%{http_code}' -H 'Accept: text/html' \
+  https://api.example.com/api/v2/tags)
+case "$status" in
+  401 | 403) echo "static OK (browsable API rendered, $status)" ;;
+  *) echo "STATIC BROKEN: browsable API returned $status, expected 401/403"; exit 1 ;;
+esac
+
+# And the assets that page references must actually be served.
+curl -fsS -I -o /dev/null https://api.example.com/static/rest_framework/css/bootstrap.min.css
 
 # Smoke test with a service token (see below), scoped to a tenant:
 curl -fsS "https://api.example.com/api/v2/tags?application_id=commerce" \
@@ -408,10 +516,47 @@ Run it where the code runs — the command needs the production environment:
 - **Kubernetes**: `kubectl -n octonomy exec deploy/octonomy -- python manage.py create_service_token ...`
 - **VPS**: run as the `octonomy` user with the env file sourced *inside* that context — plain `sudo`
   strips the variables, and the `0600` file is only readable as `octonomy`:
-  `sudo -u octonomy bash -c 'set -a; . /etc/octonomy/octonomy.env; set +a; cd /opt/octonomy && .venv/bin/python manage.py create_service_token --name svc-catalog --tenant tenant_demo --application commerce --scope tags:read --scope tags:write'`
+  `sudo -u octonomy bash -c 'set -eu; set -a; . /etc/octonomy/octonomy.env; set +a; cd /opt/octonomy && .venv/bin/python manage.py create_service_token --name svc-catalog --tenant tenant_demo --application commerce --scope tags:read --scope tags:write'`
 
-To use the optional admin console, also create a superuser (`python manage.py createsuperuser`) and
-enable it deliberately — see [operations.md, "Admin console"](operations.md#admin-console).
+---
+
+## Enabling the admin console
+
+The optional operator console is off in production unless you ask for it. Three steps, in
+this order, on any channel — read [operations.md, "Admin console"](operations.md#admin-console)
+first for what you are exposing (it is platform-wide superuser access, not tenant-scoped).
+
+**1. Turn it on.** Set `OCTONOMY_ADMIN_ENABLED=true` in the environment and restart:
+
+- **Compose** — uncomment it in `deploy/docker/.env` (the Deployment reads the whole file via
+  `env_file`), then from `deploy/docker/`: `docker compose up -d --wait`
+- **Kubernetes** — the Deployment takes its environment from the ConfigMap via `envFrom`, and a
+  ConfigMap change does **not** restart pods on its own, so both commands are needed:
+  ```bash
+  kubectl -n octonomy patch configmap octonomy-config --type merge \
+    -p '{"data":{"OCTONOMY_ADMIN_ENABLED":"true"}}'
+  kubectl -n octonomy rollout restart deploy/octonomy
+  ```
+- **VPS** — uncomment it in `/etc/octonomy/octonomy.env`, then `sudo systemctl restart octonomy`
+
+**2. Create a superuser.** Run it where the code runs, the same way as
+`create_service_token` above:
+
+- **Compose**: `docker compose exec app python manage.py createsuperuser`
+- **Kubernetes**: `kubectl -n octonomy exec -it deploy/octonomy -- python manage.py createsuperuser`
+- **VPS**: `sudo -u octonomy bash -c 'set -eu; set -a; . /etc/octonomy/octonomy.env; set +a; cd /opt/octonomy && .venv/bin/python manage.py createsuperuser'`
+
+Octonomy enforces Django's password validators on this path, including the non-interactive
+`--noinput` one that Django itself does not check.
+
+**3. Verify.** Load `https://api.example.com/admin/login/` and confirm it renders **styled**.
+
+An unstyled page or a 500 means the assets are not there. On Compose and Kubernetes that
+points at the image (the Dockerfile collects at build time — a mount over `/app` would hide
+them); on a VPS it means `collectstatic` has not run, or ran after the last restart. With the
+admin enabled — as it is by the time you reach this step — `manage.py check` reports it as
+`octonomy.W002`; with the admin off it does not, which is why the [static delivery
+check](#post-deploy-verification) above probes over HTTP instead of trusting a warning.
 
 ---
 

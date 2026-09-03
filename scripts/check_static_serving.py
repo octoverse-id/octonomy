@@ -18,12 +18,8 @@ service or a comment must not break the gate.
 
   collectstatic       the channel gathers the assets (Dockerfile build step, runbook)
   whitenoise          the app serves them itself
-  location /static/   an external server serves STATIC_ROOT (the systemd/nginx channel)
+  location /static/   an external server serves STATIC_ROOT itself (an optional override)
   <published image>   the channel runs the image, which does both of the first two
-  manage.py check     the channel runs the boot check, so octonomy.W002 tells the operator
-                      when STATIC_ROOT is empty. This is the ONLY automated static signal
-                      the systemd unit has — it collects nothing itself and fronts nothing,
-                      so losing that line leaves a VPS operator with no warning at all.
 
 Markers only count outside comments. That is load-bearing rather than tidiness: the
 Dockerfile explains ``collectstatic`` at length in prose, so matching raw text let someone
@@ -48,6 +44,24 @@ The dev ``docker-compose.yml`` deliberately mounts the source over ``/app`` and 
 scanned: it runs ``runserver`` with ``DEBUG=true``, where static resolves through the
 staticfiles finders rather than STATIC_ROOT.
 
+``deploy/systemd/octonomy.service`` is not scanned. It used to be, matching its
+``manage.py check`` line — but that is not a static signal: ``octonomy.W002`` is gated on
+``OCTONOMY_ADMIN_ENABLED``, which is off by default, so on a default deploy that check
+reports "no issues" with nothing collected at all. Counting it here meant deleting the VPS
+runbook's ``collectstatic`` steps left this gate green. A systemd unit genuinely declares
+nothing about static; what carries that channel is the RUNBOOK telling the operator to
+collect, on install and on upgrade, so that is asserted in
+``tests/tooling/test_check_static_serving.py`` against ``docs/deployment.md`` instead.
+
+``deploy/systemd/nginx-octonomy.conf`` is not scanned either, and that is a deliberate limit
+on this gate rather than an oversight. Since #145 removed its ``location /static/`` alias,
+nginx has no static declaration to look for — what carries ``/static/`` to the app is its
+catch-all proxy block, and "is there an operative catch-all that proxies to the app, and has
+a static alias grown back in any of nginx's location forms?" is a question about block
+structure, not token presence. A marker regex would pass an ``/api/``-only proxy and would
+miss a ``location ^~ /static/``. Those invariants are asserted properly in
+``tests/tooling/test_check_static_serving.py``, which runs in the same CI.
+
 Usage: check_static_serving.py FILE [FILE...]
 Exit codes: 0 ok | 1 violations found | 2 usage
 """
@@ -68,7 +82,6 @@ MARKERS = (
     ("whitenoise", re.compile(r"whitenoise", re.IGNORECASE)),
     ("location-static", re.compile(r"location\s+/static/")),
     ("published-image", re.compile(re.escape(IMAGE))),
-    ("boot-check", re.compile(r"manage\.py check")),
 )
 
 # A '#' opens a comment only when it starts the line or whitespace precedes it — YAML's own

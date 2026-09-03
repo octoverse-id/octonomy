@@ -8,6 +8,8 @@ guard that can only pass is worse than no guard, because it stops anyone checkin
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 IMAGE = "ghcr.io/octoverse-id/octonomy"
@@ -42,7 +44,6 @@ def channel_file(tmp_path):
             "    location /static/ {\n        alias /opt/octonomy/staticfiles/;\n    }\n",
         ),
         ("published-image", COMPOSE_WITH_IMAGE),
-        ("boot-check", "ExecStartPre=/opt/octonomy/.venv/bin/python manage.py check\n"),
     ],
 )
 def test_each_marker_is_recognised(run_script, channel_file, label, body):
@@ -586,11 +587,33 @@ def test_usage_error_without_arguments(run_script):
 # --- The real tree ----------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("label", "directive", "accepted"),
+    [
+        ("bare upstream", "proxy_pass http://octonomy", True),
+        ("trailing slash preserves the path", "proxy_pass http://octonomy/", True),
+        ("explicit port", "proxy_pass http://octonomy:8000", True),
+        ("port and slash", "proxy_pass http://octonomy:8000/", True),
+        ("https", "proxy_pass https://octonomy", True),
+        # A URI REPLACES the part `location /` matched, so /static/app.css arrives upstream
+        # as /api/static/app.css and never reaches WhiteNoise's prefix.
+        ("a base URI rewrites the path", "proxy_pass http://octonomy/api/", False),
+        ("a base URI without a trailing slash", "proxy_pass http://octonomy/api", False),
+        ("a different host", "proxy_pass http://octonomy.example", False),
+        ("a different upstream", "proxy_pass http://octonomy-old", False),
+    ],
+)
+def test_only_a_path_preserving_proxy_pass_counts(label, directive, accepted):
+    assert bool(NGINX_PROXY_TO_APP.match(directive)) is accepted, label
+
+
 def test_the_real_deploy_channels_pass(run_script, scripts_dir):
     """Runs the gate over the files the Makefile actually passes it.
 
     Without this the suite could stay green while the shipped tree drifted — the tests
-    above only ever exercise fixtures.
+      above only ever exercise fixtures. Keep this list in step with the Makefile's
+    `static-check` target. The two systemd files are deliberately absent from both — see the
+    gate's docstring, and the nginx and runbook tests below that cover that channel properly.
     """
 
     repo = scripts_dir.parent
@@ -599,8 +622,6 @@ def test_the_real_deploy_channels_pass(run_script, scripts_dir):
         str(repo / "Dockerfile"),
         str(repo / "deploy/docker/compose.yaml"),
         str(repo / "deploy/kubernetes/deployment.yaml"),
-        str(repo / "deploy/systemd/octonomy.service"),
-        str(repo / "deploy/systemd/nginx-octonomy.conf"),
     )
 
     assert result.returncode == 0, result.output
@@ -641,3 +662,406 @@ def test_a_mount_target_that_cannot_be_resolved_is_reported(run_script, channel_
 
     assert result.returncode == 1, f"{label}: {result.output}"
     assert "cannot tell whether it lands on the baked assets" in result.stdout
+
+
+# --- The nginx template's static invariants --------------------------------------------
+#
+# Asserted here rather than through `make static-check`'s marker gate, because both are
+# questions about operative directives and block structure, not token presence. A first cut
+# of these tests still had bypasses — a brace counter is not by itself an improvement over a
+# grep — so both predicates below are written against nginx's actual grammar and each named
+# bypass is mutation-tested.
+
+NGINX_UPSTREAM = "octonomy"
+
+# Every nginx spelling that claims the static prefix. Searched anywhere in the line, not
+# anchored to its start: `server { listen 443 ssl; location /static/ { ... } }` is valid, and
+# anchoring missed it while the catch-all predicate below deliberately supports one-liners.
+# The trailing boundary is what keeps `location /staticfiles-report` out.
+_STATIC_LOCATION = r"""
+    location\s+
+    (?:(?:=|\^~|~\*?)\s*)?
+    ["']?
+    \^?/static(?:/|["'\s{]|$)
+"""
+NGINX_STATIC_LOCATION = re.compile(_STATIC_LOCATION, re.VERBOSE)
+
+# `~*` is nginx's CASE-INSENSITIVE regex location, so `location ~* ^/STATIC/` claims the same
+# prefix. Only that modifier gets case-insensitive treatment: a bare `location /Static/` is a
+# genuinely different prefix in nginx, and flagging it would be a false alarm.
+NGINX_STATIC_LOCATION_CI = re.compile(
+    r"""location\s+~\*\s*["']?\^?/static(?:/|["'\s{]|$)""", re.VERBOSE | re.IGNORECASE
+)
+
+# The upstream must end the directive — optional port, and at most the bare trailing slash
+# that preserves the request path. Two things this rules out, both silently fatal to static:
+#
+#   proxy_pass http://octonomy.example    a bare `\b` treats the dot as a boundary, so a
+#   proxy_pass http://octonomy-old        completely different host reads as the upstream
+#   proxy_pass http://octonomy/api/       a URI REPLACES the part `location /` matched, so
+#                                         /static/app.css goes upstream as /api/static/app.css
+#                                         and never reaches WhiteNoise's /static/ prefix
+NGINX_PROXY_TO_APP = re.compile(rf"^proxy_pass\s+https?://{NGINX_UPSTREAM}(?::\d+)?/?$")
+
+
+def claims_static(line):
+    """True when ``line`` contains a location that would answer /static/ requests."""
+
+    return bool(NGINX_STATIC_LOCATION.search(line) or NGINX_STATIC_LOCATION_CI.search(line))
+
+
+def operative_lines(text):
+    """``text`` with comments stripped — trailing ones too, not just whole lines.
+
+    Shared by the nginx and runbook readers below, because both were bitten by the same
+    thing: a directive or a command left only in prose satisfying a search for it. Trailing
+    comments matter as much as whole-line ones — `try_files ...; # proxy_pass http://octonomy;`
+    and `sudo ...  # collectstatic` both read as operative to a naive filter.
+    """
+
+    return [re.sub(r"#.*$", "", line) for line in text.splitlines()]
+
+
+def _nginx_conf(scripts_dir):
+    """The shipped template's operative lines."""
+
+    path = scripts_dir.parent / "deploy/systemd/nginx-octonomy.conf"
+    return operative_lines(path.read_text())
+
+
+def _catch_all_proxies_to_app(lines):
+    """True when a `location / { ... }` block proxies to the app at its OWN depth.
+
+    Tokenised on braces rather than read line by line, because nginx does not care where
+    newlines fall. Both of these are one physical line, and a line-oriented reader gets one
+    of them wrong whichever way it is written:
+
+        location / { proxy_pass http://octonomy; }                      -> must PASS
+        location / { if ($uri ~ ^/api/) { proxy_pass http://octonomy; } } -> must FAIL
+
+    The second is the nested-conditional bypass again: /static/ has no proxy handler, so
+    depth has to be tracked through braces that appear mid-line, not just at line ends.
+
+    Known limit: this reads one file. An operative `include` pulling a location in from a
+    snippet would be invisible to it. The shipped template has none — its only `include`
+    mentions are in comments — and if one is ever added, this predicate needs to follow it.
+    """
+
+    depth = 0
+    catch_all_depth = None
+    header = ""
+
+    for token in re.split(r"([{}])", "\n".join(lines)):
+        if token == "{":
+            depth += 1
+            # A block header ending in `location /` opens the catch-all. `location = /` does
+            # not: an exact match answers the root path alone, never /static/anything.
+            if catch_all_depth is None and re.search(r"location\s+/\s*$", header.strip()):
+                catch_all_depth = depth
+            header = ""
+        elif token == "}":
+            if catch_all_depth is not None and depth == catch_all_depth:
+                catch_all_depth = None
+            depth -= 1
+            header = ""
+        else:
+            if catch_all_depth is not None and depth == catch_all_depth:
+                for directive in token.split(";"):
+                    if NGINX_PROXY_TO_APP.match(directive.strip()):
+                        return True
+            header = token
+
+    return False
+
+
+def test_the_shipped_nginx_config_has_no_static_location(scripts_dir):
+    """#145 removed the alias deliberately, so it must not quietly grow back — in any of
+    nginx's location spellings, not just the bare one.
+
+    A single `expires` value cannot serve both filename kinds: `7d` under-caches the hashed
+    assets that could be cached forever, and `max`/`immutable` pins the UNHASHED paths in
+    every browser cache indefinitely, so the next upgrade never reaches those clients. If a
+    future change does need the alias back, it has to take over the caching contract
+    deliberately — and update this test to say so.
+    """
+
+    offenders = [line for line in _nginx_conf(scripts_dir) if claims_static(line)]
+
+    assert not offenders, (
+        f"nginx has an operative location claiming /static/ again ({offenders}); it now owns "
+        "the caching contract for those responses"
+    )
+
+
+def test_the_shipped_nginx_config_proxies_everything_to_the_app(scripts_dir):
+    """With no static location, the catch-all is what carries /static/ to WhiteNoise.
+
+    Narrowing it to `location /api/`, or burying the proxy_pass inside a conditional, would
+    take static off this channel while every token-level check stayed green.
+    """
+
+    assert _catch_all_proxies_to_app(_nginx_conf(scripts_dir)), (
+        f"no `location / {{ proxy_pass http://{NGINX_UPSTREAM}; }}` at the block's own depth: "
+        "/static/ no longer reaches the app, so this channel has lost static serving"
+    )
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "    location /static/ {",
+        "    location /static {",
+        '    location "/static/" {',
+        "    location '/static/' {",
+        "    location ^~ /static/ {",
+        "    location ~* ^/static/ {",
+        "    location = /static/x {",
+        "    location ~ /static/.*\\.css$ {",
+        # One physical line — an anchored search missed it while the catch-all predicate
+        # deliberately supports one-liners.
+        "server { listen 443 ssl; location /static/ { alias /opt/octonomy/staticfiles/; } }",
+        # `~*` is nginx's case-INSENSITIVE regex location, so these claim the same prefix.
+        "    location ~* ^/STATIC/ {",
+        "    location ~* ^/Static/ {",
+    ],
+)
+def test_every_nginx_static_location_form_is_recognised(form):
+    assert claims_static(form), form
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        "    location / {",
+        "    location /api/ {",
+        "    location /staticfiles-report {",
+        "    location = /health/live {",
+        # A bare prefix is case-SENSITIVE in nginx, so this is a genuinely different
+        # location and flagging it would be a false alarm.
+        "    location /Static/ {",
+        # No `location` keyword: mentioning the path is not claiming it.
+        "        proxy_pass http://backend/static/;",
+    ],
+)
+def test_unrelated_nginx_locations_are_not_flagged(form):
+    assert not claims_static(form), form
+
+
+@pytest.mark.parametrize(
+    ("label", "conf"),
+    [
+        # The proxy_pass is inside the catch-all but nested in a conditional, so /static/
+        # is not proxied.
+        (
+            "nested in an /api/ conditional",
+            "    location / {\n        if ($uri ~ ^/api/) {\n"
+            "            proxy_pass http://octonomy;\n        }\n    }\n",
+        ),
+        # Present only as a comment.
+        ("commented out", "    location / {\n        # proxy_pass http://octonomy;\n    }\n"),
+        # Points somewhere other than the app.
+        ("wrong upstream", "    location / {\n        proxy_pass http://elsewhere;\n    }\n"),
+        # No catch-all at all.
+        (
+            "api-only catch-all",
+            "    location /api/ {\n        proxy_pass http://octonomy;\n    }\n",
+        ),
+        (
+            "health-only",
+            "    location = /health/live {\n        proxy_pass http://octonomy;\n    }\n",
+        ),
+        # The nested-conditional bypass again, on ONE line — braces have to be tracked
+        # mid-line, not only at line ends.
+        (
+            "one-line nested conditional",
+            "location / { if ($uri ~ ^/api/) { proxy_pass http://octonomy; } }\n",
+        ),
+        # `\b` treats the dot as a word boundary, so a different host read as the upstream.
+        (
+            "a different host sharing the name's prefix",
+            "location / { proxy_pass http://octonomy.example; }\n",
+        ),
+        (
+            "a different upstream sharing the name's prefix",
+            "location / { proxy_pass http://octonomy-old; }\n",
+        ),
+    ],
+)
+def test_a_catch_all_that_does_not_proxy_static_is_rejected(label, conf):
+    lines = [re.sub(r"#.*$", "", line) for line in conf.splitlines()]
+
+    assert not _catch_all_proxies_to_app(lines), label
+
+
+@pytest.mark.parametrize(
+    ("label", "conf"),
+    [
+        ("multi-line", "    location / {\n        proxy_pass http://octonomy;\n    }\n"),
+        # Valid nginx, and a first cut of this predicate reported it as a failure.
+        ("single line", "    location / { proxy_pass http://octonomy; }\n"),
+        ("https upstream", "    location / {\n        proxy_pass https://octonomy;\n    }\n"),
+        ("upstream with a port", "    location / { proxy_pass http://octonomy:8000; }\n"),
+        ("upstream with a trailing slash", "    location / { proxy_pass http://octonomy/; }\n"),
+        (
+            "nested inside a one-line server block",
+            "server { listen 443; location / { proxy_pass http://octonomy; } }\n",
+        ),
+    ],
+)
+def test_valid_catch_all_forms_are_accepted(label, conf):
+    lines = [re.sub(r"#.*$", "", line) for line in conf.splitlines()]
+
+    assert _catch_all_proxies_to_app(lines), label
+
+
+@pytest.mark.parametrize(
+    ("label", "text", "expected"),
+    [
+        ("whole-line comment", "# proxy_pass http://octonomy;", ""),
+        ("trailing comment", "location / { # proxy_pass http://octonomy;", "location / { "),
+        ("indented whole-line", "    #  collectstatic", "    "),
+        ("no comment", "proxy_pass http://octonomy;", "proxy_pass http://octonomy;"),
+    ],
+)
+def test_operative_lines_strips_comments_in_both_positions(label, text, expected):
+    assert operative_lines(text) == [expected], label
+
+
+def test_a_catch_all_whose_proxy_pass_is_only_an_inline_comment_is_rejected():
+    """The shape a whole-line-comment filter would let through."""
+
+    conf = "    location / {\n        try_files $uri @nope;  # proxy_pass http://octonomy;\n    }\n"
+
+    assert not _catch_all_proxies_to_app(operative_lines(conf))
+
+
+def test_a_static_location_in_a_trailing_comment_is_not_flagged():
+    conf = "    listen 443 ssl;  # location /static/ { alias ...; } was here once\n"
+
+    assert not any(claims_static(line) for line in operative_lines(conf))
+
+
+def test_a_real_catch_all_is_accepted():
+    conf = (
+        "    location / {\n        proxy_pass http://octonomy;\n"
+        "        proxy_read_timeout 30s;\n    }\n"
+    )
+
+    assert _catch_all_proxies_to_app([re.sub(r"#.*$", "", line) for line in conf.splitlines()])
+
+
+# --- The VPS runbook is the systemd channel's static declaration ------------------------
+#
+# `make static-check` no longer scans octonomy.service: a systemd unit says nothing about
+# static, and the `manage.py check` line it used to match is not a static signal either
+# (octonomy.W002 is gated on OCTONOMY_ADMIN_ENABLED, which defaults off — so on a default
+# deploy that check reports "no issues" with no assets collected at all). What actually
+# carries this channel is the runbook telling the operator to collect, on install AND on
+# upgrade. Deleting either step was the #145 defect; these assert it cannot come back.
+
+DEPLOYMENT_DOC = "docs/deployment.md"
+
+
+def _option_c(scripts_dir):
+    """Option C's install and upgrade text, comment lines removed.
+
+    Comments are dropped for the same reason the drift gate drops them: the upgrade block
+    explains `collectstatic` in prose, so a substring search would be satisfied by the
+    explanation after someone deleted the command it describes.
+    """
+
+    text = (scripts_dir.parent / DEPLOYMENT_DOC).read_text()
+    section = text[text.index("## Option C") :]
+    section = section[: section.index("\n## ")]
+    install, _, upgrade = section.partition("**Upgrades:**")
+
+    return "\n".join(operative_lines(install)), "\n".join(operative_lines(upgrade))
+
+
+# The commands themselves, not the words. `echo collectstatic` satisfied a substring search;
+# so did leaving the `diff` and `nginx -t` lines after deleting the only command that installs
+# the template. And ORDER is load-bearing twice over: collect before the app restarts, and
+# validate after the config is in place.
+COLLECTSTATIC = re.compile(r"manage\.py\s+collectstatic\b")
+APP_RESTART = re.compile(r"systemctl\s+(?:restart|enable --now)\s+octonomy\b")
+INSTALL_NGINX_TEMPLATE = re.compile(
+    r"cp\s+\S*deploy/systemd/nginx-octonomy\.conf\s+\S*/etc/nginx/\S+"
+)
+NGINX_VALIDATE = re.compile(r"nginx\s+-t\b")
+NGINX_RELOAD = re.compile(r"systemctl\s+reload\s+nginx\b")
+
+
+def _first_index(pattern, text):
+    """Where ``pattern`` first appears, or None."""
+
+    match = pattern.search(text)
+    return match.start() if match else None
+
+
+def test_the_vps_install_collects_static_before_starting_the_app(scripts_dir):
+    """A fresh VPS install that starts the service without collecting serves an admin
+    console and a browsable API that cannot render."""
+
+    install, _ = _option_c(scripts_dir)
+
+    collect = _first_index(COLLECTSTATIC, install)
+    start = _first_index(APP_RESTART, install)
+
+    assert collect is not None, "Option C's install steps no longer run manage.py collectstatic"
+    assert start is not None, "Option C's install steps no longer start the service"
+    assert collect < start, (
+        "Option C collects static AFTER starting the app. WhiteNoise indexes STATIC_ROOT at "
+        "process start, so the running workers never see those files"
+    )
+
+
+def test_the_vps_upgrade_collects_static_before_restarting_the_app(scripts_dir):
+    """The omission that actually bit, plus the ordering that makes fixing it work.
+
+    STATIC_ROOT stays non-empty across an upgrade, so octonomy.W002 says nothing and the
+    operator serves the previous release's assets. Collecting after the restart is barely
+    better: the workers disagree until they recycle.
+    """
+
+    _, upgrade = _option_c(scripts_dir)
+
+    assert upgrade, f"Option C has no **Upgrades:** block in {DEPLOYMENT_DOC}"
+    collect = _first_index(COLLECTSTATIC, upgrade)
+    restart = _first_index(APP_RESTART, upgrade)
+
+    assert collect is not None, "Option C's upgrade steps no longer run manage.py collectstatic"
+    assert restart is not None, "Option C's upgrade steps no longer restart the app"
+    assert collect < restart, "Option C collects static AFTER the restart, which does nothing"
+
+
+def test_the_vps_upgrade_installs_and_validates_the_nginx_template(scripts_dir):
+    """Changing the template in the checkout does nothing to the copy under /etc/nginx.
+
+    Asserts the command that actually installs it — a `diff` and an `nginx -t` left behind
+    after deleting the `cp` kept an earlier version of this test green — and that validation
+    comes after the install, since `nginx -t` reads the active config.
+    """
+
+    _, upgrade = _option_c(scripts_dir)
+
+    install = _first_index(INSTALL_NGINX_TEMPLATE, upgrade)
+    validate = _first_index(NGINX_VALIDATE, upgrade)
+    reload_ = _first_index(NGINX_RELOAD, upgrade)
+
+    assert install is not None, (
+        "Option C's upgrade no longer copies nginx-octonomy.conf into /etc/nginx; an "
+        "existing host keeps whatever /static/ handling it was installed with"
+    )
+    assert validate is not None, "Option C's upgrade no longer runs nginx -t"
+    assert reload_ is not None, "Option C's upgrade no longer reloads nginx"
+    assert install < validate, "Option C validates nginx before installing the new config"
+    # The FIRST validation has to sit on the success path, ahead of the first reload. An
+    # earlier version of this test was satisfied by the `nginx -t` inside the rollback
+    # branch — which only runs after a reload has already failed, so deleting the primary
+    # check left an ordinary successful upgrade with no pre-reload validation at all.
+    # `systemctl reload` can also return success while nginx rejects the config, leaving an
+    # invalid file on disk to surface at the next restart.
+    assert validate < reload_, (
+        "Option C reloads nginx before validating it; the only remaining nginx -t is on the "
+        "rollback path, which a successful upgrade never reaches"
+    )

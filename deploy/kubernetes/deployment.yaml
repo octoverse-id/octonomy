@@ -94,6 +94,14 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          # Static assets need NO machinery here. They are baked into the image by the
+          # Dockerfile's collectstatic step and served by the app itself through WhiteNoise
+          # (#142/#143), so there is nothing to add: no static sidecar, no separate nginx
+          # Deployment, no shared volume, and no /static path on the Ingress.
+          #
+          # Do not mount anything over /app or /app/staticfiles either — that hides the
+          # baked tree and every /static/* request starts 404ing with nothing in this file
+          # looking wrong. `make static-check` fails the build if it happens.
           volumeMounts:
             - name: tmp
               mountPath: /tmp
