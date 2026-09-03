@@ -47,6 +47,18 @@ ALLOWED_HOSTS = [
     host.strip() for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 ]
 
+# This guard tests two things and nothing more: the value is non-empty, and it is not the
+# local-dev literal. It does NOT judge strength, so `thisisthedjangomostsecretkey` boots,
+# and so does a whitespace-only " " (which is truthy). That is deliberate as of #147/#148:
+# the documentation was narrowed to describe this behaviour rather than the guard widened,
+# because a length rule would break the short secret fixtures across CI and the test
+# suite (inventory in TODOS.md CFG-2), and could refuse to start a
+# deployment already running a short but random secret. `security.W009` reports some weak
+# SECRET_KEY shapes, but it is a warning and runs only under `manage.py check --deploy`,
+# which the container entrypoint never invokes.
+# gstack-shortcut(dec-584a8f2c): no secret-strength check — upgrade when this guard is next
+#   edited for any reason, or at the 3.2.0 release. See TODOS.md CFG-2.
+# gstack-shortcut(dec-f77c11e8): whitespace-only values are accepted — same fix, same PR.
 if not DEBUG and (not SECRET_KEY or SECRET_KEY == "local-dev-secret"):
     raise ImproperlyConfigured(
         "DJANGO_SECRET_KEY must be set to a non-default value when DEBUG is False."
@@ -481,6 +493,13 @@ SPECTACULAR_SETTINGS = {
 }
 
 SERVICE_TOKEN_PEPPER = os.getenv("SERVICE_TOKEN_PEPPER", "")
+# Same two tests as the DJANGO_SECRET_KEY guard above, and the same deliberate limits —
+# see the note there. The pepper has even less coverage: `security.W009` applies to
+# SECRET_KEY alone, so beyond this empty/default test nothing inspects SERVICE_TOKEN_PEPPER
+# anywhere, at boot or under `check --deploy`.
+# gstack-shortcut(dec-584a8f2c): no secret-strength check — upgrade when this guard is next
+#   edited for any reason, or at the 3.2.0 release. See TODOS.md CFG-2.
+# gstack-shortcut(dec-f77c11e8): whitespace-only values are accepted — same fix, same PR.
 if not DEBUG and (
     not SERVICE_TOKEN_PEPPER or SERVICE_TOKEN_PEPPER == "local-dev-service-token-pepper"
 ):

@@ -256,6 +256,134 @@ The v1/v2 contract is a separate setting entirely (`REST_FRAMEWORK["ALLOWED_VERS
   report of the same confusion. Do it before the deployment guide drives wide adoption of the
   current name.
 
+### CFG-2: Secret boot guard does not judge strength — DEFERRED (raised 2026-09-01, issue #147 CLOSED; residual tracked here)
+`config/settings.py` guards `DJANGO_SECRET_KEY` and `SERVICE_TOKEN_PEPPER` at import time, and those
+two `raise ImproperlyConfigured` statements are the only **boot-time** enforcement these two values
+get. Each tests exactly two things: the value is non-empty, and it is not the local-dev literal.
+Nothing else. So `DJANGO_SECRET_KEY=thisisthedjangomostsecretkey` boots with `DJANGO_DEBUG=false`,
+and so does a whitespace-only `" "` (a non-empty string, so it passes `not SECRET_KEY`). Sub-issue
+#148 shipped the documentation half (PR #152): the docs now describe the guard that exists instead
+of promising a strength check that never existed. This entry is the half that was not shipped.
+
+- **What:** One `secret_is_weak()` predicate consumed by **both** boot guards in `config/settings.py`
+  **and** `_check_secret_key` / `_check_service_token_pepper` in `octonomy/core/checks.py` — testing
+  length, distinct characters, Django's `django-insecure-` prefix, and `.strip()`-blank — with an
+  `OCTONOMY_ALLOW_WEAK_SECRETS` escape hatch. That hatch must bypass **only** the new strength
+  heuristics, for an operator whose value is genuinely random but short. It must never bypass the
+  two tests that exist today: an empty value and the local-dev literal stay unbootable regardless.
+  Decide explicitly whether it also suppresses `octonomy.E001`/`E002` under `check --deploy` — see
+  Context; the answer determines whether those two branches are reachable at all.
+- **Why:** The gap was observed in practice, not hypothesised: a working `deploy/docker/.env` in this
+  project carried `DJANGO_SECRET_KEY=thisisthedjangomostsecretkey` and started normally. A guessable
+  `SECRET_KEY` undermines everything Django signs with it. Scope it honestly before prioritising:
+  this project exposes no password-reset or signed-cookie surface, `SESSION_ENGINE` is the database
+  backend so a forged cookie would still need a matching `django_session` row, and the REST API uses
+  no sessions at all. The concretely reachable impact today is admin session data, which is signed
+  with `SECRET_KEY` — and the admin is off by default in production. That narrowness is part of why
+  deferring was defensible; it is not an argument that the guard should stay as it is. Note also
+  that a weak `SERVICE_TOKEN_PEPPER` is the *lesser* problem despite
+  keying every token hash, because `generate_service_token` mints `secrets.token_urlsafe(32)` — a
+  known pepper does not make 256-bit tokens recoverable, and it needs a database leak first.
+- **Pros:** One home for a rule that currently has four, so the next patch cannot drift; catches the
+  padding case (`"a" * 60`) that a bare length rule misses; forces a decision on `octonomy.E001` /
+  `E002`, which are dead today (see Context).
+- **Cons:** Every short secret fixture in the repo must be lengthened first, across four files. Via
+  the boot guards: `_PROD_BASE` in `tests/admin/test_admin_settings.py` (18 chars, and it feeds
+  *every* `DEBUG=false` subprocess in that file), the two docker-smoke blocks in
+  `.github/workflows/ci.yml`, and the two published-image smoke blocks in
+  `.github/workflows/publish-image.yml` — that last one is the release-tag gate, so a break there is
+  discovered at tag time. Via `production_settings_check`, if the predicate is shared as proposed:
+  the two `override_settings` fixtures in `tests/core/test_checks.py` that pass `release-secret` /
+  `release-pepper` (14 chars each). The job-level `SERVICE_TOKEN_PEPPER: ci-pepper` in `ci.yml` is
+  *not* affected — those jobs set `DJANGO_DEBUG: "true"`, so neither path runs. Count the call sites
+  from the source when the work starts rather than trusting a number here. Without the escape hatch
+  this could also refuse to start a deployment already running a short-but-random secret.
+- **Context:** Absorbs three residuals that are the same two lines and belong in the same PR: the
+  `.strip()` whitespace check; extracting `_check_secret_key` / `_check_service_token_pepper`, the
+  helpers behind `production_settings_check`. That wrapper is the registered check and carries
+  `deploy=True`, so none of it runs at boot; it still does useful work under `manage.py check
+  --deploy` through `_check_allowed_hosts` and `_check_database_engine`. But its two *secret*
+  branches — `octonomy.E001` and `E002` — are **unreachable in any real configuration**, because the
+  settings import raises on the same conditions first. Verified both ways: with `DEBUG=false` and the
+  local-dev default, `check --deploy` never gets to run; with `DEBUG=true` the wrapper returns `[]`
+  on its first line. `tests/core/test_checks.py` reaches them only via `override_settings`: a test
+  proving dead branches work.
+
+  **Sharing the predicate does not by itself revive them, and the plan must say how it resolves that**
+  (raised in review of PR #154). The reachable case is narrow. Under `DEBUG=false`, `E001` can only be
+  emitted when *all* of these hold: the value passes the empty and local-dev-literal tests (the hatch
+  never bypasses those), it fails **only** the new strength heuristics,
+  `OCTONOMY_ALLOW_WEAK_SECRETS` is set so boot proceeds, the *other* secret also passes its own boot
+  guard — otherwise that one raises first and the check is never reached — and the deploy check
+  ignores the hatch. Three ways to resolve it, pick one deliberately:
+    1. **The hatch unblocks boot but does not silence the check** (preferred). `E001`/`E002` then mean
+       something precise — "you opted out of the block, and this is still weak" — and they are the
+       only place that survives to say it, since `security.W009` is a warning that covers `SECRET_KEY`
+       alone. Smallest change; keeps a deploy-pipeline signal for an operator who used the hatch.
+    2. **Delete `E001`/`E002`** and their `override_settings` tests as genuine duplication, leaving
+       the boot guard as the single enforcement point.
+    3. **Move enforcement out of settings-import into a non-deploy-tagged system check**, the
+       `namespace_flag_dependencies` pattern whose docstring already states the rule. Cleanest on
+       paper, but it weakens the guarantee. The raise currently fires on *any* import of settings,
+       including the serving path. A system check does not: Django runs checks before most management
+       commands (`requires_system_checks` defaults to `"__all__"`), but `gunicorn config.wsgi` imports
+       the application without running any. Both shipped channels happen to be covered —
+       `docker-entrypoint.sh` runs `manage.py check` before `exec`, and the systemd unit runs it in
+       `ExecStartPre` — so the exposure is anyone serving without those: a bypassed entrypoint, or
+       gunicorn invoked directly. Do not take this option without closing that hole.
+
+  Also absorbed: a `DJANGO_SECRET_KEY` rotation runbook,
+  which is missing while the pepper's is documented. Rotation is cheaper here than operators expect:
+  it invalidates admin sessions, because the database session backend signs session data with
+  `SECRET_KEY`, but it does **not** touch CSRF tokens (`CSRF_USE_SESSIONS` is false and Django's CSRF
+  secret is independent of `SECRET_KEY`) and does not touch any service token, which are peppered
+  HMACs. The REST API uses no sessions at all. Reuse
+  Django's own constants from `django.core.checks.security.base` (`SECRET_KEY_MIN_LENGTH`,
+  `SECRET_KEY_MIN_UNIQUE_CHARACTERS`, `SECRET_KEY_INSECURE_PREFIX`) behind a parity test, so a Django
+  upgrade that moves the floor is caught rather than silently diverging; follow the
+  `_NAMESPACE_FLAG_RULES` table shape in `octonomy/core/checks.py` and the hermetic
+  `_import_settings` harness. Note that `security.W009` already reports *some* weak `SECRET_KEY`
+  shapes under `manage.py check --deploy`, but it is a warning, is deploy-tagged, and covers
+  `SECRET_KEY` alone.
+- **Effort:** M (human ~1 day). **Priority:** P2. **Depends on:** nothing.
+- **Trigger:** `release-trigger: 3.2.0` — checked by the "Deferred work triggered by this release"
+  step in `docs/release.md`. That token is on one line on purpose: the step greps for it, and a
+  trigger phrased only in prose stops being greppable the moment the sentence rewraps. It also fires
+  on the next edit to either boot guard in `config/settings.py` for any reason, whichever comes
+  first — the `gstack-shortcut` markers sit on those exact lines, and a third patch to this guard
+  inside one minor version means extract the predicate rather than add another clause. Deliberately
+  **not** "another incident": one already happened, and it is what #147 reports. A trigger already
+  satisfied on the day it is written is how the DEP-2 entry above rotted.
+
+### CFG-3: Webhook signing secret accepts the shipped `CHANGE_ME` placeholder — DEFERRED (raised 2026-09-01, found while reviewing #147)
+`OCTONOMY_WEBHOOK_SIGNING_SECRET` has no boot guard **and** no system check — unlike
+`DJANGO_SECRET_KEY` and `SERVICE_TOKEN_PEPPER`, which at least reject an empty or default value at
+import. (It is not the only unguarded credential the repo ships a placeholder for — `DATABASE_URL`
+and `POSTGRES_PASSWORD` carry `CHANGE_ME` too — but it is the one whose placeholder silently
+weakens a signature rather than failing to connect.)
+`transport_from_settings` in `octonomy/events/dispatch.py` rejects an empty value, but only
+inside the dispatcher process, so a misconfigured deployment serves happily and fails later — and on
+Kubernetes the dispatcher is a CronJob, so that surfaces as a failed job rather than a failed deploy.
+
+- **What:** Validate the webhook triple when `OCTONOMY_OUTBOX_TRANSPORT=webhook`, via a system check
+  registered **without** `deploy=True` — follow `namespace_flag_dependencies` in
+  `octonomy/core/checks.py`, whose docstring already states the rule — so it fires at boot. Reject
+  the published `CHANGE_ME` placeholder. Reuse CFG-2's `secret_is_weak()` if that lands first.
+- **Why:** `CHANGE_ME` is published in `deploy/.env.production.example` and
+  `deploy/kubernetes/secret.example.yaml`. It is non-empty, so `transport_from_settings` accepts it
+  and `_webhook_signature` HMACs every event body with a publicly-known string. `X-Octonomy-Signature`
+  becomes decorative, and a consumer verifying it would accept forged events.
+- **Pros:** Closes the same class of hole as #147 on the webhook signing secret; a boot-time check
+  means a misconfigured webhook deployment never starts serving.
+- **Cons:** A new check plus its tests, inert for every deployment on the default `logging` transport.
+- **Context:** Found during the `/plan-ceo-review` of #147 while mapping which secrets are guarded.
+  It is a different secret and a different subsystem, so it was kept out of #147's scope rather than
+  widening that fix.
+- **Effort:** S (human ~3h). **Priority:** P3. **Depends on:** benefits from CFG-2's predicate, not
+  blocked by it.
+- **Trigger:** the first deployment to set `OCTONOMY_OUTBOX_TRANSPORT=webhook`, or CFG-2 landing —
+  fold it in there.
+
 ---
 
 ## Resolved

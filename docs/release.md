@@ -52,6 +52,26 @@ one from the repository:
 make openapi
 ```
 
+### Deferred work triggered by this release
+
+Some `TODOS.md` entries defer work until a named release rather than until an event, because an
+event-shaped trigger can be satisfied the day it is written and then rot unnoticed. Those entries
+only fire if something on this checklist looks for them, so each one carries a one-line
+`release-trigger: <version>` token:
+
+```bash
+grep -n "release-trigger:" TODOS.md
+```
+
+For every hit at or below the version being cut, decide explicitly — do the work now, or bump the
+token to a later release and say why in the entry. Do not leave it ambiguous; an entry whose named
+release has already shipped is exactly the silent rot this step exists to prevent. Match the token,
+not the surrounding prose: a wrapped sentence stops being greppable the moment someone reflows it.
+
+**Currently pending:** `CFG-2` (secret boot guard does not judge strength) names the **3.2.0**
+release. It also fires on any edit to either boot guard in `config/settings.py`, where
+`gstack-shortcut` markers sit on the guards themselves.
+
 ## Cutting a Release
 
 Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) per

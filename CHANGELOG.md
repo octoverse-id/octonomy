@@ -73,6 +73,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than a refusal, because whether it breaks depends on proxy routing the process
   cannot see.
 
+### Security
+- **The deployment docs no longer claim the service rejects a weak secret — because it never
+  did.** `deploy/.env.production.example` and `docs/deployment.md` stated that a half-edited
+  production env file "fails fast instead of running on a weak/publicly-known secret". The boot
+  guard in `config/settings.py` tests two things per secret: the value is non-empty, and it is not
+  the local-dev literal. It has never judged strength, so
+  `DJANGO_SECRET_KEY=thisisthedjangomostsecretkey` starts normally with `DJANGO_DEBUG=false`, and so
+  does a whitespace-only `" "`. An operator who filled the template with an obvious placeholder was
+  told they were protected when they were not.
+
+  **Runtime behavior is unchanged — this release corrects the documentation, not the guard.** No
+  deployment that boots today will stop booting. Both files now name the exact rejected values
+  (`local-dev-secret`, `local-dev-service-token-pepper`) and say plainly that a placeholder or a
+  whitespace-only value is accepted. They also document Django's `security.W009` with its real
+  limits rather than as a strength check: it tests three syntactic conditions (under 50 characters,
+  fewer than 5 distinct characters, a `django-insecure-` prefix), measures neither entropy nor
+  secrecy, so a long publicly-known string passes it and the absence of a warning is not evidence
+  of a good key. Being a warning it does not on its own make `manage.py check --deploy` exit
+  nonzero, so the post-deploy step now says to read the output rather than trust the exit status.
+  `SERVICE_TOKEN_PEPPER` has no equivalent check anywhere and is described separately instead of
+  sharing a paragraph that implied parity.
+
+  This corrects wording that has stood since 3.0.1 below, which added the empty-`DJANGO_SECRET_KEY`
+  rejection and described the guard more broadly than it behaves. Hardening the guard was
+  considered and deliberately deferred — the same change would break every short secret fixture in
+  the CI workflows and the test suite, and could refuse to start a deployment already running a
+  short but random secret. That work
+  is tracked as `CFG-2` in `TODOS.md`, with `CFG-3` covering the related
+  `OCTONOMY_WEBHOOK_SIGNING_SECRET` gap. **Operators who supplied a hand-written secret should
+  rotate it to a generated one** (`python -c "import secrets; print(secrets.token_urlsafe(64))"`).
+
 ## [3.1.1] - 2026-08-26
 
 A **patch** release: both live REST surfaces keep the same paths, fields, validation, and runtime
