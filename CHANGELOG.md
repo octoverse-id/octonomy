@@ -31,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   So both docs pages now also carry a **`Content-Security-Policy`** restricting scripts,
   styles, images, fonts and connections to this origin (plus `data:`, and `blob:` for the
   worker Redoc builds its search index in; an off-origin `OCTONOMY_STATIC_URL` is added
-  automatically so a CDN topology still works). It is an egress control rather than an XSS
+  automatically so a CDN topology still works — including the protocol-relative
+  `//cdn.example.com/static/` form the setting's validator accepts, which is emitted as a
+  bare host because a leading `//` matches no CSP source-expression). It is an egress control rather than an XSS
   one — it permits `'unsafe-inline'`, because both pages are inline-script by construction
   upstream — and it is the only control that covers what a future bundle upgrade *adds*.
   Verified in a real browser against a `DEBUG=false` Gunicorn: Swagger renders its 29

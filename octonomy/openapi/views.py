@@ -63,20 +63,32 @@ def _swagger_ui_settings(request) -> str:
 
 
 def _static_origin() -> str:
-    """The scheme://host of ``STATIC_URL`` when it points off-origin, else "".
+    """``STATIC_URL``'s origin as a CSP host-source, or "" when it is same-origin.
 
     ``OCTONOMY_STATIC_URL`` may legitimately be a full URL — fronting ``/static/`` with a
     CDN is a supported topology (``config/settings.py``). A policy hard-coded to ``'self'``
     would then block the deployment's own assets and leave the docs pages blank, so the
-    origin is read from the setting rather than assumed. Read per response, not at import:
-    a settings override has to move the policy with it.
+    origin is read from the setting rather than assumed.
+
+    Keyed on ``netloc``, not on an ``https://`` prefix, because the setting's own validator
+    accepts a PROTOCOL-RELATIVE ``//cdn.example.com/static/``: that value starts with "/",
+    so it passes the root-absolute test, and ``{% static %}`` then emits ``//cdn...`` asset
+    URLs. Matching on the scheme alone would return "" for it and produce a policy that
+    blocks every bundle the deployment serves — a blank docs page caused by the control
+    meant to protect it. A scheme-less host-source is valid CSP and is what such a
+    deployment needs: CSP's host-source grammar makes the scheme optional, and a scheme-less
+    host matches the page's own scheme. It is emitted BARE (``cdn.example.com``), not as
+    ``//cdn.example.com`` — a leading ``//`` matches no source-expression, so browsers would
+    discard that token as invalid and silently leave the directive back at ``'self'``.
+
+    Read per response, not at import: a settings override has to move the policy with it.
     """
 
     static_url = getattr(settings, "STATIC_URL", "") or ""
-    if not static_url.startswith(("http://", "https://")):
-        return ""
     parts = urlsplit(static_url)
-    return f"{parts.scheme}://{parts.netloc}"
+    if not parts.netloc:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme else parts.netloc
 
 
 def _docs_csp() -> str:

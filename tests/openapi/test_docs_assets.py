@@ -291,6 +291,28 @@ def test_the_csp_admits_an_off_origin_static_url():
     assert "https://cdn.example.com/static" not in policy
 
 
+def test_the_csp_admits_a_protocol_relative_static_url():
+    """The shape that slips past a naive ``startswith("https://")`` check.
+
+    ``config/settings.py`` validates OCTONOMY_STATIC_URL as root-absolute OR a full http(s)
+    URL — and ``//cdn.example.com/static/`` starts with "/", so it is accepted, and
+    ``{% static %}`` then emits ``//cdn...`` asset URLs. A policy that recognised only the
+    schemed form would emit ``'self'`` alone and block every bundle the deployment serves:
+    a blank docs page caused by the control meant to protect it.
+
+    The host is emitted BARE. ``//cdn.example.com`` matches no CSP source-expression, so a
+    browser discards that token as invalid and the directive falls back to ``'self'`` —
+    the same outage, but silent.
+    """
+
+    with override_settings(STATIC_URL="//cdn.example.com/static/"):
+        policy = Client().get("/api/docs/swagger/").headers["Content-Security-Policy"]
+
+    assert "script-src 'self' cdn.example.com 'unsafe-inline'" in policy
+    assert "img-src 'self' cdn.example.com data:" in policy
+    assert "//cdn.example.com" not in policy
+
+
 def test_the_csp_is_scoped_to_the_docs_pages():
     # The JSON API needs no policy and must not inherit one: `connect-src 'self'` on an API
     # response means nothing, but a `default-src` that someone later tightens would start

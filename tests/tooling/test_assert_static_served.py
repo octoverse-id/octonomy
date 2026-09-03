@@ -433,10 +433,27 @@ def test_a_docs_page_without_the_egress_csp_fails(run_script, stub_server):
     assert "no Content-Security-Policy" in result.output
 
 
-def test_a_docs_page_whose_csp_allows_third_party_images_fails(run_script, stub_server):
-    """img-src is the directive doing the work; a wildcard there is not a policy."""
+@pytest.mark.parametrize(
+    "img_src",
+    [
+        # A wildcard permits the very request the directive is here to refuse.
+        "img-src *",
+        # And so does naming the host outright. This is the case a substring check for
+        # "img-src 'self'" reported as enforced — the directive still starts with 'self'.
+        "img-src 'self' https://cdn.redoc.ly",
+        # A scheme source is just as broad in practice.
+        "img-src 'self' https:",
+    ],
+)
+def test_a_docs_page_whose_csp_allows_third_party_images_fails(run_script, stub_server, img_src):
+    """img-src is the directive doing the work, and it is checked source by source.
 
-    loose = {"Content-Security-Policy": "default-src 'self'; img-src *"}
+    The reason it cannot be a substring test: every value above contains the exact string
+    ``img-src 'self'`` except the wildcard, so a `grep` for that reported enforcement while
+    Redoc's cdn.redoc.ly logo was still being fetched on every page view.
+    """
+
+    loose = {"Content-Security-Policy": f"default-src 'self'; {img_src}"}
     base = stub_server(
         _healthy(**{"/api/docs/redoc/": (200, "text/html", REDOC_HTML, loose, False)})
     )
@@ -444,7 +461,72 @@ def test_a_docs_page_whose_csp_allows_third_party_images_fails(run_script, stub_
     result = run_script("assert-static-served.sh", base)
 
     assert result.returncode == 1
-    assert "img-src is not restricted" in result.output
+    assert "Content-Security-Policy" in result.output
+
+
+def test_a_docs_page_whose_csp_has_no_img_src_fails(run_script, stub_server):
+    """No img-src means images fall back to default-src, which this gate cannot assume."""
+
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/redoc/": (
+                    200,
+                    "text/html",
+                    REDOC_HTML,
+                    {"Content-Security-Policy": "default-src 'self'"},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "no img-src directive" in result.output
+
+
+def test_a_docs_page_whose_default_src_is_widened_fails(run_script, stub_server):
+    # Same substring trap one directive over: "default-src 'self' *" contains
+    # "default-src 'self'" and permits everything the policy was meant to refuse.
+    wide = {"Content-Security-Policy": "default-src 'self' *; img-src 'self' data:"}
+    base = stub_server(
+        _healthy(**{"/api/docs/swagger/": (200, "text/html", SWAGGER_HTML, wide, False)})
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "default-src *" in result.output
+
+
+def test_the_shipped_policy_with_its_extra_directives_is_accepted(run_script, stub_server):
+    """Directives beyond the two checked must not be treated as violations.
+
+    The real policy also carries base-uri, form-action, script-src, style-src, font-src,
+    connect-src, worker-src and child-src. A gate that rejected anything it did not
+    recognise would fail every correct deployment.
+    """
+
+    real = {
+        "Content-Security-Policy": (
+            "default-src 'self'; base-uri 'self'; form-action 'self'; "
+            "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+            "worker-src 'self' blob:; child-src blob:"
+        )
+    }
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/swagger/": (200, "text/html", SWAGGER_HTML, real, False),
+                "/api/docs/redoc/": (200, "text/html", REDOC_HTML, real, False),
+            }
+        )
+    )
+
+    assert run_script("assert-static-served.sh", base).returncode == 0
 
 
 def test_a_docs_asset_that_404s_fails(run_script, stub_server):

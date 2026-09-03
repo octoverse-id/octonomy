@@ -74,6 +74,56 @@ fail() {
   exit 1
 }
 
+# Assert a CSP directive lists EXACTLY the sources named, and nothing else.
+#
+# Exact, not a substring match, and for the same reason the content-type comparison below
+# is exact: `img-src 'self'` appears just as happily inside `img-src 'self' *` and
+# `img-src 'self' https://cdn.redoc.ly`. Both of those permit the very request this gate
+# claims to have blocked, so a substring test would report enforcement while the egress
+# regression it exists to catch is live.
+#
+# The allowlist is the SHIPPED configuration's — CI runs that, the same premise the
+# Access-Control-Allow-Origin assertion below rests on. A deployment that fronts /static/
+# with a CDN legitimately carries that origin here too; such a deployment is changing this
+# contract and should change this call with it.
+#
+# usage: assert_csp_sources PAGE POLICY DIRECTIVE ALLOWED...
+assert_csp_sources() {
+  local page=$1 policy=$2 directive=$3
+  shift 3
+  local allowed=" $* "
+
+  # Directive names are case-insensitive; values are not. Split the policy on ';' and take
+  # the first entry whose first token is this directive.
+  local found=""
+  local entry name
+  while IFS= read -r entry; do
+    name=$(awk '{print tolower($1)}' <<<"$entry")
+    if [ "$name" = "$directive" ]; then
+      found=$entry
+      break
+    fi
+  done < <(tr ';' '\n' <<<"$policy")
+
+  if [ -z "$found" ]; then
+    fail "$page has a Content-Security-Policy with no $directive directive, so nothing constrains that resource type."
+  fi
+
+  # `read -ra` splits on whitespace and collapses runs of it, leaving the directive name in
+  # [0] and each source after it. Deliberately not `xargs`: xargs strips shell quoting, so
+  # every keyword source would arrive as a bare `self` and match nothing.
+  local -a tokens
+  read -ra tokens <<<"$found"
+
+  local source
+  for source in "${tokens[@]:1}"; do
+    case "$allowed" in
+      *" $source "*) ;;
+      *) fail "$page has '$directive $source' in its Content-Security-Policy; only [$*] are expected. An extra source here is what would let a bundle reach a third party while every other assertion in this gate still passes." ;;
+    esac
+  done
+}
+
 # --- The admin page must render at all ------------------------------------------------
 # Under manifest storage a missing entry raises at render time, so the real failure mode
 # is a 500 on the page, not a 404 on an asset. Check the page before the assets.
@@ -210,12 +260,18 @@ for page in /api/docs/swagger/ /api/docs/redoc/; do
   # even though every assertion above still passes. Checked here rather than only in
   # pytest because a header is exactly the kind of thing a proxy or a WSGI config can
   # strip between the view and the browser.
-  if ! grep -qi '^content-security-policy:.*default-src' "$work/docs-headers.txt"; then
-    fail "$page carries no Content-Security-Policy with a default-src. That header is what stops the bundles' own JavaScript reaching a third party — nothing in the HTML shows those requests."
+  # `|| true` is load-bearing under `set -e -o pipefail`: with no such header grep exits 1
+  # and the assignment would kill the script silently — exit 1 with no diagnostic at all,
+  # which is the opposite of what this gate is for. Let it come back empty and report it.
+  csp=$(grep -i '^content-security-policy:' "$work/docs-headers.txt" | head -1 |
+    cut -d: -f2- | tr -d '\r' || true)
+  if [ -z "$csp" ]; then
+    fail "$page carries no Content-Security-Policy header. That header is what stops the bundles' own JavaScript reaching a third party — nothing in the HTML shows those requests."
   fi
-  if ! grep -qi "^content-security-policy:.*img-src 'self'" "$work/docs-headers.txt"; then
-    fail "$page has a Content-Security-Policy whose img-src is not restricted to 'self' — that is the directive blocking Redoc's cdn.redoc.ly attribution logo."
-  fi
+  assert_csp_sources "$page" "$csp" default-src "'self'"
+  # img-src is the directive that actually refuses Redoc's cdn.redoc.ly logo, so it gets the
+  # same exact treatment rather than a substring test — see assert_csp_sources.
+  assert_csp_sources "$page" "$csp" img-src "'self'" "data:"
 
   echo "ok    GET $page -> 200, self-hosted, CSP enforced, references $(wc -l <"$work/page-assets.txt" | tr -d ' ') hashed asset(s)"
 done
