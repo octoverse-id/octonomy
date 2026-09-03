@@ -34,6 +34,27 @@ ADMIN_HTML = (
 )
 DRF_HTML = f'<html><head><link rel="stylesheet" href="{HASHED_DRF_CSS}"></head></html>'
 
+# The docs UI (#146). Its bundles live under /static/drf_spectacular_sidecar/, which the
+# script asserts on by name: that prefix is what distinguishes "served from this
+# deployment" from "fetched from jsDelivr", which is the whole point of the surface.
+HASHED_SWAGGER_CSS = "/static/drf_spectacular_sidecar/swagger-ui-dist/swagger-ui.aabbccdd0011.css"
+HASHED_SWAGGER_JS = (
+    "/static/drf_spectacular_sidecar/swagger-ui-dist/swagger-ui-bundle.bbccddee1122.js"
+)
+HASHED_REDOC_JS = "/static/drf_spectacular_sidecar/redoc/bundles/redoc.standalone.ccddeeff2233.js"
+
+# The inline <script> is not decoration. drf-spectacular inlines its Swagger init script
+# into the page, and that script contains `//` line comments — so a single
+# `(https?:)?//` pattern would flag every healthy docs page as protocol-relative. This
+# fixture is what keeps the two-grep split honest.
+SWAGGER_HTML = (
+    f'<html><head><link rel="stylesheet" href="{HASHED_SWAGGER_CSS}"></head>'
+    f'<body><script src="{HASHED_SWAGGER_JS}"></script>'
+    "<script>\n// only retry once to prevent endless loop.\nconst ui = 1;\n</script>"
+    "</body></html>"
+)
+REDOC_HTML = f'<html><head></head><body><script src="{HASHED_REDOC_JS}"></script></body></html>'
+
 # What a non-manifest deployment renders. The script must reject it: the whole point is to
 # probe the content-addressed path a browser really requests.
 UNHASHED_HTML = (
@@ -100,6 +121,11 @@ def _healthy(**overrides):
         HASHED_CSS_2: (200, CSS, "body{}", {}, False),
         HASHED_JS: (200, JS, "1;", {}, False),
         HASHED_DRF_CSS: (200, CSS, "body{}", {}, False),
+        "/api/docs/swagger/": (200, "text/html", SWAGGER_HTML, {}, False),
+        "/api/docs/redoc/": (200, "text/html", REDOC_HTML, {}, False),
+        HASHED_SWAGGER_CSS: (200, CSS, "body{}", {}, False),
+        HASHED_SWAGGER_JS: (200, JS, "1;", {}, False),
+        HASHED_REDOC_JS: (200, JS, "1;", {}, False),
     }
     routes.update(overrides)
     return routes
@@ -211,6 +237,186 @@ def test_a_denied_but_rendered_browsable_api_is_accepted(run_script, stub_server
     base = stub_server(_healthy(**{"/api/v2/tags": (401, "text/html", DRF_HTML, {}, False)}))
 
     assert run_script("assert-static-served.sh", base).returncode == 0
+
+
+# --- The docs UI surface -------------------------------------------------------------
+#
+# Added with #146, which moved the Swagger UI and Redoc bundles off cdn.jsdelivr.net@latest
+# and into the image. Two distinct guarantees are asserted per page and both can regress
+# on their own: the page renders and its assets resolve (the same manifest guarantee as
+# the surfaces above), and the page references nothing off-box.
+
+
+def test_a_docs_page_that_500s_fails(run_script, stub_server):
+    """Under manifest storage an uncollected sidecar bundle is a 500 on the page.
+
+    That is the shape of "drf_spectacular_sidecar is not in INSTALLED_APPS" or "the image
+    was built without collectstatic" — not a 404 on the asset.
+    """
+
+    base = stub_server(
+        _healthy(**{"/api/docs/swagger/": (500, "text/html", "Server Error", {}, False)})
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "returned 500" in result.output
+
+
+def test_a_docs_page_still_pointing_at_a_cdn_fails(run_script, stub_server):
+    """The exact pre-#146 shape, reproduced from a real render of the previous image."""
+
+    cdn = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@latest/swagger-ui-bundle.js"
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/swagger/": (
+                    200,
+                    "text/html",
+                    f'<html><head><link rel="stylesheet" href="{HASHED_SWAGGER_CSS}">'
+                    f'<script src="{cdn}"></script></head></html>',
+                    {},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "no CDN, no font host" in result.output
+    assert cdn in result.output
+
+
+def test_a_redoc_page_loading_google_fonts_fails(run_script, stub_server):
+    """The regression the override template exists to prevent.
+
+    ``REDOC_DIST = "SIDECAR"`` relocates the bundle and nothing else: the shipped
+    ``drf_spectacular/redoc.html`` still links a stylesheet from fonts.googleapis.com. A
+    check that only looked for jsDelivr would call this page self-hosted.
+    """
+
+    fonts = "https://fonts.googleapis.com/css2?family=Roboto"
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/redoc/": (
+                    200,
+                    "text/html",
+                    f'<html><head><link rel="stylesheet" href="{fonts}"></head>'
+                    f'<body><script src="{HASHED_REDOC_JS}"></script></body></html>',
+                    {},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "fonts.googleapis.com" in result.output
+
+
+def test_a_protocol_relative_asset_on_a_docs_page_fails(run_script, stub_server):
+    """`//cdn.example/x.js` fetches from a third party exactly as an absolute URL does."""
+
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/swagger/": (
+                    200,
+                    "text/html",
+                    f'<html><head><link rel="stylesheet" href="{HASHED_SWAGGER_CSS}">'
+                    '<script src="//cdn.example.test/swagger-ui-bundle.js"></script></head></html>',
+                    {},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "protocol-relative" in result.output
+
+
+def test_an_inline_script_comment_is_not_read_as_a_protocol_relative_url(run_script, stub_server):
+    """The healthy Swagger fixture carries a `//` line comment, as the real page does.
+
+    Asserted explicitly rather than left to the happy-path test: folding the two greps
+    into one `(https?:)?//` pattern makes every correctly self-hosted docs page fail, and
+    the resulting error would point at the wrong thing entirely.
+    """
+
+    assert "//" in SWAGGER_HTML.split("<script>")[-1]
+
+    assert run_script("assert-static-served.sh", stub_server(_healthy())).returncode == 0
+
+
+def test_a_docs_page_referencing_no_sidecar_asset_fails(run_script, stub_server):
+    """A page carrying only hashed assets from elsewhere proves nothing about the bundles."""
+
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/swagger/": (
+                    200,
+                    "text/html",
+                    f'<html><head><link rel="stylesheet" href="{HASHED_CSS}"></head></html>',
+                    {},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "no hashed drf_spectacular_sidecar asset" in result.output
+
+
+def test_swagger_assets_do_not_satisfy_the_redoc_page_assertion(run_script, stub_server):
+    """Each docs page is judged on its own references.
+
+    Accumulating both pages' assets into one list before checking would let Swagger's
+    bundle vouch for a Redoc page that had reverted to the CDN — and Redoc is the page
+    with the extra failure mode (its own override template).
+    """
+
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/redoc/": (
+                    200,
+                    "text/html",
+                    f'<html><head><link rel="stylesheet" href="{HASHED_CSS}"></head></html>',
+                    {},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "no hashed drf_spectacular_sidecar asset" in result.output
+
+
+def test_a_docs_asset_that_404s_fails(run_script, stub_server):
+    """The page can render while the bundle it names is not actually served."""
+
+    base = stub_server(_healthy(**{HASHED_SWAGGER_JS: (404, "text/html", "nope", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert HASHED_SWAGGER_JS in result.output
 
 
 # --- Transport and headers ---------------------------------------------------------------

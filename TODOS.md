@@ -217,6 +217,28 @@ schedule and then claimed it covered delete/act/recreate.
   detector guards something that is actually a boundary), or a ruleset gets weakened once and nobody
   notices for a while.
 
+### DEP-5: The docs UI bundles add ~35 MB to the image — ACCEPTED (raised 2026-09-03, issue #146)
+Self-hosting Swagger UI and Redoc (#146) grew the image from 191 MB to 226 MB uncompressed
+(~13 MB on the wire). Roughly 15 MB of the collected-static half is source maps and their hashed +
+gzipped copies: `swagger-ui-bundle.js.map` (1.9 MB), `redoc.standalone.js.map` (3.7 MB),
+`swagger-ui.css.map` and `swagger-ui-standalone-preset.js.map`.
+
+**Trimming them is not the one-liner it looks like.** `collectstatic --ignore '*.map'` fails the
+build: `swagger-ui.css` and `redoc.standalone.js` carry `sourceMappingURL` references, and Django's
+manifest post-processor resolves those, raising `ValueError` for a target that was not collected.
+Only the two *unreferenced* maps (`swagger-ui-bundle.js.map`, `swagger-ui-standalone-preset.js.map`,
+2.2 MB raw) could be dropped safely — and an `--ignore` in the `Dockerfile` alone would give the
+container and VPS channels different manifests, which is the channel divergence
+`config/settings_pytest.py` exists to warn about. Doing it properly means a project
+`collectstatic` override, i.e. real machinery for a partial saving.
+
+- **Decision:** ship all of it. The supply-chain and air-gap wins are the point of #146; 35 MB on a
+  191 MB base is not what makes this image expensive to move.
+- **Effort:** S (human ~2h) for the command override. **Priority:** P4.
+- **Trigger:** an operator reports image size as a real constraint (edge/IoT registry quotas,
+  metered pull bandwidth), or drf-spectacular-sidecar's maps grow materially past their current
+  ~6 MB.
+
 ## Configuration
 
 ### CFG-1: Rename `OCTONOMY_API_VERSION` — DEFERRED (raised 2026-08-05)

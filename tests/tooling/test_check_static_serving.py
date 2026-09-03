@@ -953,11 +953,12 @@ def test_a_real_catch_all_is_accepted():
 # --- The VPS runbook is the systemd channel's static declaration ------------------------
 #
 # `make static-check` no longer scans octonomy.service: a systemd unit says nothing about
-# static, and the `manage.py check` line it used to match is not a static signal either
-# (octonomy.W002 is gated on OCTONOMY_ADMIN_ENABLED, which defaults off — so on a default
-# deploy that check reports "no issues" with no assets collected at all). What actually
-# carries this channel is the runbook telling the operator to collect, on install AND on
-# upgrade. Deleting either step was the #145 defect; these assert it cannot come back.
+# static, and the `manage.py check` line it used to match is not a static signal either.
+# (Since #146 octonomy.W002 does fire on an uncollected root whether or not the admin is
+# on — but that is a runtime warning about THIS host, not a declaration by the unit file,
+# and it cannot see the stale root an upgrade leaves behind.) What actually carries this
+# channel is the runbook telling the operator to collect, on install AND on upgrade.
+# Deleting either step was the #145 defect; these assert it cannot come back.
 
 DEPLOYMENT_DOC = "docs/deployment.md"
 

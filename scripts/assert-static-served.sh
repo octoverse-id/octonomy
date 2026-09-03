@@ -6,16 +6,18 @@
 # `{% static %}` through staticfiles.json.
 #
 # WHAT THIS ESTABLISHES, precisely: the BUILT IMAGE carries a usable production manifest,
-# and the two surfaces probed here — the admin login page and the DRF browsable API —
-# render and serve the hashed assets they reference. That is a packaging and
-# global-collection guarantee.
+# and the four surfaces probed here — the admin login page, the DRF browsable API, and the
+# Swagger UI and Redoc docs pages — render and serve the hashed assets they reference. For
+# the docs pages it also establishes that they reference NOTHING off-box (#146). That is a
+# packaging and global-collection guarantee.
 #
-# WHAT IT DOES NOT: it renders two pages, not every page. A changelist or form template
+# WHAT IT DOES NOT: it renders four pages, not every page. A changelist or form template
 # referencing an uncollected asset still passes the suite (plain backend) and passes here
 # (never rendered), and fails only for the operator who opens that page. Closing that would
 # mean a session-scoped production collectstatic fixture, as config/settings_pytest.py
-# describes. tests/admin/test_static_serving.py already covers these same two surfaces
-# under manifest storage in-process; what this adds is the real image, really built.
+# describes. tests/admin/test_static_serving.py and tests/openapi/test_docs_assets.py cover
+# these same surfaces under manifest storage in-process; what this adds is the real image,
+# really built.
 #
 # Probing /static/admin/css/base.css would prove nothing. collectstatic writes BOTH the
 # original and the hashed name, so the unhashed path returns 200 even when the manifest is
@@ -48,7 +50,7 @@ trap 'rm -rf "$work"' EXIT
 CURL=(curl -sS --connect-timeout 5 --max-time 30 --max-filesize 5000000)
 
 # An upper bound on how many assets a page may reference before this is treated as a
-# problem in its own right. The two real pages reference 23 between them; a page emitting
+# problem in its own right. The four real pages reference 27 between them; a page emitting
 # hundreds means a template regression, and probing them all sequentially is how a bounded
 # per-request timeout still adds up to a job timeout. Fails loudly rather than truncating,
 # because silently probing a subset is the sampling defect this loop exists to avoid.
@@ -145,6 +147,64 @@ if ! grep -q '/static/rest_framework/' "$work/api-assets.txt"; then
 fi
 echo "ok    browsable API references $(wc -l <"$work/api-assets.txt" | tr -d ' ') hashed asset(s)"
 
+# --- The docs UI: rendered, self-hosted, and reaching no third party ---------------------
+# Added by #146, which moved the Swagger UI and Redoc bundles out of cdn.jsdelivr.net@latest
+# and into the image. That makes /api/docs/* a static-dependent surface for the first time:
+# under manifest storage an uncollected sidecar asset is a 500 on the page, not a fallback
+# to the internet. It is also the surface most operators open first, and unlike the admin it
+# is always on.
+#
+# Both templates are checked because they are different templates with different failure
+# modes: Swagger's asset URLs come from three separate settings keys, while Redoc's page is
+# rendered from an override template (octonomy.openapi.views.SelfHostedRedocView) whose only
+# job is to drop the Google Fonts links the shipped one carries. A regression in either is
+# invisible from the other.
+#
+# No token is needed: SERVE_PERMISSIONS leaves the docs public, like the schema they render.
+: >"$work/docs-assets.txt"
+for page in /api/docs/swagger/ /api/docs/redoc/; do
+  rc=0
+  status=$("${CURL[@]}" -o "$work/docs.html" -w '%{http_code}' "$base$page") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    fail "GET $page did not complete (curl exit $rc)"
+  fi
+  if [ "$status" != "200" ]; then
+    echo "--- first 2 KB of the response ---" >&2
+    head -c 2048 "$work/docs.html" >&2 || true
+    echo >&2
+    fail "GET $page returned $status (expected 200). A 500 means the docs UI bundles were not collected — check that drf_spectacular_sidecar is in INSTALLED_APPS and that collectstatic ran."
+  fi
+
+  # The air-gap assertion, and the reason this section exists at all. Any scheme, any host:
+  # the contract is that these pages reach NOTHING off-box, and the last regression here was
+  # Google Fonts rather than the CDN this issue was named for.
+  #
+  # Two greps rather than one pattern. A combined `(https?:)?//` would match the `//` line
+  # comments in the Swagger init script that drf-spectacular inlines into the page, so
+  # protocol-relative URLs are looked for only where they can actually be fetched from — a
+  # src or href attribute.
+  if grep -qE 'https?://' "$work/docs.html"; then
+    grep -oE 'https?://[^"'"'"' <>]+' "$work/docs.html" | sort -u >&2
+    fail "$page references the absolute URL(s) above. The docs UI must serve every asset from this deployment: no CDN, no font host, nothing an air-gapped install cannot reach."
+  fi
+  if grep -qE '(src|href)="//' "$work/docs.html"; then
+    fail "$page references a protocol-relative URL, which resolves to a third-party host just as an absolute one does."
+  fi
+
+  # Extracted per page and asserted per page BEFORE appending to the accumulated list: a
+  # shared file would let Swagger's assets satisfy Redoc's assertion, which is exactly the
+  # regression (an override template silently reverting to the CDN) this is here to catch.
+  grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/docs.html" |
+    sort -u >"$work/page-assets.txt" || true
+  # Same reasoning as the rest_framework assertion above: a page carrying no hashed asset
+  # at all would satisfy every check so far while proving nothing about the manifest.
+  if ! grep -q '/static/drf_spectacular_sidecar/' "$work/page-assets.txt"; then
+    fail "$page references no hashed drf_spectacular_sidecar asset — the bundles are not being served from this deployment, so the page is either still pointing at a CDN or not the docs UI."
+  fi
+  cat "$work/page-assets.txt" >>"$work/docs-assets.txt"
+  echo "ok    GET $page -> 200, self-hosted, references $(wc -l <"$work/page-assets.txt" | tr -d ' ') hashed asset(s)"
+done
+
 # --- EVERY hashed asset those pages reference must actually be served -------------------
 # Not just the first of each. Two reasons, both observed rather than theorised: in the
 # shipped Unfold and DRF templates stylesheets precede scripts, so sampling one URL per
@@ -152,10 +212,11 @@ echo "ok    browsable API references $(wc -l <"$work/api-assets.txt" | tr -d ' '
 # all; and a page whose first stylesheet is fine while a later one 404s would have passed.
 # These are localhost requests against an already-running container, so probing all of them
 # costs milliseconds.
-sort -u "$work/admin-assets.txt" "$work/api-assets.txt" >"$work/all-assets.txt"
+sort -u "$work/admin-assets.txt" "$work/api-assets.txt" "$work/docs-assets.txt" \
+  >"$work/all-assets.txt"
 asset_count=$(wc -l <"$work/all-assets.txt" | tr -d ' ')
 if [ "$asset_count" -gt "$MAX_ASSETS" ]; then
-  fail "the two pages reference $asset_count hashed assets, over the $MAX_ASSETS ceiling. That is a template regression rather than a static-serving fault; probing them all sequentially would turn this gate into a job timeout."
+  fail "the probed pages reference $asset_count hashed assets, over the $MAX_ASSETS ceiling. That is a template regression rather than a static-serving fault; probing them all sequentially would turn this gate into a job timeout."
 fi
 probe_started=$(date +%s)
 while IFS= read -r url; do
@@ -238,4 +299,4 @@ done <"$work/all-assets.txt"
 
 echo "ok    no Access-Control-Allow-Origin on any static response"
 
-echo "assert-static-served OK: $base renders its admin page and serves the hashed assets it references"
+echo "assert-static-served OK: $base renders its admin, browsable-API and docs pages, serves every hashed asset they reference, and reaches no third-party host"

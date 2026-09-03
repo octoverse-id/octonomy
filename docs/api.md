@@ -44,6 +44,38 @@ python manage.py create_service_token \
   --scope tags:write
 ```
 
+## Interactive Docs
+
+Four routes — one Swagger page and three Redoc pages — all served by the app itself:
+
+```text
+GET /api/docs/swagger/    # Swagger UI, with a v1/v2 "Select a definition" dropdown
+GET /api/docs/redoc/      # Redoc, v2 (the default routes serve v2)
+GET /api/docs/v1/redoc/   # Redoc, v1
+GET /api/docs/v2/redoc/   # Redoc, v2
+```
+
+**They are self-contained.** The Swagger UI and Redoc bundles, and Swagger's favicon, are
+shipped inside the release and served from this deployment's own `/static/` — the pages make
+**no request to any third-party host**, so they render on an isolated network exactly as they
+do on a connected one. Nothing is fetched from a CDN, and no third party learns that someone
+opened your API docs.
+
+Two consequences worth knowing:
+
+- The docs UI version is pinned by `uv.lock` and listed in the image SBOM, like every other
+  dependency. Previously the pages loaded `swagger-ui-dist@latest` and `redoc@latest` from
+  jsDelivr, so the JavaScript could change under a fixed Octonomy release.
+- Because they are ordinary static assets, these pages need `STATIC_ROOT` collected, just like
+  the admin console and the DRF browsable API. The container image does that at build time; a
+  venv install runs `make collectstatic` (see [deployment.md](deployment.md)). Without it the
+  docs pages return 500 rather than falling back to the internet — deliberately, since a silent
+  fallback is the behaviour this replaced.
+
+Redoc's default theme asks for Roboto and Montserrat, which are **not** fetched from Google
+Fonts; the page renders in whatever the browser resolves those names to locally, usually its
+default sans-serif.
+
 ## Namespace Trust Model
 
 Octonomy enforces exact namespace grants against the request namespace. A token restricted to

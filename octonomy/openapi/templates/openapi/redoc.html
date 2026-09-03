@@ -1,0 +1,30 @@
+{% extends "drf_spectacular/redoc.html" %}
+{# Redoc, with the Google Fonts links removed (#146).
+
+   Only the head block differs from the shipped template. drf-spectacular's
+   redoc.html preconnects to fonts.googleapis.com / fonts.gstatic.com and pulls a
+   Montserrat + Roboto stylesheet from Google; with REDOC_DIST = "SIDECAR" the bundle
+   itself is local, so those links would be the last thing standing between this page
+   and an air-gapped deployment — and the only remaining third party learning that an
+   operator opened the API docs.
+
+   Extending rather than replacing keeps the body (the script wiring, which is the part
+   that has to track upstream) shipped by drf-spectacular. It is reached by its own
+   name, "openapi/redoc.html", instead of shadowing "drf_spectacular/redoc.html": the
+   APP_DIRS loader resolves in INSTALLED_APPS order, where drf_spectacular precedes
+   octonomy.openapi, so a same-name override would silently lose.
+
+   Cost: Redoc's default theme asks for Roboto/Montserrat, which are now no longer
+   fetched, so the page renders in whatever the browser resolves those names to — its
+   default sans-serif on a machine without them. Deliberate: correct typography is not
+   worth a third-party request on the one surface this issue exists to close.
+#}
+{% block head %}
+    <title>{{ title|default:"Redoc" }}</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      {# Redoc doesn't change outer page styles. #}
+      body { margin: 0; padding: 0; }
+    </style>
+{% endblock head %}

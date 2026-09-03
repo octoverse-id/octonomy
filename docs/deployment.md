@@ -31,6 +31,12 @@ source checkout and virtualenv on the VPS path:
 A fourth concern is optional: the **admin console** ships off in production. If you turn it on, you
 also serve its static assets (see [operations.md, "Admin console"](operations.md#admin-console)).
 
+**Octonomy needs no outbound internet access at runtime.** It talks to PostgreSQL, and to your
+webhook endpoint if you configure the outbox webhook transport — nothing else. That includes the
+browser surfaces: the Swagger UI and Redoc pages at `/api/docs/*` serve their own JavaScript and
+CSS out of `STATIC_ROOT` rather than a CDN, so an air-gapped install renders them in full (see
+[api.md, "Interactive Docs"](api.md#interactive-docs)).
+
 ---
 
 ## Prerequisites
@@ -355,10 +361,10 @@ sudo systemctl daemon-reload
 # 5. Collect the bundled static assets. This channel is the only one that needs the step:
 #    the container image runs it at build time, but a venv install has to do it itself.
 #    The app serves these itself (WhiteNoise) — there is nothing to hand to nginx.
-#    Skip it and the admin console and the DRF browsable API both fail to render. Do not
-#    rely on a warning to tell you: octonomy.W002 is gated on OCTONOMY_ADMIN_ENABLED, which
-#    is off by default, so a default deploy that skips this step boots silently and only
-#    fails when something requests HTML. The verification step below is what catches it.
+#    Skip it and every HTML surface fails to render: the /api/docs/ Swagger and Redoc
+#    pages, the DRF browsable API, and the admin console if you enable it. octonomy.W002
+#    warns about it at boot on any deploy that collected nothing — but it cannot see a
+#    STALE root, so the verification step below is still what catches an upgrade.
 sudo -u octonomy bash -c 'set -eu; set -a; . /etc/octonomy/octonomy.env; set +a; \
     cd /opt/octonomy && .venv/bin/python manage.py collectstatic --noinput'
 
@@ -394,11 +400,11 @@ cd /opt/octonomy
 sudo -u octonomy git pull
 sudo -u octonomy uv sync --frozen --no-install-project --no-dev
 
-# Re-collect. This is the step that bites if you skip it: an upgrade that moves Django or
-# django-unfold ships new templates against your OLD assets. STATIC_ROOT is still
-# non-empty, so octonomy.W002 stays quiet and nothing warns you — the admin simply renders
-# against stale bytes, or 500s outright when a template references an asset your last
-# collectstatic never wrote.
+# Re-collect. This is the step that bites if you skip it: an upgrade that moves Django,
+# django-unfold or the docs UI bundles ships new templates against your OLD assets.
+# STATIC_ROOT is still non-empty, so octonomy.W002 stays quiet and nothing warns you — the
+# page simply renders against stale bytes, or 500s outright when a template references an
+# asset your last collectstatic never wrote.
 sudo -u octonomy bash -c 'set -eu; set -a; . /etc/octonomy/octonomy.env; set +a; \
     cd /opt/octonomy && .venv/bin/python manage.py collectstatic --noinput'
 
@@ -489,6 +495,19 @@ esac
 # And the assets that page references must actually be served.
 curl -fsS -I -o /dev/null https://api.example.com/static/rest_framework/css/bootstrap.min.css
 
+# The docs UI is served the same way, and is the surface most people open first. Capture the
+# page before grepping it: piping curl straight into grep reports "no external URL" for a page
+# that never rendered at all. The grep is the air-gap assertion — these pages must reference no
+# third-party host, so any match is a regression rather than a warning.
+docs=$(curl -fsS https://api.example.com/api/docs/swagger/) || {
+  echo "DOCS BROKEN: /api/docs/swagger/ did not return 200 (a 500 means collectstatic never ran)"
+  exit 1
+}
+if grep -qE 'https?://' <<<"$docs"; then
+  echo "DOCS NOT SELF-CONTAINED: the page references an off-site URL"; exit 1
+fi
+echo "docs OK (swagger rendered, no external origin)"
+
 # Smoke test with a service token (see below), scoped to a tenant:
 curl -fsS "https://api.example.com/api/v2/tags?application_id=commerce" \
   -H "Authorization: Bearer <service-token>" -H "X-Tenant-ID: tenant_demo"
@@ -553,10 +572,10 @@ Octonomy enforces Django's password validators on this path, including the non-i
 
 An unstyled page or a 500 means the assets are not there. On Compose and Kubernetes that
 points at the image (the Dockerfile collects at build time — a mount over `/app` would hide
-them); on a VPS it means `collectstatic` has not run, or ran after the last restart. With the
-admin enabled — as it is by the time you reach this step — `manage.py check` reports it as
-`octonomy.W002`; with the admin off it does not, which is why the [static delivery
-check](#post-deploy-verification) above probes over HTTP instead of trusting a warning.
+them); on a VPS it means `collectstatic` has not run, or ran after the last restart.
+`manage.py check` reports it as `octonomy.W002` whether or not the admin is enabled, but it
+only sees an *empty* `STATIC_ROOT` — a stale one looks healthy to it, which is why the
+[static delivery check](#post-deploy-verification) above probes over HTTP as well.
 
 ---
 

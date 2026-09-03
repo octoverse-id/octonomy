@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **The API docs UI no longer loads code from a third-party CDN** (#146). `/api/docs/swagger/`
+  and the three Redoc pages pulled their JavaScript and CSS from
+  `cdn.jsdelivr.net/npm/swagger-ui-dist@latest` and `.../redoc@latest` — drf-spectacular's
+  defaults, which `config/settings.py` never overrode. On an unpinned `@latest` tag the bytes
+  executing in an operator's browser could change under a fixed Octonomy release, with no
+  lockfile entry, no SBOM entry and no attestation, while the image around them is
+  digest-pinned, SLSA-attested and SBOM'd. Octonomy now ships `drf-spectacular[sidecar]` and
+  sets `SWAGGER_UI_DIST`, `SWAGGER_UI_FAVICON_HREF` and `REDOC_DIST` to `SIDECAR`, so every
+  byte comes out of `STATIC_ROOT` like the admin and browsable-API assets. The UI version is
+  pinned by `uv.lock` and appears in the image SBOM.
+
+  The Redoc page needed one more change: the shipped `drf_spectacular/redoc.html` also
+  preconnects to `fonts.googleapis.com` and loads a stylesheet from it, which the `SIDECAR`
+  setting does not touch. `octonomy.openapi.views.SelfHostedRedocView` renders an override
+  template that drops those links and inherits everything else, so Redoc now renders in the
+  browser's default sans-serif rather than fetching Roboto and Montserrat from Google.
+
+  Consequences for operators: **the docs pages now work with no internet egress**, which they
+  never did before — an air-gapped install got blank pages. In exchange they are now
+  static-dependent, so a host that skipped `collectstatic` gets a 500 there instead of a page
+  that quietly reached the internet; `octonomy.W002` names that at boot (see Changed).
+  The image grows from 191 MB to 226 MB uncompressed (+35 MB, ~+18%; roughly 13 MB on the
+  wire), of which about 6 MB is the source maps — kept because the manifest staticfiles
+  backend resolves the `sourceMappingURL` references in `swagger-ui.css` and
+  `redoc.standalone.js`, and a partial collection fails the build.
+
 ### Documentation
 - **Corrected the operator runbooks for static assets** (#145). The VPS/systemd runbook never
   mentioned `collectstatic`, on install or on upgrade. The upgrade omission was the one that
@@ -25,6 +52,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Deployment, shared volume or Ingress path.
 
 ### Changed
+- **`octonomy.W002` is no longer gated on `OCTONOMY_ADMIN_ENABLED`** and now fires on any
+  `DEBUG=false` host whose `STATIC_ROOT` is missing, empty, unreadable or manifest-less. The
+  gate was an accepted ceiling while the admin console was the only page an operator was
+  likely to open — the DRF browsable API needed static too, but it is a developer
+  convenience. Self-hosting the docs assets (#146) put the product's primary documented
+  surface on the same footing: `/api/docs/*` is always on, and under manifest storage it now
+  500s on an uncollected root where it used to render from a CDN. Warning only on the
+  admin-enabled shape would have stayed silent for exactly the default deployments that
+  changed. The message names the affected surfaces and says plainly that the JSON API is
+  unaffected. It is still a `Warning`, never an `Error`.
 - **Removed the `location /static/` alias from `deploy/systemd/nginx-octonomy.conf`.** Static
   now falls through to the app on the VPS channel too, which puts all three channels on one
   caching contract: WhiteNoise stamps `immutable` on content-addressed filenames and a
@@ -37,6 +74,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that on now requires.
 
 ### Added
+- **The CI static gate now covers the docs pages too** (#146). `scripts/assert-static-served.sh`
+  additionally renders `/api/docs/swagger/` and `/api/docs/redoc/`, asserts each references at
+  least one hashed `drf_spectacular_sidecar` asset, fetches every one of them, and — the part
+  no in-process test can give — asserts the rendered HTML contains **no** absolute or
+  protocol-relative URL to any host. That is what would catch a future drf-spectacular
+  template reintroducing a CDN or font reference. Verified by running the gate against a
+  pre-#146 image, where it fails naming the four jsDelivr URLs.
 - **CI now asserts that a real image actually serves its static assets.** The bug fixed
   above survived a full release because no deploy channel was ever booted and probed end to
   end. The existing `docker` job already builds the production image and polls

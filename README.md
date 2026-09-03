@@ -66,6 +66,10 @@ GET /api/docs/v1/redoc/   # v1
 GET /api/docs/v2/redoc/   # v2
 ```
 
+The Swagger UI and Redoc pages are **self-contained**: their JavaScript and CSS ship inside the
+release and are served from your own deployment, so the docs work with no internet egress. See
+[Interactive Docs](docs/api.md#interactive-docs).
+
 ## Deployment
 
 Octonomy is self-hosted — run it on your own infrastructure. Official multi-arch container images

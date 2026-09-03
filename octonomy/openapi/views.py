@@ -1,10 +1,15 @@
-"""Swagger UI wiring for the multi-version docs.
+"""Docs-page wiring: the multi-version Swagger UI, and a Redoc with no third party.
 
 The single Swagger page carries a v1/v2 "Select a definition" dropdown. Its two
 schema URLs are reversed against the request so they include any WSGI script-name
 prefix -- matching NamespaceURLPathVersioning, which uses ``request.path_info`` to
 stay correct under a prefix. A static ``SWAGGER_UI_SETTINGS`` string cannot do this
 because drf-spectacular renders it once, with no request in hand.
+
+Both pages serve every asset from this deployment (#146). ``SPECTACULAR_SETTINGS``
+points the bundles at ``drf_spectacular_sidecar``; the Redoc *template* is overridden
+here because pointing the bundle locally does not touch the Google Fonts links the
+shipped template carries in its head.
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ import json
 
 from drf_spectacular.plumbing import get_relative_url
 from drf_spectacular.utils import extend_schema
-from drf_spectacular.views import SpectacularSwaggerView
+from drf_spectacular.views import SpectacularRedocView, SpectacularSwaggerView
 from rest_framework.reverse import reverse
 
 
@@ -52,3 +57,16 @@ class VersionedSwaggerView(SpectacularSwaggerView):
         # after the handler returns, so the overridden settings take effect.
         response.data["settings"] = _swagger_ui_settings(request)
         return response
+
+
+class SelfHostedRedocView(SpectacularRedocView):
+    """Redoc UI that makes no request to a third-party host.
+
+    ``REDOC_DIST = "SIDECAR"`` moves the Redoc bundle itself into this deployment's
+    static, but the shipped ``drf_spectacular/redoc.html`` also preconnects to
+    fonts.googleapis.com and loads a stylesheet from it — so the default page still
+    reaches the internet, and still tells Google when an operator opens the docs. The
+    override template drops exactly those links and inherits everything else.
+    """
+
+    template_name = "openapi/redoc.html"
