@@ -63,19 +63,14 @@ def _swagger_ui_settings(request) -> str:
     )
 
 
-# A host[:port] as CSP's host-source grammar allows it, plus the "*." wildcard label and the
-# bracketed IPv6 literal urlsplit hands back for http://[::1]:9000/. Not a hostname validator
-# — just tight enough that nothing which could restructure the header (whitespace, ";", ",",
-# quotes) can reach it.
-#
-# CSP3's host-part grammar has no IPv6 form, so a browser may or may not honour "[::1]:9000"
-# as a source. Passing it through is still strictly better than dropping it: a dropped origin
-# is a policy that certainly blocks the deployment's own bundles, where a source a browser
-# ignores is no worse than that and works everywhere it is understood.
-_CSP_HOST = re.compile(
-    r"(?:\*\.)?[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?"
-    r"|\[[0-9A-Fa-f:.]+\](?::[0-9]{1,5})?"
-)
+# Characters that would let a STATIC_URL restructure the header rather than name a host in
+# it. Everything else is passed through: this deliberately does NOT re-implement CSP's
+# host-source grammar. Three review rounds of doing that produced three shapes it wrongly
+# rejected — protocol-relative, bracketed IPv6, internationalized — and each rejection was a
+# policy that blocked the deployment's own bundles and rendered the docs blank. Whether a
+# browser honours a given source is the browser's call, and a source it ignores is no worse
+# than a source that was never emitted.
+_HEADER_STRUCTURAL = re.compile(r"[\s;,'\"]")
 
 
 def _static_origin() -> str:
@@ -86,33 +81,49 @@ def _static_origin() -> str:
     would then block the deployment's own assets and leave the docs pages blank, so the
     origin is read from the setting rather than assumed.
 
-    Keyed on ``netloc``, not on an ``https://`` prefix, because the setting's own validator
-    accepts a PROTOCOL-RELATIVE ``//cdn.example.com/static/``: that value starts with "/",
-    so it passes the root-absolute test, and ``{% static %}`` then emits ``//cdn...`` asset
-    URLs. Matching on the scheme alone would return "" for it and produce a policy that
-    blocks every bundle the deployment serves — a blank docs page caused by the control
-    meant to protect it. A scheme-less host-source is valid CSP and is what such a
-    deployment needs: CSP's host-source grammar makes the scheme optional, and a scheme-less
-    host matches the page's own scheme. It is emitted BARE (``cdn.example.com``), not as
-    ``//cdn.example.com`` — a leading ``//`` matches no source-expression, so browsers would
-    discard that token as invalid and silently leave the directive back at ``'self'``.
+    Keyed on the parsed host, not on an ``https://`` prefix, because the setting's own
+    validator accepts a PROTOCOL-RELATIVE ``//cdn.example.com/static/``: that value starts
+    with "/", so it passes the root-absolute test, and ``{% static %}`` then emits
+    ``//cdn...`` asset URLs. Such a host is emitted BARE (``cdn.example.com``) rather than
+    as ``//cdn.example.com`` — CSP's grammar makes the scheme optional, and a scheme-less
+    host matches the page's own scheme, while a leading ``//`` matches no source-expression
+    at all and would be discarded as invalid, silently leaving the directive at ``'self'``.
+
+    Three shapes need explicit handling, and all three came from review:
+
+    * IPv6. ``urlsplit().hostname`` strips the brackets that ``[::1]:9000`` needs back.
+    * Internationalized names. A raw ``例え.テスト`` in a header is not latin-1, so Django
+      MIME-encodes the value into ``=?utf-8?b?...?=`` — a garbled policy rather than a
+      dropped source. Punycode is the only form that survives the wire.
+    * Anything unparseable (a bad port, an IDN label that will not encode) yields no origin
+      rather than a guess.
+
+    Userinfo and the path are dropped by construction: only host and port are read.
 
     Read per response, not at import: a settings override has to move the policy with it.
-
-    A netloc that cannot be a CSP host is dropped rather than pasted in. ``urlsplit`` ends a
-    netloc only at ``/?#``, so a mis-typed ``https://cdn.example.com; script-src *``/static/
-    would otherwise carry a semicolon into the header and add a directive nobody wrote. Like
-    the FORCE_SCRIPT_NAME validator in ``config/settings.py``, this is a mis-provisioning
-    guard rather than a defence — STATIC_URL is process configuration, and an operator who
-    can set it can already set anything — but emitting a policy the deployment did not ask
-    for is worse than emitting none, and such a value serves no assets either way.
     """
 
     static_url = getattr(settings, "STATIC_URL", "") or ""
     parts = urlsplit(static_url)
-    if not parts.netloc or not _CSP_HOST.fullmatch(parts.netloc):
+    try:
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        # urlsplit defers port validation to attribute access.
         return ""
-    return f"{parts.scheme}://{parts.netloc}" if parts.scheme else parts.netloc
+    if not host or _HEADER_STRUCTURAL.search(host):
+        return ""
+
+    if not host.isascii():
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError:
+            return ""
+    if ":" in host:
+        # hostname strips the brackets an IPv6 literal needs to be readable as a host.
+        host = f"[{host}]"
+
+    authority = f"{host}:{port}" if port else host
+    return f"{parts.scheme}://{authority}" if parts.scheme else authority
 
 
 def _docs_csp() -> str:

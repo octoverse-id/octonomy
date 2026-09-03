@@ -336,17 +336,42 @@ def test_the_csp_admits_a_bracketed_ipv6_static_origin(static_url, expected):
     assert f"img-src 'self' {expected} data:" in policy
 
 
-def test_a_static_url_that_cannot_be_a_host_contributes_nothing_to_the_csp():
-    """A mis-provisioning guard, in the shape of the FORCE_SCRIPT_NAME one.
+def test_the_csp_punycodes_an_internationalized_static_host():
+    """A raw non-ASCII host would not survive the header, let alone the browser.
 
-    ``urlsplit`` ends a netloc only at ``/?#``, so a semicolon typed into
-    ``OCTONOMY_STATIC_URL`` lands inside it and would be pasted straight into the header —
-    adding a directive nobody wrote. STATIC_URL is process configuration rather than
-    request input, so this is a typo guard, not a defence; but a policy the deployment did
-    not ask for is worse than none, and a value like this serves no assets either way.
+    Django encodes header values as latin-1 and MIME-encodes what will not fit, so
+    ``例え.テスト`` would arrive as ``=?utf-8?b?...?=`` — a garbled policy rather than a
+    dropped source. Punycode is the form that both survives the wire and matches the host
+    the browser resolves the asset URL to.
     """
 
-    with override_settings(STATIC_URL="https://cdn.example.com; script-src */static/"):
+    with override_settings(STATIC_URL="https://例え.テスト/static/"):
+        policy = Client().get("/api/docs/swagger/").headers["Content-Security-Policy"]
+
+    assert "script-src 'self' https://xn--r8jz45g.xn--zckzah 'unsafe-inline'" in policy
+    assert policy.isascii()
+
+
+@pytest.mark.parametrize(
+    "static_url",
+    [
+        # urlsplit ends a netloc only at /?# — so a stray semicolon lands INSIDE it and
+        # would be pasted into the header, adding a directive nobody wrote.
+        "https://cdn.example.com; script-src */static/",
+        # urlsplit defers port validation to attribute access; this raises there.
+        "https://cdn.example.com:99999/static/",
+    ],
+)
+def test_a_static_url_that_cannot_be_a_host_contributes_nothing_to_the_csp(static_url):
+    """A mis-provisioning guard, in the shape of the FORCE_SCRIPT_NAME one.
+
+    STATIC_URL is process configuration rather than request input, so this is a typo guard
+    and not a defence — an operator who can set it can already set anything. But emitting a
+    policy the deployment did not ask for is worse than emitting none, and a value like
+    either of these serves no assets either way.
+    """
+
+    with override_settings(STATIC_URL=static_url):
         policy = Client().get("/api/docs/swagger/").headers["Content-Security-Policy"]
 
     assert "cdn.example.com" not in policy

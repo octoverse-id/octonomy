@@ -63,11 +63,13 @@ REDOC_HTML = f'<html><head></head><body><script src="{HASHED_REDOC_JS}"></script
 # The egress policy the docs views stamp on every response. The gate checks it because
 # the HTML sweep cannot see a URL baked into a bundle, and both bundles carry one — Redoc
 # fetches its Redocly attribution logo from a CDN with no setting to disable it.
-DOCS_CSP = {
-    "Content-Security-Policy": (
-        "default-src 'self'; img-src 'self' data:; worker-src 'self' blob:; child-src blob:"
-    )
-}
+SHIPPED_CSP = (
+    "default-src 'self'; base-uri 'self'; form-action 'self'; "
+    "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+    "worker-src 'self' blob:; child-src blob:"
+)
+DOCS_CSP = {"Content-Security-Policy": SHIPPED_CSP}
 
 # What a non-manifest deployment renders. The script must reject it: the whole point is to
 # probe the content-addressed path a browser really requests.
@@ -441,94 +443,113 @@ def test_a_docs_page_without_the_egress_csp_fails(run_script, stub_server):
 
 
 @pytest.mark.parametrize(
-    "img_src",
+    ("label", "policy"),
     [
-        # A wildcard permits the very request the directive is here to refuse.
-        "img-src *",
+        # --- An EXTRA source: an egress hole the page would never show. ---
+        #
+        # A wildcard permits the very request img-src is here to refuse.
+        ("wildcard images", SHIPPED_CSP.replace("img-src 'self' data:", "img-src *")),
         # And so does naming the host outright. This is the case a substring check for
         # "img-src 'self'" reported as enforced — the directive still starts with 'self'.
-        "img-src 'self' https://cdn.redoc.ly",
+        (
+            "the blocked host allowed back",
+            SHIPPED_CSP.replace(
+                "img-src 'self' data:", "img-src 'self' data: https://cdn.redoc.ly"
+            ),
+        ),
         # A scheme source is just as broad in practice.
-        "img-src 'self' https:",
+        ("any https image", SHIPPED_CSP.replace("img-src 'self' data:", "img-src 'self' https:")),
+        # Same substring trap one directive over: "default-src 'self' *" contains
+        # "default-src 'self'" and permits everything the policy meant to refuse.
+        ("widened default-src", SHIPPED_CSP.replace("default-src 'self'", "default-src 'self' *")),
+        # Egress by another route: fetch/XHR to anywhere.
+        ("open connect-src", SHIPPED_CSP.replace("connect-src 'self'", "connect-src 'self' *")),
+        # --- A MISSING source: the page breaks, and curl cannot see it. ---
+        #
+        # Without 'unsafe-inline' Swagger's inline bootstrap never runs and the UI is blank,
+        # while every asset this gate fetches still returns a healthy 200.
+        (
+            "script-src without unsafe-inline",
+            SHIPPED_CSP.replace("script-src 'self' 'unsafe-inline'", "script-src 'self'"),
+        ),
+        # Same for Redoc's styled-components rules.
+        (
+            "style-src without unsafe-inline",
+            SHIPPED_CSP.replace("style-src 'self' 'unsafe-inline'", "style-src 'self'"),
+        ),
+        # Redoc's search index worker is created from a Blob URL; without this it dies.
+        (
+            "worker-src without blob",
+            SHIPPED_CSP.replace("worker-src 'self' blob:", "worker-src 'self'"),
+        ),
+        # --- A directive removed outright. ---
+        ("no img-src at all", SHIPPED_CSP.replace("img-src 'self' data:; ", "")),
     ],
 )
-def test_a_docs_page_whose_csp_allows_third_party_images_fails(run_script, stub_server, img_src):
-    """img-src is the directive doing the work, and it is checked source by source.
+def test_a_rewritten_docs_csp_fails(run_script, stub_server, label, policy):
+    """Every directive is compared as a SET, so both failure directions are caught.
 
-    The reason it cannot be a substring test: every value above contains the exact string
-    ``img-src 'self'`` except the wildcard, so a `grep` for that reported enforcement while
-    Redoc's cdn.redoc.ly logo was still being fetched on every page view.
+    An extra source is an egress hole — and the reason it cannot be a substring test is
+    that most of the cases above still contain the exact string the substring version
+    looked for. A missing source is the opposite problem: the policy gets stricter and the
+    page stops working, which no amount of fetching assets reveals, because this gate is
+    curl and never executes the JavaScript.
     """
-
-    loose = {"Content-Security-Policy": f"default-src 'self'; {img_src}"}
-    base = stub_server(
-        _healthy(**{"/api/docs/redoc/": (200, "text/html", REDOC_HTML, loose, False)})
-    )
-
-    result = run_script("assert-static-served.sh", base)
-
-    assert result.returncode == 1
-    assert "Content-Security-Policy" in result.output
-
-
-def test_a_docs_page_whose_csp_has_no_img_src_fails(run_script, stub_server):
-    """No img-src means images fall back to default-src, which this gate cannot assume."""
 
     base = stub_server(
         _healthy(
             **{
+                "/api/docs/swagger/": (
+                    200,
+                    "text/html",
+                    SWAGGER_HTML,
+                    {"Content-Security-Policy": policy},
+                    False,
+                ),
                 "/api/docs/redoc/": (
                     200,
                     "text/html",
                     REDOC_HTML,
-                    {"Content-Security-Policy": "default-src 'self'"},
+                    {"Content-Security-Policy": policy},
                     False,
-                )
+                ),
             }
         )
     )
 
     result = run_script("assert-static-served.sh", base)
 
-    assert result.returncode == 1
-    assert "no img-src directive" in result.output
+    assert result.returncode == 1, label
+    assert "Content-Security-Policy" in result.output
 
 
-def test_a_docs_page_whose_default_src_is_widened_fails(run_script, stub_server):
-    # Same substring trap one directive over: "default-src 'self' *" contains
-    # "default-src 'self'" and permits everything the policy was meant to refuse.
-    wide = {"Content-Security-Policy": "default-src 'self' *; img-src 'self' data:"}
-    base = stub_server(
-        _healthy(**{"/api/docs/swagger/": (200, "text/html", SWAGGER_HTML, wide, False)})
-    )
+def test_the_directive_order_of_the_policy_does_not_matter(run_script, stub_server):
+    """Sources are compared as sets, so a proxy that reorders a correct policy still passes.
 
-    result = run_script("assert-static-served.sh", base)
-
-    assert result.returncode == 1
-    assert "default-src *" in result.output
-
-
-def test_the_shipped_policy_with_its_extra_directives_is_accepted(run_script, stub_server):
-    """Directives beyond the two checked must not be treated as violations.
-
-    The real policy also carries base-uri, form-action, script-src, style-src, font-src,
-    connect-src, worker-src and child-src. A gate that rejected anything it did not
-    recognise would fail every correct deployment.
+    Worth an explicit case: a gate that compared the header as one string would fail a
+    deployment whose policy is exactly right, and that false alarm is how a real gate gets
+    switched off.
     """
 
-    real = {
-        "Content-Security-Policy": (
-            "default-src 'self'; base-uri 'self'; form-action 'self'; "
-            "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
-            "worker-src 'self' blob:; child-src blob:"
-        )
-    }
+    reordered = "; ".join(reversed(SHIPPED_CSP.split("; ")))
+    shuffled = reordered.replace("img-src 'self' data:", "img-src data: 'self'")
     base = stub_server(
         _healthy(
             **{
-                "/api/docs/swagger/": (200, "text/html", SWAGGER_HTML, real, False),
-                "/api/docs/redoc/": (200, "text/html", REDOC_HTML, real, False),
+                "/api/docs/swagger/": (
+                    200,
+                    "text/html",
+                    SWAGGER_HTML,
+                    {"Content-Security-Policy": shuffled},
+                    False,
+                ),
+                "/api/docs/redoc/": (
+                    200,
+                    "text/html",
+                    REDOC_HTML,
+                    {"Content-Security-Policy": shuffled},
+                    False,
+                ),
             }
         )
     )

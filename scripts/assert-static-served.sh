@@ -74,29 +74,44 @@ fail() {
   exit 1
 }
 
-# Assert a CSP directive lists EXACTLY the sources named, and nothing else.
+# The policy the shipped configuration serves on a docs page, directive by directive, as
+# "<name> <source>..." entries. Compared as SETS: an extra source is an egress hole, and a
+# MISSING one breaks the page — dropping 'unsafe-inline' from script-src leaves Swagger's
+# inline bootstrap blocked and the UI blank, which no amount of fetching assets would reveal
+# (this gate is curl; it never executes the JavaScript).
 #
-# Exact, not a substring match, and for the same reason the content-type comparison below
-# is exact: `img-src 'self'` appears just as happily inside `img-src 'self' *` and
-# `img-src 'self' https://cdn.redoc.ly`. Both of those permit the very request this gate
-# claims to have blocked, so a substring test would report enforcement while the egress
-# regression it exists to catch is live.
-#
-# The allowlist is the SHIPPED configuration's — CI runs that, the same premise the
-# Access-Control-Allow-Origin assertion below rests on. A deployment that fronts /static/
-# with a CDN legitimately carries that origin here too; such a deployment is changing this
-# contract and should change this call with it.
-#
-# usage: assert_csp_sources PAGE POLICY DIRECTIVE ALLOWED...
-assert_csp_sources() {
-  local page=$1 policy=$2 directive=$3
-  shift 3
-  local allowed=" $* "
+# This is the SHIPPED configuration's policy — CI runs that, the same premise the
+# Access-Control-Allow-Origin assertion rests on. A deployment fronting /static/ with a CDN
+# legitimately carries that origin in the asset directives; such a deployment is changing
+# this contract and should change this table with it.
+EXPECTED_CSP=(
+  "default-src 'self'"
+  "base-uri 'self'"
+  "form-action 'self'"
+  "script-src 'self' 'unsafe-inline'"
+  "style-src 'self' 'unsafe-inline'"
+  "img-src 'self' data:"
+  "font-src 'self' data:"
+  "connect-src 'self'"
+  "worker-src 'self' blob:"
+  "child-src blob:"
+)
 
-  # Directive names are case-insensitive; values are not. Split the policy on ';' and take
-  # the first entry whose first token is this directive.
-  local found=""
-  local entry name
+# Assert one CSP directive carries EXACTLY the sources expected — no more, no fewer.
+#
+# Exact, not a substring match, and for the same reason the content-type comparison below is
+# exact: `img-src 'self'` appears just as happily inside `img-src 'self' *` and
+# `img-src 'self' https://cdn.redoc.ly`. Both permit the request this gate claims to have
+# blocked, so a substring test would report enforcement while the egress regression is live.
+#
+# usage: assert_csp_directive PAGE POLICY "DIRECTIVE SOURCE..."
+assert_csp_directive() {
+  local page=$1 policy=$2 expected=$3
+  local directive=${expected%% *}
+
+  # Directive names are case-insensitive; source values are not. Split the policy on ';'
+  # and take the first entry whose first token is this directive.
+  local found="" entry name
   while IFS= read -r entry; do
     name=$(awk '{print tolower($1)}' <<<"$entry")
     if [ "$name" = "$directive" ]; then
@@ -106,22 +121,22 @@ assert_csp_sources() {
   done < <(tr ';' '\n' <<<"$policy")
 
   if [ -z "$found" ]; then
-    fail "$page has a Content-Security-Policy with no $directive directive, so nothing constrains that resource type."
+    fail "$page has a Content-Security-Policy with no $directive directive; expected '$expected'. Without it that resource type falls back to default-src, or to nothing at all."
   fi
 
-  # `read -ra` splits on whitespace and collapses runs of it, leaving the directive name in
-  # [0] and each source after it. Deliberately not `xargs`: xargs strips shell quoting, so
-  # every keyword source would arrive as a bare `self` and match nothing.
-  local -a tokens
-  read -ra tokens <<<"$found"
+  # Compare as sets: `read -ra` collapses whitespace, `sort` removes ordering. Deliberately
+  # not `xargs` for the tokenising — xargs strips shell quoting, so every keyword source
+  # would arrive as a bare `self` and match nothing.
+  local -a got_tokens want_tokens
+  read -ra got_tokens <<<"$found"
+  read -ra want_tokens <<<"$expected"
+  local got want
+  got=$(printf '%s\n' "${got_tokens[@]:1}" | sort | tr '\n' ' ')
+  want=$(printf '%s\n' "${want_tokens[@]:1}" | sort | tr '\n' ' ')
 
-  local source
-  for source in "${tokens[@]:1}"; do
-    case "$allowed" in
-      *" $source "*) ;;
-      *) fail "$page has '$directive $source' in its Content-Security-Policy; only [$*] are expected. An extra source here is what would let a bundle reach a third party while every other assertion in this gate still passes." ;;
-    esac
-  done
+  if [ "$got" != "$want" ]; then
+    fail "$page has '$found' in its Content-Security-Policy; expected exactly '$expected'. An EXTRA source is an egress hole; a MISSING one breaks the page — without 'unsafe-inline' on script-src, Swagger's inline bootstrap is blocked and the UI renders blank, which fetching assets cannot detect."
+  fi
 }
 
 # --- The admin page must render at all ------------------------------------------------
@@ -268,10 +283,9 @@ for page in /api/docs/swagger/ /api/docs/redoc/; do
   if [ -z "$csp" ]; then
     fail "$page carries no Content-Security-Policy header. That header is what stops the bundles' own JavaScript reaching a third party — nothing in the HTML shows those requests."
   fi
-  assert_csp_sources "$page" "$csp" default-src "'self'"
-  # img-src is the directive that actually refuses Redoc's cdn.redoc.ly logo, so it gets the
-  # same exact treatment rather than a substring test — see assert_csp_sources.
-  assert_csp_sources "$page" "$csp" img-src "'self'" "data:"
+  for expected in "${EXPECTED_CSP[@]}"; do
+    assert_csp_directive "$page" "$csp" "$expected"
+  done
 
   echo "ok    GET $page -> 200, self-hosted, CSP enforced, references $(wc -l <"$work/page-assets.txt" | tr -d ' ') hashed asset(s)"
 done
