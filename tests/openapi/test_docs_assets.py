@@ -313,71 +313,56 @@ def test_the_csp_admits_a_protocol_relative_static_url():
     assert "//cdn.example.com" not in policy
 
 
-@pytest.mark.parametrize(
-    ("static_url", "expected"),
-    [
-        ("http://[::1]:9000/static/", "http://[::1]:9000"),
-        ("https://[2001:db8::1]/static/", "https://[2001:db8::1]"),
-    ],
-)
-def test_the_csp_admits_a_bracketed_ipv6_static_origin(static_url, expected):
-    """A host filter written for DNS names would drop these and blank the docs.
+def test_the_csp_admits_an_ascii_punycode_static_host():
+    """The IDN topology that CAN be enforced, and the one operators should use.
 
-    ``urlsplit`` hands back ``[::1]:9000`` for such a URL, and the rendered asset URLs use
-    it, so omitting it from the policy blocks the deployment's own bundles. CSP3's
-    host-part grammar has no IPv6 form, so a browser may ignore the source — but that is
-    no worse than the omission, and it works everywhere the form is understood.
+    A host already written in punycode is an ordinary ASCII host: Chromium parses
+    ``https://xn--fa-hia.de`` as a source without complaint, and it is exactly the host the
+    browser resolves the asset URL to.
     """
 
-    with override_settings(STATIC_URL=static_url):
+    with override_settings(STATIC_URL="https://xn--fa-hia.de/static/"):
         policy = Client().get("/api/docs/swagger/").headers["Content-Security-Policy"]
 
-    assert f"script-src 'self' {expected} 'unsafe-inline'" in policy
-    assert f"img-src 'self' {expected} data:" in policy
-
-
-def test_the_csp_punycodes_an_internationalized_static_host():
-    """A raw non-ASCII host would not survive the header, let alone the browser.
-
-    Django encodes header values as latin-1 and MIME-encodes what will not fit, so
-    ``例え.テスト`` would arrive as ``=?utf-8?b?...?=`` — a garbled policy rather than a
-    dropped source. Punycode is the form that both survives the wire and matches the host
-    the browser resolves the asset URL to.
-    """
-
-    with override_settings(STATIC_URL="https://例え.テスト/static/"):
-        policy = Client().get("/api/docs/swagger/").headers["Content-Security-Policy"]
-
-    assert "script-src 'self' https://xn--r8jz45g.xn--zckzah 'unsafe-inline'" in policy
-    assert policy.isascii()
+    assert "script-src 'self' https://xn--fa-hia.de 'unsafe-inline'" in policy
 
 
 @pytest.mark.parametrize(
-    "static_url",
+    ("static_url", "why"),
     [
-        # urlsplit ends a netloc only at /?# — so a stray semicolon lands INSIDE it and
-        # would be pasted into the header, adding a directive nobody wrote.
-        "https://cdn.example.com; script-src */static/",
+        # CSP's host-source grammar has no IPv6 form. Chromium says so out loud: "contains
+        # an invalid source: 'http://[::1]:9000'. It will be ignored." Emitting it is not a
+        # best effort — it is a policy that provably blocks the assets.
+        ("http://[::1]:9000/static/", "IPv6 literal"),
+        # Python's idna codec is IDNA 2003 and browsers are not: it maps faß.de to fass.de
+        # where a browser fetches xn--fa-hia.de. Naming the wrong host blocks just as hard
+        # as naming none. Such an operator can write STATIC_URL in punycode instead.
+        ("https://faß.de/static/", "IDNA 2003 disagrees with the browser"),
         # urlsplit defers port validation to attribute access; this raises there.
-        "https://cdn.example.com:99999/static/",
+        ("https://cdn.example.com:99999/static/", "unparseable port"),
+        # urlsplit ends a netloc only at /?#, so a stray semicolon lands INSIDE it and would
+        # otherwise be pasted into the header, adding a directive nobody wrote.
+        ("https://cdn.example.com; script-src */static/", "would restructure the header"),
     ],
 )
-def test_a_static_url_that_cannot_be_a_host_contributes_nothing_to_the_csp(static_url):
-    """A mis-provisioning guard, in the shape of the FORCE_SCRIPT_NAME one.
+def test_no_policy_at_all_when_the_static_origin_cannot_be_expressed(static_url, why):
+    """Fails OPEN, and that is the deliberate half of this design.
 
-    STATIC_URL is process configuration rather than request input, so this is a typo guard
-    and not a defence — an operator who can set it can already set anything. But emitting a
-    policy the deployment did not ask for is worse than emitting none, and a value like
-    either of these serves no assets either way.
+    Shipping the policy WITHOUT the origin is not a weaker guarantee — it is a broken
+    deployment: every bundle blocked and a blank docs page, caused by the control meant to
+    protect it. Omitting the header leaves such a deployment exactly where #146 found it,
+    with the assets still self-hosted and the egress documented rather than enforced.
+
+    All four shapes are exotic for a self-hosted service, all four are the operator's own
+    topology rather than the shipped default, and all four have a fix the operator
+    controls: write the origin as an ASCII host.
     """
 
     with override_settings(STATIC_URL=static_url):
-        policy = Client().get("/api/docs/swagger/").headers["Content-Security-Policy"]
+        response = Client().get("/api/docs/swagger/")
 
-    assert "cdn.example.com" not in policy
-    # And nothing extra was spliced in: the directive list is the untouched default.
-    assert policy.count("script-src") == 1
-    assert "img-src 'self' data:" in policy
+    assert response.status_code == 200, why
+    assert "Content-Security-Policy" not in response.headers, why
 
 
 def test_the_csp_is_scoped_to_the_docs_pages():

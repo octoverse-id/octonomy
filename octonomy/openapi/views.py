@@ -64,41 +64,43 @@ def _swagger_ui_settings(request) -> str:
 
 
 # Characters that would let a STATIC_URL restructure the header rather than name a host in
-# it. Everything else is passed through: this deliberately does NOT re-implement CSP's
-# host-source grammar. Three review rounds of doing that produced three shapes it wrongly
-# rejected — protocol-relative, bracketed IPv6, internationalized — and each rejection was a
-# policy that blocked the deployment's own bundles and rendered the docs blank. Whether a
-# browser honours a given source is the browser's call, and a source it ignores is no worse
-# than a source that was never emitted.
+# it. Everything else about the host is left to _static_origin's expressibility test below;
+# this pattern is not a hostname validator.
 _HEADER_STRUCTURAL = re.compile(r"[\s;,'\"]")
 
+# Sentinel for "this deployment's asset origin cannot be written as a CSP source". Distinct
+# from "" (same-origin, nothing to add), because the two demand opposite responses: "" gets
+# the normal policy, this one gets NO policy at all. See _docs_csp.
+UNEXPRESSIBLE = object()
 
-def _static_origin() -> str:
-    """``STATIC_URL``'s origin as a CSP host-source, or "" when it is same-origin.
+
+def _static_origin():
+    """``STATIC_URL``'s origin as a CSP host-source: "" if same-origin, UNEXPRESSIBLE if not.
 
     ``OCTONOMY_STATIC_URL`` may legitimately be a full URL — fronting ``/static/`` with a
-    CDN is a supported topology (``config/settings.py``). A policy hard-coded to ``'self'``
-    would then block the deployment's own assets and leave the docs pages blank, so the
-    origin is read from the setting rather than assumed.
+    CDN is a supported topology (``config/settings.py``) — so the origin has to reach the
+    policy or the policy blocks the deployment's own bundles and the docs render blank.
 
     Keyed on the parsed host, not on an ``https://`` prefix, because the setting's own
-    validator accepts a PROTOCOL-RELATIVE ``//cdn.example.com/static/``: that value starts
-    with "/", so it passes the root-absolute test, and ``{% static %}`` then emits
-    ``//cdn...`` asset URLs. Such a host is emitted BARE (``cdn.example.com``) rather than
-    as ``//cdn.example.com`` — CSP's grammar makes the scheme optional, and a scheme-less
-    host matches the page's own scheme, while a leading ``//`` matches no source-expression
-    at all and would be discarded as invalid, silently leaving the directive at ``'self'``.
+    validator accepts a PROTOCOL-RELATIVE ``//cdn.example.com/static/``: it starts with "/",
+    so it passes the root-absolute test, and ``{% static %}`` then emits ``//cdn...`` asset
+    URLs. Such a host is emitted BARE (``cdn.example.com``); CSP makes the scheme optional
+    and a scheme-less host matches the page's own scheme, while a leading ``//`` matches no
+    source-expression at all. Verified in Chromium: ``cdn.example.com``,
+    ``cdn.example.com:8443``, ``*.example.com`` and ``https://cdn.example.com:8443`` all
+    parse without complaint.
 
-    Three shapes need explicit handling, and all three came from review:
+    Two shapes are NOT expressible, and both are reported rather than approximated:
 
-    * IPv6. ``urlsplit().hostname`` strips the brackets that ``[::1]:9000`` needs back.
-    * Internationalized names. A raw ``例え.テスト`` in a header is not latin-1, so Django
-      MIME-encodes the value into ``=?utf-8?b?...?=`` — a garbled policy rather than a
-      dropped source. Punycode is the only form that survives the wire.
-    * Anything unparseable (a bad port, an IDN label that will not encode) yields no origin
-      rather than a guess.
+    * **An IPv6 literal.** CSP's ``host-source`` grammar has no IPv6 form. Chromium says so
+      out loud — "contains an invalid source: 'http://[::1]:9000'. It will be ignored" —
+      so emitting it is not a best-effort, it is a policy that provably blocks the assets.
+    * **A non-ASCII host.** Python's built-in ``idna`` codec is IDNA 2003, which browsers
+      are not: it maps ``faß.de`` to ``fass.de`` where a browser fetches from
+      ``xn--fa-hia.de``. Naming the wrong host has the same effect as naming none. An
+      operator on an IDN domain can write STATIC_URL in punycode and get full enforcement.
 
-    Userinfo and the path are dropped by construction: only host and port are read.
+    Userinfo and the path drop out by construction: only host and port are read.
 
     Read per response, not at import: a settings override has to move the policy with it.
     """
@@ -109,25 +111,19 @@ def _static_origin() -> str:
         host, port = parts.hostname, parts.port
     except ValueError:
         # urlsplit defers port validation to attribute access.
+        return UNEXPRESSIBLE
+    if not host:
         return ""
-    if not host or _HEADER_STRUCTURAL.search(host):
-        return ""
-
-    if not host.isascii():
-        try:
-            host = host.encode("idna").decode("ascii")
-        except UnicodeError:
-            return ""
-    if ":" in host:
-        # hostname strips the brackets an IPv6 literal needs to be readable as a host.
-        host = f"[{host}]"
+    if _HEADER_STRUCTURAL.search(host) or not host.isascii() or ":" in host:
+        # ":" in a hostname means an IPv6 literal — urlsplit strips its brackets.
+        return UNEXPRESSIBLE
 
     authority = f"{host}:{port}" if port else host
     return f"{parts.scheme}://{authority}" if parts.scheme else authority
 
 
-def _docs_csp() -> str:
-    """The egress policy for the docs pages.
+def _docs_csp() -> str | None:
+    """The egress policy for the docs pages, or None when it cannot be written honestly.
 
     This is an EGRESS control, not an XSS one — worth being explicit about, because
     ``'unsafe-inline'`` in a CSP normally means the opposite. Both scripts and styles here
@@ -148,9 +144,20 @@ def _docs_csp() -> str:
     ``worker-src``/``child-src`` allow ``blob:`` because Redoc builds its search index in
     a worker created from a Blob URL; without it search silently stops working. ``child-src``
     is the Safari-before-15.4 fallback for the same thing.
+
+    **Fails OPEN.** When ``STATIC_URL``'s origin cannot be expressed as a CSP source, no
+    header is sent at all. The alternative — ship the policy without that origin — is not a
+    weaker guarantee, it is a broken deployment: every bundle blocked and a blank docs page,
+    caused by the control meant to protect it. Omitting leaves such a deployment exactly
+    where this issue found it (assets self-hosted, egress documented rather than enforced),
+    which is a real but bounded loss, and it is the operator's own unusual topology rather
+    than the shipped default. Both shapes are exotic for a self-hosted service, and both
+    have a fix the operator controls: write the origin as an ASCII host.
     """
 
     static = _static_origin()
+    if static is UNEXPRESSIBLE:
+        return None
     assets = f"'self' {static}" if static else "'self'"
     return "; ".join(
         [
@@ -180,7 +187,9 @@ class SelfContainedDocsMixin:
 
     def finalize_response(self, request, response, *args, **kwargs):
         response = super().finalize_response(request, response, *args, **kwargs)
-        response["Content-Security-Policy"] = _docs_csp()
+        policy = _docs_csp()
+        if policy is not None:
+            response["Content-Security-Policy"] = policy
         return response
 
 

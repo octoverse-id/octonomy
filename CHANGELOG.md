@@ -33,7 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worker Redoc builds its search index in; an off-origin `OCTONOMY_STATIC_URL` is added
   automatically so a CDN topology still works — including the protocol-relative
   `//cdn.example.com/static/` form the setting's validator accepts, which is emitted as a
-  bare host because a leading `//` matches no CSP source-expression). It is an egress control rather than an XSS
+  bare host because a leading `//` matches no CSP source-expression). Where that origin
+  *cannot* be written as a CSP source — an IPv6 literal, which CSP's grammar has no form
+  for, or a non-ASCII hostname, where Python's IDNA-2003 encoder and browsers disagree —
+  the pages send **no policy at all** rather than one that would block the deployment's own
+  bundles and blank the docs; such a deployment keeps the self-hosted assets and loses only
+  the enforcement, and writing the origin as an ASCII host restores it. It is an egress control rather than an XSS
   one — it permits `'unsafe-inline'`, because both pages are inline-script by construction
   upstream — and it is the only control that covers what a future bundle upgrade *adds*.
   Verified in a real browser against a `DEBUG=false` Gunicorn: Swagger renders its 29

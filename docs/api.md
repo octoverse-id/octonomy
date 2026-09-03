@@ -98,6 +98,14 @@ The `Content-Security-Policy` here is an **egress** control, not an XSS one — 
 `OCTONOMY_STATIC_URL` points at a CDN of your own, that origin is added to the policy
 automatically.
 
+Two asset origins cannot be written as a CSP source, and on those the docs pages send **no
+policy at all** rather than one that would block your own bundles: an **IPv6 literal**
+(`http://[::1]:9000/static/` — CSP's grammar has no IPv6 form, and browsers discard the
+source) and a **non-ASCII hostname** (Python's IDNA-2003 encoder and your browser disagree
+on hosts like `faß.de`). Both keep working, just without the enforcement; write the origin
+as an ASCII host — punycode for an IDN, a DNS name rather than an IPv6 literal — to get it
+back.
+
 ## Namespace Trust Model
 
 Octonomy enforces exact namespace grants against the request namespace. A token restricted to
