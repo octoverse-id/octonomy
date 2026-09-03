@@ -313,6 +313,48 @@ def test_the_csp_admits_a_protocol_relative_static_url():
     assert "//cdn.example.com" not in policy
 
 
+@pytest.mark.parametrize(
+    ("static_url", "expected"),
+    [
+        ("http://[::1]:9000/static/", "http://[::1]:9000"),
+        ("https://[2001:db8::1]/static/", "https://[2001:db8::1]"),
+    ],
+)
+def test_the_csp_admits_a_bracketed_ipv6_static_origin(static_url, expected):
+    """A host filter written for DNS names would drop these and blank the docs.
+
+    ``urlsplit`` hands back ``[::1]:9000`` for such a URL, and the rendered asset URLs use
+    it, so omitting it from the policy blocks the deployment's own bundles. CSP3's
+    host-part grammar has no IPv6 form, so a browser may ignore the source — but that is
+    no worse than the omission, and it works everywhere the form is understood.
+    """
+
+    with override_settings(STATIC_URL=static_url):
+        policy = Client().get("/api/docs/swagger/").headers["Content-Security-Policy"]
+
+    assert f"script-src 'self' {expected} 'unsafe-inline'" in policy
+    assert f"img-src 'self' {expected} data:" in policy
+
+
+def test_a_static_url_that_cannot_be_a_host_contributes_nothing_to_the_csp():
+    """A mis-provisioning guard, in the shape of the FORCE_SCRIPT_NAME one.
+
+    ``urlsplit`` ends a netloc only at ``/?#``, so a semicolon typed into
+    ``OCTONOMY_STATIC_URL`` lands inside it and would be pasted straight into the header —
+    adding a directive nobody wrote. STATIC_URL is process configuration rather than
+    request input, so this is a typo guard, not a defence; but a policy the deployment did
+    not ask for is worse than none, and a value like this serves no assets either way.
+    """
+
+    with override_settings(STATIC_URL="https://cdn.example.com; script-src */static/"):
+        policy = Client().get("/api/docs/swagger/").headers["Content-Security-Policy"]
+
+    assert "cdn.example.com" not in policy
+    # And nothing extra was spliced in: the directive list is the untouched default.
+    assert policy.count("script-src") == 1
+    assert "img-src 'self' data:" in policy
+
+
 def test_the_csp_is_scoped_to_the_docs_pages():
     # The JSON API needs no policy and must not inherit one: `connect-src 'self'` on an API
     # response means nothing, but a `default-src` that someone later tightens would start

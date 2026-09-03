@@ -21,6 +21,7 @@ others:
 from __future__ import annotations
 
 import json
+import re
 from urllib.parse import urlsplit
 
 from django.conf import settings
@@ -62,6 +63,21 @@ def _swagger_ui_settings(request) -> str:
     )
 
 
+# A host[:port] as CSP's host-source grammar allows it, plus the "*." wildcard label and the
+# bracketed IPv6 literal urlsplit hands back for http://[::1]:9000/. Not a hostname validator
+# — just tight enough that nothing which could restructure the header (whitespace, ";", ",",
+# quotes) can reach it.
+#
+# CSP3's host-part grammar has no IPv6 form, so a browser may or may not honour "[::1]:9000"
+# as a source. Passing it through is still strictly better than dropping it: a dropped origin
+# is a policy that certainly blocks the deployment's own bundles, where a source a browser
+# ignores is no worse than that and works everywhere it is understood.
+_CSP_HOST = re.compile(
+    r"(?:\*\.)?[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{1,5})?"
+    r"|\[[0-9A-Fa-f:.]+\](?::[0-9]{1,5})?"
+)
+
+
 def _static_origin() -> str:
     """``STATIC_URL``'s origin as a CSP host-source, or "" when it is same-origin.
 
@@ -82,11 +98,19 @@ def _static_origin() -> str:
     discard that token as invalid and silently leave the directive back at ``'self'``.
 
     Read per response, not at import: a settings override has to move the policy with it.
+
+    A netloc that cannot be a CSP host is dropped rather than pasted in. ``urlsplit`` ends a
+    netloc only at ``/?#``, so a mis-typed ``https://cdn.example.com; script-src *``/static/
+    would otherwise carry a semicolon into the header and add a directive nobody wrote. Like
+    the FORCE_SCRIPT_NAME validator in ``config/settings.py``, this is a mis-provisioning
+    guard rather than a defence — STATIC_URL is process configuration, and an operator who
+    can set it can already set anything — but emitting a policy the deployment did not ask
+    for is worse than emitting none, and such a value serves no assets either way.
     """
 
     static_url = getattr(settings, "STATIC_URL", "") or ""
     parts = urlsplit(static_url)
-    if not parts.netloc:
+    if not parts.netloc or not _CSP_HOST.fullmatch(parts.netloc):
         return ""
     return f"{parts.scheme}://{parts.netloc}" if parts.scheme else parts.netloc
 

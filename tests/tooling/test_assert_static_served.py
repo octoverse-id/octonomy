@@ -42,13 +42,18 @@ HASHED_SWAGGER_JS = (
     "/static/drf_spectacular_sidecar/swagger-ui-dist/swagger-ui-bundle.bbccddee1122.js"
 )
 HASHED_REDOC_JS = "/static/drf_spectacular_sidecar/redoc/bundles/redoc.standalone.ccddeeff2233.js"
+# The Swagger page self-hosts its favicon too, and it is the only non-css/js asset any
+# probed page references — so it is also the one that a css/js-only extractor never fetched
+# while the gate's closing line claimed every referenced asset had been served.
+HASHED_FAVICON = "/static/drf_spectacular_sidecar/swagger-ui-dist/favicon-32x32.ddeeff334455.png"
 
 # The inline <script> is not decoration. drf-spectacular inlines its Swagger init script
 # into the page, and that script contains `//` line comments — so a single
 # `(https?:)?//` pattern would flag every healthy docs page as protocol-relative. This
 # fixture is what keeps the two-grep split honest.
 SWAGGER_HTML = (
-    f'<html><head><link rel="stylesheet" href="{HASHED_SWAGGER_CSS}"></head>'
+    f'<html><head><link rel="icon" href="{HASHED_FAVICON}">'
+    f'<link rel="stylesheet" href="{HASHED_SWAGGER_CSS}"></head>'
     f'<body><script src="{HASHED_SWAGGER_JS}"></script>'
     "<script>\n// only retry once to prevent endless loop.\nconst ui = 1;\n</script>"
     "</body></html>"
@@ -72,6 +77,7 @@ UNHASHED_HTML = (
 
 CSS = 'text/css; charset="utf-8"'
 JS = 'text/javascript; charset="utf-8"'
+PNG = "image/png"
 
 
 class _Stub(BaseHTTPRequestHandler):
@@ -134,6 +140,7 @@ def _healthy(**overrides):
         "/api/docs/redoc/": (200, "text/html", REDOC_HTML, DOCS_CSP, False),
         HASHED_SWAGGER_CSS: (200, CSS, "body{}", {}, False),
         HASHED_SWAGGER_JS: (200, JS, "1;", {}, False),
+        HASHED_FAVICON: (200, PNG, "\x89PNG", {}, False),
         HASHED_REDOC_JS: (200, JS, "1;", {}, False),
     }
     routes.update(overrides)
@@ -527,6 +534,31 @@ def test_the_shipped_policy_with_its_extra_directives_is_accepted(run_script, st
     )
 
     assert run_script("assert-static-served.sh", base).returncode == 0
+
+
+def test_a_missing_swagger_favicon_fails(run_script, stub_server):
+    """The asset the extractor used to skip entirely.
+
+    Cosmetic on its own, but the gate's closing line claims every hashed asset the pages
+    reference was served — and a css/js-only extractor made that claim false for the one
+    PNG on the page. Fixing the claim means probing it.
+    """
+
+    base = stub_server(_healthy(**{HASHED_FAVICON: (404, "text/html", "nope", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert HASHED_FAVICON in result.output
+
+
+def test_a_favicon_served_as_something_other_than_an_image_fails(run_script, stub_server):
+    base = stub_server(_healthy(**{HASHED_FAVICON: (200, "text/html", "nope", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "is a PNG but was served as" in result.output
 
 
 def test_a_docs_asset_that_404s_fails(run_script, stub_server):

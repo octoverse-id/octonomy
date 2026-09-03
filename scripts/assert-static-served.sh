@@ -51,7 +51,7 @@ trap 'rm -rf "$work"' EXIT
 CURL=(curl -sS --connect-timeout 5 --max-time 30 --max-filesize 5000000)
 
 # An upper bound on how many assets a page may reference before this is treated as a
-# problem in its own right. The four real pages reference 27 between them; a page emitting
+# problem in its own right. The four real pages reference 28 between them; a page emitting
 # hundreds means a template regression, and probing them all sequentially is how a bounded
 # per-request timeout still adds up to a job timeout. Fails loudly rather than truncating,
 # because silently probing a subset is the sampling defect this loop exists to avoid.
@@ -145,7 +145,7 @@ echo "ok    GET /admin/login/ -> 200"
 # --- It must reference hashed assets --------------------------------------------------
 # If nothing in the page is content-addressed, manifest storage is not in effect and every
 # assertion below would be testing the wrong backend.
-grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/admin.html" |
+grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js|png)' "$work/admin.html" |
   sort -u >"$work/admin-assets.txt" || true
 if [ ! -s "$work/admin-assets.txt" ]; then
   fail "the rendered admin page references no hashed asset URL — the manifest staticfiles backend is not in effect, so this gate would be checking the wrong thing."
@@ -189,7 +189,7 @@ echo "ok    browsable API rendered ($api_status)"
 # ALL hashed assets on this page, not only the rest_framework ones. Scoping the extractor
 # to /static/rest_framework/ meant a broken asset from anywhere else on the same page — a
 # project-level override, say — was never probed at all: status, type and CORS all skipped.
-grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/api.html" |
+grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js|png)' "$work/api.html" |
   sort -u >"$work/api-assets.txt" || true
 # The rest_framework requirement stays, as a separate assertion: it is what proves the page
 # really is the browsable renderer rather than some other 4xx that happens to carry assets.
@@ -246,7 +246,7 @@ for page in /api/docs/swagger/ /api/docs/redoc/; do
   # Extracted per page and asserted per page BEFORE appending to the accumulated list: a
   # shared file would let Swagger's assets satisfy Redoc's assertion, which is exactly the
   # regression (an override template silently reverting to the CDN) this is here to catch.
-  grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/docs.html" |
+  grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js|png)' "$work/docs.html" |
     sort -u >"$work/page-assets.txt" || true
   # Same reasoning as the rest_framework assertion above: a page carrying no hashed asset
   # at all would satisfy every check so far while proving nothing about the manifest.
@@ -346,9 +346,18 @@ while IFS= read -r url; do
         *) fail "GET $url is a script but was served as '$ctype' — a browser will not execute it" ;;
       esac
       ;;
+    *.png)
+      # The Swagger page self-hosts a hashed favicon, and it is the only non-css/js asset
+      # any probed page references. Left out of the extractor it was the one referenced
+      # asset this gate never fetched, while its closing line claimed all of them.
+      case "$essence" in
+        image/png) ;;
+        *) fail "GET $url is a PNG but was served as '$ctype'" ;;
+      esac
+      ;;
     *)
-      # Unreachable through the extraction regexes above, which only ever yield .css or
-      # .js. Kept so widening them cannot silently skip this check.
+      # Unreachable through the extraction regexes above, which only ever yield .css, .js
+      # or .png. Kept so widening them cannot silently skip this check.
       fail "GET $url has an extension this gate does not know how to type-check"
       ;;
   esac
