@@ -271,6 +271,8 @@ of promising a strength check that never existed. This entry is the half that wa
   `OCTONOMY_ALLOW_WEAK_SECRETS` escape hatch. That hatch must bypass **only** the new strength
   heuristics, for an operator whose value is genuinely random but short. It must never bypass the
   two tests that exist today: an empty value and the local-dev literal stay unbootable regardless.
+  Decide explicitly whether it also suppresses `octonomy.E001`/`E002` under `check --deploy` — see
+  Context; the answer determines whether those two branches are reachable at all.
 - **Why:** The gap was observed in practice, not hypothesised: a working `deploy/docker/.env` in this
   project carried `DJANGO_SECRET_KEY=thisisthedjangomostsecretkey` and started normally. A guessable
   `SECRET_KEY` undermines everything Django signs with it. Scope it honestly before prioritising:
@@ -283,8 +285,8 @@ of promising a strength check that never existed. This entry is the half that wa
   keying every token hash, because `generate_service_token` mints `secrets.token_urlsafe(32)` — a
   known pepper does not make 256-bit tokens recoverable, and it needs a database leak first.
 - **Pros:** One home for a rule that currently has four, so the next patch cannot drift; catches the
-  padding case (`"a" * 60`) that a bare length rule misses; makes the `octonomy.E001`/`E002` branches
-  meaningful again instead of unreachable (see Context).
+  padding case (`"a" * 60`) that a bare length rule misses; forces a decision on `octonomy.E001` /
+  `E002`, which are dead today (see Context).
 - **Cons:** Every short secret fixture in the repo must be lengthened first, across four files. Via
   the boot guards: `_PROD_BASE` in `tests/admin/test_admin_settings.py` (18 chars, and it feeds
   *every* `DEBUG=false` subprocess in that file), the two docker-smoke blocks in
@@ -302,9 +304,35 @@ of promising a strength check that never existed. This entry is the half that wa
   `deploy=True`, so none of it runs at boot; it still does useful work under `manage.py check
   --deploy` through `_check_allowed_hosts` and `_check_database_engine`. But its two *secret*
   branches — `octonomy.E001` and `E002` — are **unreachable in any real configuration**, because the
-  settings import raises on the same conditions first. `tests/core/test_checks.py` reaches them only
-  via `override_settings`: a test proving dead branches work. Sharing one predicate is what makes
-  them mean something again. Also absorbed: a `DJANGO_SECRET_KEY` rotation runbook,
+  settings import raises on the same conditions first. Verified both ways: with `DEBUG=false` and the
+  local-dev default, `check --deploy` never gets to run; with `DEBUG=true` the wrapper returns `[]`
+  on its first line. `tests/core/test_checks.py` reaches them only via `override_settings`: a test
+  proving dead branches work.
+
+  **Sharing the predicate does not by itself revive them, and the plan must say how it resolves that**
+  (raised in review of PR #154). The reachable case is narrow. Under `DEBUG=false`, `E001` can only be
+  emitted when *all* of these hold: the value passes the empty and local-dev-literal tests (the hatch
+  never bypasses those), it fails **only** the new strength heuristics,
+  `OCTONOMY_ALLOW_WEAK_SECRETS` is set so boot proceeds, the *other* secret also passes its own boot
+  guard — otherwise that one raises first and the check is never reached — and the deploy check
+  ignores the hatch. Three ways to resolve it, pick one deliberately:
+    1. **The hatch unblocks boot but does not silence the check** (preferred). `E001`/`E002` then mean
+       something precise — "you opted out of the block, and this is still weak" — and they are the
+       only place that survives to say it, since `security.W009` is a warning that covers `SECRET_KEY`
+       alone. Smallest change; keeps a deploy-pipeline signal for an operator who used the hatch.
+    2. **Delete `E001`/`E002`** and their `override_settings` tests as genuine duplication, leaving
+       the boot guard as the single enforcement point.
+    3. **Move enforcement out of settings-import into a non-deploy-tagged system check**, the
+       `namespace_flag_dependencies` pattern whose docstring already states the rule. Cleanest on
+       paper, but it weakens the guarantee. The raise currently fires on *any* import of settings,
+       including the serving path. A system check does not: Django runs checks before most management
+       commands (`requires_system_checks` defaults to `"__all__"`), but `gunicorn config.wsgi` imports
+       the application without running any. Both shipped channels happen to be covered —
+       `docker-entrypoint.sh` runs `manage.py check` before `exec`, and the systemd unit runs it in
+       `ExecStartPre` — so the exposure is anyone serving without those: a bypassed entrypoint, or
+       gunicorn invoked directly. Do not take this option without closing that hole.
+
+  Also absorbed: a `DJANGO_SECRET_KEY` rotation runbook,
   which is missing while the pepper's is documented. Rotation is cheaper here than operators expect:
   it invalidates admin sessions, because the database session backend signs session data with
   `SECRET_KEY`, but it does **not** touch CSRF tokens (`CSRF_USE_SESSIONS` is false and Django's CSRF
