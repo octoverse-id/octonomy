@@ -19,6 +19,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte comes out of `STATIC_ROOT` like the admin and browsable-API assets. The UI version is
   pinned by `uv.lock` and appears in the image SBOM.
 
+  Two calls that live inside the JavaScript rather than the HTML needed separate handling,
+  because self-hosting a bundle does not change what that bundle asks for at runtime and
+  nothing that inspects the served HTML can see those requests. Swagger UI's "online
+  validator" badge defaults `validatorUrl` to `https://validator.swagger.io/validator` and
+  renders an `<img>` there carrying this deployment's absolute schema URL — telling
+  swagger.io the hostname of every Octonomy whose docs someone opens; it is now disabled
+  (`validatorUrl: null`). Redoc's "API docs by Redocly" attribution logo is fetched from
+  `cdn.redoc.ly` and has no configuration switch at all.
+
+  So both docs pages now also carry a **`Content-Security-Policy`** restricting scripts,
+  styles, images, fonts and connections to this origin (plus `data:`, and `blob:` for the
+  worker Redoc builds its search index in; an off-origin `OCTONOMY_STATIC_URL` is added
+  automatically so a CDN topology still works). It is an egress control rather than an XSS
+  one — it permits `'unsafe-inline'`, because both pages are inline-script by construction
+  upstream — and it is the only control that covers what a future bundle upgrade *adds*.
+  Verified in a real browser against a `DEBUG=false` Gunicorn: Swagger renders its 29
+  operations and the v1/v2 dropdown with an empty console, Redoc renders its sidebar, search
+  and every operation, and the cdn.redoc.ly request is refused with a CSP violation while the
+  attribution link still renders as text with no broken image.
+
   The Redoc page needed one more change: the shipped `drf_spectacular/redoc.html` also
   preconnects to `fonts.googleapis.com` and loads a stylesheet from it, which the `SIDECAR`
   setting does not touch. `octonomy.openapi.views.SelfHostedRedocView` renders an override

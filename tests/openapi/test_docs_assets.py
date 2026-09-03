@@ -10,8 +10,8 @@ SBOM'd and attested.
 
 What these tests lock, and why each is separate:
 
-* **No third-party origin in the rendered HTML.** The assertion is over *every*
-  absolute URL, not the string ``cdn.jsdelivr.net``, because the concern is any
+* **No third-party origin in the rendered HTML.** The assertion is over *every* URL that
+  leaves this origin, not the string ``cdn.jsdelivr.net``, because the concern is any
   outbound request. That is what caught the Google Fonts links in the shipped Redoc
   template, which ``REDOC_DIST = "SIDECAR"`` alone does not touch — see
   ``octonomy.openapi.views.SelfHostedRedocView``. It is also the guard that fires if
@@ -47,10 +47,15 @@ DOCS_PAGES = [
 # off-site, and that all of them answer 200.
 ASSET_REF = re.compile(r'(?:src|href)="([^"]+)"')
 
-# Any absolute URL, whatever the scheme or host. Deliberately not a jsdelivr-specific
+# Any http(s) URL, whatever the host, anywhere in the document — including inside the
+# Swagger init script drf-spectacular inlines. Deliberately not a jsdelivr-specific
 # pattern: the contract is "no third party", and the Redoc template reached Google, not
 # jsdelivr.
-ABSOLUTE_URL = re.compile(r'(?:https?:)?//[^\s"\'<>)]+')
+#
+# Scheme-only, on purpose. A `(?:https?:)?//` pattern would also match the `//` line
+# comments in that inlined script, so protocol-relative URLs are checked where they can
+# actually be fetched from instead — the src/href sweep below.
+SCHEMED_URL = re.compile(r'https?://[^\s"\'<>)]+')
 
 
 def render(path):
@@ -92,7 +97,7 @@ def manifest_static(_manifest_static_root):
 def test_docs_page_references_no_external_origin(path):
     body = render(path)
 
-    assert ABSOLUTE_URL.findall(body) == [], (
+    assert SCHEMED_URL.findall(body) == [], (
         f"{path} references an off-site URL; the docs UI must be self-contained"
     )
 
@@ -107,6 +112,8 @@ def test_docs_page_assets_are_all_local_paths(path):
 
     assert refs, f"{path} references no assets at all"
     for ref in refs:
+        # `//host/path` is the case the scheme-only sweep above cannot see, and a browser
+        # fetches it from that host exactly as it would an absolute URL.
         assert ref.startswith("/") and not ref.startswith("//"), (
             f"{path} references {ref!r}, which is not a local path"
         )
@@ -210,6 +217,102 @@ def test_swagger_dropdown_still_resolves_both_schema_urls(manifest_static):
     assert '"url": "/api/v2/schema/", "name": "v2"' in body
     assert "SwaggerUIStandalonePreset" in body
     assert "drf_spectacular_sidecar/swagger-ui-dist/swagger-ui-standalone-preset" in body
+
+
+# --- The calls the HTML sweep cannot see -----------------------------------------------
+#
+# A self-hosted bundle still asks for whatever its own JavaScript asks for, and both of
+# these bundles ask for something. Neither URL appears in the served HTML, so every
+# assertion above passes with the requests live. These are the two controls that stop
+# them, and they are the ones that survive an upstream bump adding a third.
+
+
+@pytest.mark.parametrize("path", DOCS_PAGES)
+def test_docs_pages_carry_the_egress_csp(path):
+    """The enforced half of the "no third party" claim.
+
+    Verified in a real browser against a DEBUG=false Gunicorn: Swagger renders its 29
+    operations and the v1/v2 dropdown with an empty console, and Redoc renders its
+    sidebar, search and every operation while
+    ``https://cdn.redoc.ly/redoc/logo-mini.svg`` is refused with "violates the following
+    Content Security Policy directive".
+    """
+
+    response = Client().get(path)
+
+    assert response.status_code == 200
+    policy = response.headers["Content-Security-Policy"]
+    assert "default-src 'self'" in policy
+
+
+def test_the_csp_directive_that_blocks_redocs_cdn_logo():
+    """Named on its own because it is the directive doing the work.
+
+    Redoc's sidebar attribution mounts an ``<img>`` pointing at cdn.redoc.ly and offers no
+    setting to disable it. ``img-src`` is what refuses the request; Redoc's own onError
+    handler then unmounts the image, so the attribution link stays as text and the page
+    shows no broken-image icon (confirmed in-browser: ``document.images.length`` is 0).
+    """
+
+    policy = Client().get("/api/docs/redoc/").headers["Content-Security-Policy"]
+
+    assert "img-src 'self' data:" in policy
+
+
+def test_the_csp_allows_the_blob_worker_redoc_builds_its_search_index_in():
+    """The directive whose absence would break a feature instead of a request.
+
+    Redoc runs its search index in ``new Worker(URL.createObjectURL(new Blob([...])))``.
+    Under a policy without ``blob:`` the worker never starts and search silently stops
+    working — no error a page test would notice. ``child-src`` carries the same allowance
+    for Safari before 15.4, which has no ``worker-src``.
+    """
+
+    policy = Client().get("/api/docs/redoc/").headers["Content-Security-Policy"]
+
+    assert "worker-src 'self' blob:" in policy
+    assert "child-src blob:" in policy
+
+
+def test_the_csp_admits_an_off_origin_static_url():
+    """A CDN in front of /static/ is a supported topology, and 'self' alone would break it.
+
+    ``config/settings.py`` explicitly allows OCTONOMY_STATIC_URL to be a full http(s) URL.
+    A policy hard-coded to ``'self'`` would then refuse the deployment's own bundles and
+    leave the docs blank — a self-inflicted outage in the name of blocking third parties.
+    """
+
+    with override_settings(STATIC_URL="https://cdn.example.com/static/"):
+        policy = Client().get("/api/docs/swagger/").headers["Content-Security-Policy"]
+
+    assert "script-src 'self' https://cdn.example.com 'unsafe-inline'" in policy
+    assert "img-src 'self' https://cdn.example.com data:" in policy
+    # The origin only — a path in a CSP source would not match how browsers compare hosts.
+    assert "https://cdn.example.com/static" not in policy
+
+
+def test_the_csp_is_scoped_to_the_docs_pages():
+    # The JSON API needs no policy and must not inherit one: `connect-src 'self'` on an API
+    # response means nothing, but a `default-src` that someone later tightens would start
+    # constraining consumers this app has no business constraining.
+    assert "Content-Security-Policy" not in Client().get("/health/live").headers
+
+
+def test_swagger_disables_the_online_validator_badge():
+    """Swagger UI's one self-initiated third-party call, and it is not in the HTML.
+
+    Left unset, ``validatorUrl`` defaults to ``https://validator.swagger.io/validator``
+    and the badge renders an ``<img>`` at that host carrying this deployment's absolute
+    schema URL as a query parameter. Self-hosting the bundle does not touch it: the URL
+    is baked into ``swagger-ui-bundle.js``, so every no-external-origin assertion in this
+    module passes with the badge live. Hence a settings-level guard.
+
+    Two consequences it prevents: swagger.io learns the hostname of every Octonomy whose
+    docs someone opens, and an air-gapped install renders a broken image on the page this
+    issue exists to make work offline.
+    """
+
+    assert '"validatorUrl": null' in render("/api/docs/swagger/")
 
 
 # --- Configuration locks ---------------------------------------------------------------

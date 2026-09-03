@@ -76,6 +76,28 @@ Redoc's default theme asks for Roboto and Montserrat, which are **not** fetched 
 Fonts; the page renders in whatever the browser resolves those names to locally, usually its
 default sans-serif.
 
+**Two of those requests come from inside the bundles, not from the page.** Self-hosting a
+bundle does not change what that bundle asks for at runtime, and both of these ask for
+something — neither URL appears anywhere in the HTML:
+
+- Swagger UI's "online validator" badge defaults to sending your deployment's absolute schema
+  URL to `https://validator.swagger.io/validator` on every page load, and rendering the result
+  as an image. It is disabled outright (`validatorUrl: null`).
+- Redoc's sidebar attribution fetches its small "API docs by Redocly" logo from `cdn.redoc.ly`.
+  Redoc offers no setting to turn this off.
+
+Both pages therefore carry a `Content-Security-Policy` that permits scripts, styles, images,
+fonts and connections from this origin only (plus `data:` URIs, and `blob:` for the worker
+Redoc builds its search index in). If a bundle tries to reach a third party, the browser
+refuses. Redoc drops the logo element when its request fails, so the attribution renders as
+text with no broken image. The policy also covers what a future upgrade *adds*: a new CDN
+reference inside a bundle is invisible to anything that inspects the served HTML.
+
+The `Content-Security-Policy` here is an **egress** control, not an XSS one — it permits
+`'unsafe-inline'` because both pages are inline-script by construction upstream. If
+`OCTONOMY_STATIC_URL` points at a CDN of your own, that origin is added to the policy
+automatically.
+
 ## Namespace Trust Model
 
 Octonomy enforces exact namespace grants against the request namespace. A token restricted to

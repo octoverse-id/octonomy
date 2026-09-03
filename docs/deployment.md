@@ -503,6 +503,8 @@ docs=$(curl -fsS https://api.example.com/api/docs/swagger/) || {
   echo "DOCS BROKEN: /api/docs/swagger/ did not return 200 (a 500 means collectstatic never ran)"
   exit 1
 }
+# One caveat: if you deliberately point OCTONOMY_STATIC_URL at a CDN of your own, the
+# page legitimately carries that origin — exclude it here rather than dropping the check.
 if grep -qE 'https?://' <<<"$docs"; then
   echo "DOCS NOT SELF-CONTAINED: the page references an off-site URL"; exit 1
 fi

@@ -444,8 +444,13 @@ python manage.py verify_namespace_scope
 - The docs UI renders and is self-contained: `GET /api/docs/swagger/` returns 200 and the HTML it
   returns contains no `http://` or `https://` URL. Since the Swagger/Redoc bundles ship inside the
   release, an absolute URL there means a page has reverted to fetching code from a third party —
-  and a 500 means the bundles were never collected. See [api.md, "Interactive
-  Docs"](api.md#interactive-docs).
+  and a 500 means the bundles were never collected. (A deployment that points `OCTONOMY_STATIC_URL`
+  at its own CDN is the one exception: its asset origin appears here legitimately.) Check the
+  response also carries a `Content-Security-Policy` header — `curl -sI .../api/docs/swagger/ |
+  grep -i content-security`. That header is what blocks the requests the *bundles* make on their
+  own, which no amount of reading the HTML will reveal; a proxy that strips response headers
+  removes the enforcement while every other check above still passes. See
+  [api.md, "Interactive Docs"](api.md#interactive-docs).
 - `request_completed` and `outbox_dispatch_summary` are visible in the log pipeline and the
   namespace dashboards render.
 - Smoke tests below pass against the deployed environment.

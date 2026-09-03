@@ -8,7 +8,8 @@
 # WHAT THIS ESTABLISHES, precisely: the BUILT IMAGE carries a usable production manifest,
 # and the four surfaces probed here — the admin login page, the DRF browsable API, and the
 # Swagger UI and Redoc docs pages — render and serve the hashed assets they reference. For
-# the docs pages it also establishes that they reference NOTHING off-box (#146). That is a
+# the docs pages it also establishes that they reference NOTHING off-box, and that the
+# egress CSP that blocks what the BUNDLES ask for survives to the wire (#146). That is a
 # packaging and global-collection guarantee.
 #
 # WHAT IT DOES NOT: it renders four pages, not every page. A changelist or form template
@@ -164,7 +165,8 @@ echo "ok    browsable API references $(wc -l <"$work/api-assets.txt" | tr -d ' '
 : >"$work/docs-assets.txt"
 for page in /api/docs/swagger/ /api/docs/redoc/; do
   rc=0
-  status=$("${CURL[@]}" -o "$work/docs.html" -w '%{http_code}' "$base$page") || rc=$?
+  status=$("${CURL[@]}" -D "$work/docs-headers.txt" -o "$work/docs.html" \
+    -w '%{http_code}' "$base$page") || rc=$?
   if [ "$rc" -ne 0 ]; then
     fail "GET $page did not complete (curl exit $rc)"
   fi
@@ -202,7 +204,20 @@ for page in /api/docs/swagger/ /api/docs/redoc/; do
     fail "$page references no hashed drf_spectacular_sidecar asset — the bundles are not being served from this deployment, so the page is either still pointing at a CDN or not the docs UI."
   fi
   cat "$work/page-assets.txt" >>"$work/docs-assets.txt"
-  echo "ok    GET $page -> 200, self-hosted, references $(wc -l <"$work/page-assets.txt" | tr -d ' ') hashed asset(s)"
+  # The HTML sweep above cannot see a URL that lives inside a bundle, and both bundles
+  # carry one — Redoc requests its Redocly attribution logo from a CDN with no setting to
+  # turn it off. The response CSP is what refuses those, so its absence is a regression
+  # even though every assertion above still passes. Checked here rather than only in
+  # pytest because a header is exactly the kind of thing a proxy or a WSGI config can
+  # strip between the view and the browser.
+  if ! grep -qi '^content-security-policy:.*default-src' "$work/docs-headers.txt"; then
+    fail "$page carries no Content-Security-Policy with a default-src. That header is what stops the bundles' own JavaScript reaching a third party — nothing in the HTML shows those requests."
+  fi
+  if ! grep -qi "^content-security-policy:.*img-src 'self'" "$work/docs-headers.txt"; then
+    fail "$page has a Content-Security-Policy whose img-src is not restricted to 'self' — that is the directive blocking Redoc's cdn.redoc.ly attribution logo."
+  fi
+
+  echo "ok    GET $page -> 200, self-hosted, CSP enforced, references $(wc -l <"$work/page-assets.txt" | tr -d ' ') hashed asset(s)"
 done
 
 # --- EVERY hashed asset those pages reference must actually be served -------------------

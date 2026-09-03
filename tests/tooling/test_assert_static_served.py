@@ -55,6 +55,15 @@ SWAGGER_HTML = (
 )
 REDOC_HTML = f'<html><head></head><body><script src="{HASHED_REDOC_JS}"></script></body></html>'
 
+# The egress policy the docs views stamp on every response. The gate checks it because
+# the HTML sweep cannot see a URL baked into a bundle, and both bundles carry one — Redoc
+# fetches its Redocly attribution logo from a CDN with no setting to disable it.
+DOCS_CSP = {
+    "Content-Security-Policy": (
+        "default-src 'self'; img-src 'self' data:; worker-src 'self' blob:; child-src blob:"
+    )
+}
+
 # What a non-manifest deployment renders. The script must reject it: the whole point is to
 # probe the content-addressed path a browser really requests.
 UNHASHED_HTML = (
@@ -121,8 +130,8 @@ def _healthy(**overrides):
         HASHED_CSS_2: (200, CSS, "body{}", {}, False),
         HASHED_JS: (200, JS, "1;", {}, False),
         HASHED_DRF_CSS: (200, CSS, "body{}", {}, False),
-        "/api/docs/swagger/": (200, "text/html", SWAGGER_HTML, {}, False),
-        "/api/docs/redoc/": (200, "text/html", REDOC_HTML, {}, False),
+        "/api/docs/swagger/": (200, "text/html", SWAGGER_HTML, DOCS_CSP, False),
+        "/api/docs/redoc/": (200, "text/html", REDOC_HTML, DOCS_CSP, False),
         HASHED_SWAGGER_CSS: (200, CSS, "body{}", {}, False),
         HASHED_SWAGGER_JS: (200, JS, "1;", {}, False),
         HASHED_REDOC_JS: (200, JS, "1;", {}, False),
@@ -406,6 +415,36 @@ def test_swagger_assets_do_not_satisfy_the_redoc_page_assertion(run_script, stub
 
     assert result.returncode == 1
     assert "no hashed drf_spectacular_sidecar asset" in result.output
+
+
+def test_a_docs_page_without_the_egress_csp_fails(run_script, stub_server):
+    """A header can be stripped between the view and the browser.
+
+    A proxy, a WSGI config, or a well-meaning "clean up the headers" change removes it and
+    every other assertion in this gate still passes — while Redoc's bundle resumes calling
+    cdn.redoc.ly on every page view. Nothing in the served HTML would show that.
+    """
+
+    base = stub_server(_healthy(**{"/api/docs/redoc/": (200, "text/html", REDOC_HTML, {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "no Content-Security-Policy" in result.output
+
+
+def test_a_docs_page_whose_csp_allows_third_party_images_fails(run_script, stub_server):
+    """img-src is the directive doing the work; a wildcard there is not a policy."""
+
+    loose = {"Content-Security-Policy": "default-src 'self'; img-src *"}
+    base = stub_server(
+        _healthy(**{"/api/docs/redoc/": (200, "text/html", REDOC_HTML, loose, False)})
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "img-src is not restricted" in result.output
 
 
 def test_a_docs_asset_that_404s_fails(run_script, stub_server):

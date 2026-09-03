@@ -190,7 +190,8 @@ ADMIN_ENABLED = env_bool("OCTONOMY_ADMIN_ENABLED", DEBUG)
 # browsable API is on by default, so /static/rest_framework/* is required even when the
 # admin console is off.
 #
-# Boundary: first-party BUNDLED assets only (django.contrib.admin, unfold, DRF).
+# Boundary: first-party BUNDLED assets only (django.contrib.admin, unfold, DRF, and the
+# Swagger UI / Redoc bundles that drf_spectacular_sidecar ships — see #146).
 # Octonomy stores no user uploads and defines no MEDIA_ROOT; WhiteNoise must never be
 # pointed at user-supplied files.
 #
