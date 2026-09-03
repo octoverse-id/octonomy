@@ -278,11 +278,20 @@ for page in /api/docs/swagger/ /api/docs/redoc/; do
   # `|| true` is load-bearing under `set -e -o pipefail`: with no such header grep exits 1
   # and the assignment would kill the script silently — exit 1 with no diagnostic at all,
   # which is the opposite of what this gate is for. Let it come back empty and report it.
-  csp=$(grep -i '^content-security-policy:' "$work/docs-headers.txt" | head -1 |
-    cut -d: -f2- | tr -d '\r' || true)
-  if [ -z "$csp" ]; then
+  csp_count=$(grep -ci '^content-security-policy:' "$work/docs-headers.txt" || true)
+  if [ "$csp_count" -eq 0 ]; then
     fail "$page carries no Content-Security-Policy header. That header is what stops the bundles' own JavaScript reaching a third party — nothing in the HTML shows those requests."
   fi
+  # A browser enforces EVERY policy present and takes the intersection, so a second header
+  # can block what the first permits: an appended `default-src 'self'` kills the inline
+  # Swagger bootstrap and blanks the page while the app's own header is still perfect.
+  # Validating only the first (the earlier `head -1`) would report that as enforced.
+  if [ "$csp_count" -gt 1 ]; then
+    grep -i '^content-security-policy:' "$work/docs-headers.txt" >&2
+    fail "$page carries $csp_count Content-Security-Policy headers (listed above). Browsers enforce all of them and apply the intersection, so an appended policy can blank the page even when the app's own is correct. Whatever adds the second one must be reconciled with the app's, not layered on top of it."
+  fi
+  csp=$(grep -i '^content-security-policy:' "$work/docs-headers.txt" |
+    cut -d: -f2- | tr -d '\r')
   for expected in "${EXPECTED_CSP[@]}"; do
     assert_csp_directive "$page" "$csp" "$expected"
   done

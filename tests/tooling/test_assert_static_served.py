@@ -95,7 +95,9 @@ class _Stub(BaseHTTPRequestHandler):
         self.send_response(status)
         if ctype:
             self.send_header("Content-Type", ctype)
-        for key, value in headers.items():
+        # A list of (name, value) pairs, not only a dict: a response may legitimately repeat
+        # a header, and one of the cases below is exactly that (two CSPs).
+        for key, value in headers.items() if isinstance(headers, dict) else headers:
             self.send_header(key, value)
         # Declaring more than is sent is how a real truncated transfer looks on the wire:
         # curl reports the status and content type, then fails part-way through the body.
@@ -521,6 +523,28 @@ def test_a_rewritten_docs_csp_fails(run_script, stub_server, label, policy):
 
     assert result.returncode == 1, label
     assert "Content-Security-Policy" in result.output
+
+
+def test_a_second_csp_header_fails(run_script, stub_server):
+    """Browsers enforce every policy present and apply the intersection.
+
+    So a proxy that appends its own `default-src 'self'` blocks the inline Swagger and
+    Redoc bootstrap and blanks both pages, while the app's own header is still exactly
+    right. Reading only the first header reported that as enforced.
+    """
+
+    two = [
+        ("Content-Security-Policy", SHIPPED_CSP),
+        ("Content-Security-Policy", "default-src 'self'"),
+    ]
+    base = stub_server(
+        _healthy(**{"/api/docs/swagger/": (200, "text/html", SWAGGER_HTML, two, False)})
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "2 Content-Security-Policy headers" in result.output
 
 
 def test_the_directive_order_of_the_policy_does_not_matter(run_script, stub_server):
