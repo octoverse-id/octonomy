@@ -53,14 +53,26 @@ upgrade produces. The container channels collect at image build time and need no
   all covered. It proves nothing about an HTTP response — that is the CI job's job — so it
   is labelled accordingly in its own header.
 
-- System check `octonomy.W002`: a non-blocking warning at boot when the admin is enabled
-  with `DEBUG=false` but `STATIC_ROOT` cannot back it — missing, empty, holding no readable
-  file (an interrupted `collectstatic`, or a tree the service account cannot read), or
-  lacking the `staticfiles.json` the manifest backend needs. A host that never ran
-  `collectstatic` is told at startup instead of failing on an operator's first page load.
-  Registered as an ordinary check, not a deploy check, so the plain `manage.py check` that
-  `docker-entrypoint.sh` and the systemd `ExecStartPre` already run will surface it. It
-  stays silent for a populated-but-stale `STATIC_ROOT`; that case is a runbook fix (#145).
+- System check `octonomy.W002`: a non-blocking warning at boot on any `DEBUG=false` host whose
+  `STATIC_ROOT` cannot back the pages served from it — missing, empty, holding no readable file
+  (an interrupted `collectstatic`, or a tree the service account cannot read), or lacking the
+  `staticfiles.json` the manifest backend needs. A host that never ran `collectstatic` is told
+  at startup instead of failing on an operator's first page load. Registered as an ordinary
+  check, not a deploy check, so the plain `manage.py check` that `docker-entrypoint.sh` and the
+  systemd `ExecStartPre` already run will surface it. It is a `Warning`, never an `Error`, and
+  the message names the affected surfaces and says plainly that the JSON API is unaffected.
+
+  It deliberately does **not** condition on `OCTONOMY_ADMIN_ENABLED`. Gating it that way would
+  have been defensible while the admin console was the only page an operator was likely to open
+  — the DRF browsable API needed static too, but it is a developer convenience. Self-hosting the
+  docs assets (below) put the product's primary documented surface on the same footing:
+  `/api/docs/*` is always on, and under manifest storage it now 500s on an uncollected root
+  where it previously rendered from a CDN. Warning only on the admin-enabled shape would have
+  stayed silent for exactly the default deployments this release changes.
+
+  It stays silent for a populated-but-**stale** `STATIC_ROOT`, which is the shape an upgrade
+  produces. That case is a runbook fix (#145), not a check — see the upgrade note at the top of
+  this release.
 - `OCTONOMY_STATIC_URL` and `OCTONOMY_FORCE_SCRIPT_NAME` for subpath deployments (the app
   mounted at `/octonomy` rather than `/`). `STATIC_URL` is now absolute by default
   (`/static/`) instead of relative. A relative value is script-prefixed by Django on first
@@ -79,16 +91,6 @@ upgrade produces. The container channels collect at image build time and need no
 
 ### Changed
 
-- **`octonomy.W002` is no longer gated on `OCTONOMY_ADMIN_ENABLED`** and now fires on any
-  `DEBUG=false` host whose `STATIC_ROOT` is missing, empty, unreadable or manifest-less. The
-  gate was an accepted ceiling while the admin console was the only page an operator was
-  likely to open — the DRF browsable API needed static too, but it is a developer
-  convenience. Self-hosting the docs assets (#146) put the product's primary documented
-  surface on the same footing: `/api/docs/*` is always on, and under manifest storage it now
-  500s on an uncollected root where it used to render from a CDN. Warning only on the
-  admin-enabled shape would have stayed silent for exactly the default deployments that
-  changed. The message names the affected surfaces and says plainly that the JSON API is
-  unaffected. It is still a `Warning`, never an `Error`.
 - **Removed the `location /static/` alias from `deploy/systemd/nginx-octonomy.conf`.** Static
   now falls through to the app on the VPS channel too, which puts all three channels on one
   caching contract: WhiteNoise stamps `immutable` on content-addressed filenames and a
@@ -179,7 +181,7 @@ upgrade produces. The container channels collect at image build time and need no
   Consequences for operators: **the docs pages now work with no internet egress**, which they
   never did before — an air-gapped install got blank pages. In exchange they are now
   static-dependent, so a host that skipped `collectstatic` gets a 500 there instead of a page
-  that quietly reached the internet; `octonomy.W002` names that at boot (see Changed).
+  that quietly reached the internet; `octonomy.W002` names that at boot (see Added).
   The image grows from 191 MB to 226 MB uncompressed (+35 MB, ~+18%; roughly 13 MB on the
   wire), of which about 6 MB is the source maps — kept because the manifest staticfiles
   backend resolves the `sourceMappingURL` references in `swagger-ui.css` and
