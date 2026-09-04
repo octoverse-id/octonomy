@@ -23,6 +23,21 @@ import pytest
 
 # A valid DEBUG=false production baseline: settings.py refuses to import with the
 # default secret/pepper once DEBUG is off, so always supply non-default values.
+#
+# Both values are 18 characters, and this dict feeds EVERY DJANGO_DEBUG=false subprocess
+# in this file. They boot only because the boot guard judges emptiness and the local-dev
+# literal, never length or entropy — the deliberate ceiling recorded as CFG-2 in TODOS.md
+# and marked `gstack-shortcut(dec-584a8f2c)` on both guards in config/settings.py.
+#
+# A length or strength rule therefore invalidates this baseline and takes nearly the whole
+# file with it. Measured against a `len(...) < 50` rule on both guards: every DEBUG=false
+# case fails but one. The cases expecting a successful boot fail outright; the STATIC_URL
+# and FORCE_SCRIPT_NAME rejection cases fail on the wrong message, because the secret guard
+# raises before the checks they target. The lone survivor is
+# test_empty_required_secret_refuses_to_boot[DJANGO_SECRET_KEY], which fails closed either
+# way — and only while the hardened guard keeps today's message text. That breakage is by
+# design: it is the tripwire that puts whoever lengthens these two values in front of the
+# documentation #148 narrowed to describe the weaker guard.
 _PROD_BASE = {
     "DJANGO_SETTINGS_MODULE": "config.settings",
     "DJANGO_SECRET_KEY": "release-secret-xyz",
@@ -187,6 +202,32 @@ def test_empty_required_secret_refuses_to_boot(var, message):
     result = _import_settings(DJANGO_DEBUG="false", **{var: ""})
     assert result.returncode != 0, f"empty {var} should refuse to boot, but import succeeded"
     assert message in result.stderr
+
+
+# --- Accepted ceiling: the guard judges emptiness, not strength (#147 approach C) ------
+
+
+@pytest.mark.parametrize("var", ["DJANGO_SECRET_KEY", "SERVICE_TOKEN_PEPPER"])
+def test_whitespace_only_secret_is_accepted(var):
+    # CHARACTERIZATION, not an endorsement. It pins the ceiling #147 chose to accept —
+    # documentation narrowed (#148) instead of the guard widened — so that hardening the
+    # guard later is a deliberate act that updates the docs in the same commit. When
+    # TODOS.md CFG-2 lands, this test flips to asserting a refusal.
+    #
+    # Scope: this describes the SETTINGS guard only. `not SECRET_KEY` is False for " ",
+    # because a whitespace string is truthy. It says NOTHING about the .env template:
+    # python-dotenv strips an UNQUOTED trailing " " to "", which the guard DOES reject
+    # (the test above), so the documented unquoted .env style cannot reach here. Only a
+    # value that survives into the process environment intact does — a QUOTED `KEY=" "`
+    # in .env or a systemd EnvironmentFile, a Kubernetes Secret `stringData` entry such as
+    # `DJANGO_SECRET_KEY: " "`, or `docker run -e KEY=" "`. This harness disables
+    # load_dotenv, so it exercises the process environment directly, which is the surface
+    # those channels share.
+    result = _import_settings(DJANGO_DEBUG="false", **{var: " "})
+    assert result.returncode == 0, (
+        f"whitespace-only {var} is expected to boot today (TODOS.md CFG-2); if the guard "
+        f"now fails closed, harden the docs claim sites in the same commit: {result.stderr}"
+    )
 
 
 # --- Password validators harden the admin's only password surface (round-3 finding) --
