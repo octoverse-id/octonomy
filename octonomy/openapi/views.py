@@ -108,7 +108,7 @@ def _static_origin():
 
         ///cdn.example.com/static/x.js          https:///cdn.example.com/static/x.js
         ////cdn.example.com/static/x.js         https:////cdn.example.com/static/x.js
-        /\cdn.example.com/static/x.js           /<TAB>/cdn.example.com/static/x.js
+        /\\cdn.example.com/static/x.js          /<TAB>/cdn.example.com/static/x.js
 
     Reading "no netloc" as "same-origin" would emit the ordinary ``'self'`` policy for those
     and block every asset the deployment serves. So same-origin has to be PROVEN rather than
