@@ -8,7 +8,7 @@
 # in this file at all and never opened a single PR — the digest went 21 days stale while
 # the comment here claimed Dependabot was keeping it fresh (#132). Do not move the digest
 # back behind a variable.
-FROM python:3.14-slim@sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4 AS base
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6 AS base
 
 # --- Builder ---------------------------------------------------------------------
 # Resolve and install ONLY the runtime dependencies (no [dev] extras) into an
