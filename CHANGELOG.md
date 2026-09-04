@@ -7,7 +7,127 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-09-04
+
+A **minor** release. Both live REST surfaces keep the same paths, fields, validation, and runtime
+behavior — both generated OpenAPI schemas regenerate byte-identical apart from `info.version`. It
+is a minor rather than a patch because it adds backward-compatible capability: two new operator
+settings (`OCTONOMY_STATIC_URL`, `OCTONOMY_FORCE_SCRIPT_NAME`, which together enable subpath
+deployments), two new system checks (`octonomy.W002`, `octonomy.W003`), and two new runtime
+dependencies (`whitenoise`, `drf-spectacular[sidecar]`) that let the API docs render with no
+internet egress. Python 3.12 remains the floor, there is no database migration, and rollback is a
+redeploy of 3.1.1.
+
+**Upgrading a venv or VPS install requires re-running `collectstatic`.** The admin console, the
+DRF browsable API and — new in this release — the API docs pages are all served from
+`STATIC_ROOT` by the application itself. `octonomy.W002` warns at boot when that root is missing
+or unreadable, but it stays **silent for a populated-but-stale root**, which is the shape an
+upgrade produces. The container channels collect at image build time and need nothing further.
+
+### Added
+
+- **The CI static gate now covers the docs pages too** (#146). `scripts/assert-static-served.sh`
+  additionally renders `/api/docs/swagger/` and `/api/docs/redoc/`, asserts each references at
+  least one hashed `drf_spectacular_sidecar` asset, fetches every one of them, and — the part
+  no in-process test can give — asserts the rendered HTML contains **no** absolute or
+  protocol-relative URL to any host. That is what would catch a future drf-spectacular
+  template reintroducing a CDN or font reference. Verified by running the gate against a
+  pre-#146 image, where it fails naming the four jsDelivr URLs.
+- **CI now asserts that a real image actually serves its static assets.** The bug fixed
+  above survived a full release because no deploy channel was ever booted and probed end to
+  end. The existing `docker` job already builds the production image and polls
+  `/health/live`; it now also starts it with `OCTONOMY_ADMIN_ENABLED=true` and runs
+  `scripts/assert-static-served.sh`, which renders `/admin/login/`, extracts a **hashed**
+  asset URL from that HTML and fetches it, checks the browsable API's own asset, and
+  asserts that no `Access-Control-Allow-Origin` header is present at all. Probing a known
+  unhashed path would prove nothing — `collectstatic` writes both names, so it answers 200
+  even with a broken manifest. What this establishes is that the built image carries a
+  usable production manifest and that those two surfaces render; it does not render every
+  admin page, and the test suite cannot cover this class because it runs the plain
+  staticfiles backend.
+- `make static-check` (`scripts/check_static_serving.py`), a drift gate over the deploy
+  channels: every channel file must still declare how static is served, and no Compose or
+  Kubernetes manifest may mount anything over `/app` or `/app/staticfiles`, which would hide
+  the assets baked into the image. Mounts are found by parsing the YAML rather than matching
+  lines, so `volumes`, `tmpfs`, short and long syntax, flow style and anonymous volumes are
+  all covered. It proves nothing about an HTTP response — that is the CI job's job — so it
+  is labelled accordingly in its own header.
+
+- System check `octonomy.W002`: a non-blocking warning at boot when the admin is enabled
+  with `DEBUG=false` but `STATIC_ROOT` cannot back it — missing, empty, holding no readable
+  file (an interrupted `collectstatic`, or a tree the service account cannot read), or
+  lacking the `staticfiles.json` the manifest backend needs. A host that never ran
+  `collectstatic` is told at startup instead of failing on an operator's first page load.
+  Registered as an ordinary check, not a deploy check, so the plain `manage.py check` that
+  `docker-entrypoint.sh` and the systemd `ExecStartPre` already run will surface it. It
+  stays silent for a populated-but-stale `STATIC_ROOT`; that case is a runbook fix (#145).
+- `OCTONOMY_STATIC_URL` and `OCTONOMY_FORCE_SCRIPT_NAME` for subpath deployments (the app
+  mounted at `/octonomy` rather than `/`). `STATIC_URL` is now absolute by default
+  (`/static/`) instead of relative. A relative value is script-prefixed by Django on first
+  read and then cached for the life of the process, so which prefix got baked in depended
+  on which request arrived first — and a Kubernetes health probe reaches the pod with no
+  prefix at all. Set both variables together to serve a subpath correctly; the effective
+  value is unchanged for every deployment that is not on a subpath. Both are validated at
+  boot: a relative `OCTONOMY_STATIC_URL`, or an `OCTONOMY_FORCE_SCRIPT_NAME` carrying a
+  scheme, host, query or fragment, refuses to start. Django prepends `FORCE_SCRIPT_NAME`
+  to every `reverse()` result verbatim, so a value like `https://evil.example` would
+  otherwise render the admin login form posting to another host. A second check,
+  `octonomy.W003`, warns when `FORCE_SCRIPT_NAME` is set but `STATIC_URL` is not under it —
+  the half-configured subpath that links assets outside the app's own mount. A warning
+  rather than a refusal, because whether it breaks depends on proxy routing the process
+  cannot see.
+
+### Changed
+
+- **`octonomy.W002` is no longer gated on `OCTONOMY_ADMIN_ENABLED`** and now fires on any
+  `DEBUG=false` host whose `STATIC_ROOT` is missing, empty, unreadable or manifest-less. The
+  gate was an accepted ceiling while the admin console was the only page an operator was
+  likely to open — the DRF browsable API needed static too, but it is a developer
+  convenience. Self-hosting the docs assets (#146) put the product's primary documented
+  surface on the same footing: `/api/docs/*` is always on, and under manifest storage it now
+  500s on an uncollected root where it used to render from a CDN. Warning only on the
+  admin-enabled shape would have stayed silent for exactly the default deployments that
+  changed. The message names the affected surfaces and says plainly that the JSON API is
+  unaffected. It is still a `Warning`, never an `Error`.
+- **Removed the `location /static/` alias from `deploy/systemd/nginx-octonomy.conf`.** Static
+  now falls through to the app on the VPS channel too, which puts all three channels on one
+  caching contract: WhiteNoise stamps `immutable` on content-addressed filenames and a
+  conservative 60s on the unhashed originals, and negotiates the pre-compressed files
+  `collectstatic` writes. The alias was removed rather than retuned because a single `expires`
+  value cannot serve both filename kinds — `7d` under-caches the hashed assets, and
+  `max`/`immutable` pins the unhashed paths in browser caches indefinitely so the next upgrade
+  never reaches those clients. Fronting `/static/` from nginx or a CDN remains supported as an
+  optional override, and such a block still wins over the app; the file explains what taking
+  that on now requires.
+
+- Bumped the pinned `python:3.14-slim` base image digest to `sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6` (#157). Same tag and same interpreter version — the digest pin is what makes the rebuild explicit and reviewable rather than silent.
+- Updated Ruff to 0.16.5 in the dev dependency group (#158). Lint and format tooling only; no runtime dependency changed.
+
+### Fixed
+
+- **Static assets are now served by the app itself.** With `DJANGO_DEBUG=false` nothing in
+  the Octonomy process answered `/static/*`, so every request 404'd: the admin console
+  rendered unstyled and unusable, and DRF's browsable API — which is enabled by default on
+  every view, not opt-in — lost its own CSS/JS. The assets were already baked into the
+  container image; they were simply unreachable, on all three production channels
+  (`deploy/docker`, `deploy/kubernetes`, and `deploy/systemd` on a clean install).
+  `whitenoise.middleware.WhiteNoiseMiddleware` now runs directly after `SecurityMiddleware`
+  and serves `STATIC_ROOT`, with `STORAGES["staticfiles"]` set to WhiteNoise's hashed,
+  compressed `CompressedManifestStaticFilesStorage`.
+
+  This **reverses** the "Octonomy bundles no static-serving middleware — collect
+  `STATIC_ROOT` and serve it externally" decision recorded under 3.0.0 below. That
+  instruction could not be carried out on the container channels at all: the assets live
+  inside the image with no volume, no export step, a non-root user, and a read-only root
+  filesystem. Static responses carry no `Access-Control-Allow-Origin` header
+  (`WHITENOISE_ALLOW_ALL_ORIGINS = False`). The `location /static/` alias that
+  `deploy/systemd/nginx-octonomy.conf` shipped at the time answered first on that channel;
+  it has since been removed (see Changed above), so all three channels now reach WhiteNoise
+  by default and an external static route is an operator-added override. REST
+  responses are unchanged — WhiteNoise only ever acts on paths under `STATIC_URL`.
+
 ### Security
+
 - **The API docs UI no longer loads code from a third-party CDN** (#146). `/api/docs/swagger/`
   and the three Redoc pages pulled their JavaScript and CSS from
   `cdn.jsdelivr.net/npm/swagger-ui-dist@latest` and `.../redoc@latest` — drf-spectacular's
@@ -65,121 +185,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backend resolves the `sourceMappingURL` references in `swagger-ui.css` and
   `redoc.standalone.js`, and a partial collection fails the build.
 
-### Documentation
-- **Corrected the operator runbooks for static assets** (#145). The VPS/systemd runbook never
-  mentioned `collectstatic`, on install or on upgrade. The upgrade omission was the one that
-  bit: an upgrade moving Django or django-unfold ships new templates against the old assets,
-  `STATIC_ROOT` is still non-empty so `octonomy.W002` stays quiet, and nothing warns. Both
-  steps are now explicit, with the ordering spelled out — collecting *after* the restart
-  leaves the running workers disagreeing with each other (measured: ten requests to
-  `/admin/login/` on a two-worker container returned five 500s, two 200s, then three more
-  500s).
-- Added an **Enabling the admin console** recipe covering flag → superuser → verify on all
-  three channels, so the journey is one section instead of three spread across two documents.
-  Post-deploy verification now includes static delivery, and checks the *page* as well as the
-  asset — a stale collect shows up as a 500 while the asset path still answers 200.
-- Recorded on the 3.0.0 entry that its "no WhiteNoise" decision has since been reversed, and
-  noted in `deploy/kubernetes/deployment.yaml` that static needs no sidecar, static
-  Deployment, shared volume or Ingress path.
-
-### Changed
-- **`octonomy.W002` is no longer gated on `OCTONOMY_ADMIN_ENABLED`** and now fires on any
-  `DEBUG=false` host whose `STATIC_ROOT` is missing, empty, unreadable or manifest-less. The
-  gate was an accepted ceiling while the admin console was the only page an operator was
-  likely to open — the DRF browsable API needed static too, but it is a developer
-  convenience. Self-hosting the docs assets (#146) put the product's primary documented
-  surface on the same footing: `/api/docs/*` is always on, and under manifest storage it now
-  500s on an uncollected root where it used to render from a CDN. Warning only on the
-  admin-enabled shape would have stayed silent for exactly the default deployments that
-  changed. The message names the affected surfaces and says plainly that the JSON API is
-  unaffected. It is still a `Warning`, never an `Error`.
-- **Removed the `location /static/` alias from `deploy/systemd/nginx-octonomy.conf`.** Static
-  now falls through to the app on the VPS channel too, which puts all three channels on one
-  caching contract: WhiteNoise stamps `immutable` on content-addressed filenames and a
-  conservative 60s on the unhashed originals, and negotiates the pre-compressed files
-  `collectstatic` writes. The alias was removed rather than retuned because a single `expires`
-  value cannot serve both filename kinds — `7d` under-caches the hashed assets, and
-  `max`/`immutable` pins the unhashed paths in browser caches indefinitely so the next upgrade
-  never reaches those clients. Fronting `/static/` from nginx or a CDN remains supported as an
-  optional override, and such a block still wins over the app; the file explains what taking
-  that on now requires.
-
-### Added
-- **The CI static gate now covers the docs pages too** (#146). `scripts/assert-static-served.sh`
-  additionally renders `/api/docs/swagger/` and `/api/docs/redoc/`, asserts each references at
-  least one hashed `drf_spectacular_sidecar` asset, fetches every one of them, and — the part
-  no in-process test can give — asserts the rendered HTML contains **no** absolute or
-  protocol-relative URL to any host. That is what would catch a future drf-spectacular
-  template reintroducing a CDN or font reference. Verified by running the gate against a
-  pre-#146 image, where it fails naming the four jsDelivr URLs.
-- **CI now asserts that a real image actually serves its static assets.** The bug fixed
-  above survived a full release because no deploy channel was ever booted and probed end to
-  end. The existing `docker` job already builds the production image and polls
-  `/health/live`; it now also starts it with `OCTONOMY_ADMIN_ENABLED=true` and runs
-  `scripts/assert-static-served.sh`, which renders `/admin/login/`, extracts a **hashed**
-  asset URL from that HTML and fetches it, checks the browsable API's own asset, and
-  asserts that no `Access-Control-Allow-Origin` header is present at all. Probing a known
-  unhashed path would prove nothing — `collectstatic` writes both names, so it answers 200
-  even with a broken manifest. What this establishes is that the built image carries a
-  usable production manifest and that those two surfaces render; it does not render every
-  admin page, and the test suite cannot cover this class because it runs the plain
-  staticfiles backend.
-- `make static-check` (`scripts/check_static_serving.py`), a drift gate over the deploy
-  channels: every channel file must still declare how static is served, and no Compose or
-  Kubernetes manifest may mount anything over `/app` or `/app/staticfiles`, which would hide
-  the assets baked into the image. Mounts are found by parsing the YAML rather than matching
-  lines, so `volumes`, `tmpfs`, short and long syntax, flow style and anonymous volumes are
-  all covered. It proves nothing about an HTTP response — that is the CI job's job — so it
-  is labelled accordingly in its own header.
-
-### Fixed
-- **Static assets are now served by the app itself.** With `DJANGO_DEBUG=false` nothing in
-  the Octonomy process answered `/static/*`, so every request 404'd: the admin console
-  rendered unstyled and unusable, and DRF's browsable API — which is enabled by default on
-  every view, not opt-in — lost its own CSS/JS. The assets were already baked into the
-  container image; they were simply unreachable, on all three production channels
-  (`deploy/docker`, `deploy/kubernetes`, and `deploy/systemd` on a clean install).
-  `whitenoise.middleware.WhiteNoiseMiddleware` now runs directly after `SecurityMiddleware`
-  and serves `STATIC_ROOT`, with `STORAGES["staticfiles"]` set to WhiteNoise's hashed,
-  compressed `CompressedManifestStaticFilesStorage`.
-
-  This **reverses** the "Octonomy bundles no static-serving middleware — collect
-  `STATIC_ROOT` and serve it externally" decision recorded under 3.0.0 below. That
-  instruction could not be carried out on the container channels at all: the assets live
-  inside the image with no volume, no export step, a non-root user, and a read-only root
-  filesystem. Static responses carry no `Access-Control-Allow-Origin` header
-  (`WHITENOISE_ALLOW_ALL_ORIGINS = False`). The `location /static/` alias that
-  `deploy/systemd/nginx-octonomy.conf` shipped at the time answered first on that channel;
-  it has since been removed (see Changed above), so all three channels now reach WhiteNoise
-  by default and an external static route is an operator-added override. REST
-  responses are unchanged — WhiteNoise only ever acts on paths under `STATIC_URL`.
-
-### Added
-- System check `octonomy.W002`: a non-blocking warning at boot when the admin is enabled
-  with `DEBUG=false` but `STATIC_ROOT` cannot back it — missing, empty, holding no readable
-  file (an interrupted `collectstatic`, or a tree the service account cannot read), or
-  lacking the `staticfiles.json` the manifest backend needs. A host that never ran
-  `collectstatic` is told at startup instead of failing on an operator's first page load.
-  Registered as an ordinary check, not a deploy check, so the plain `manage.py check` that
-  `docker-entrypoint.sh` and the systemd `ExecStartPre` already run will surface it. It
-  stays silent for a populated-but-stale `STATIC_ROOT`; that case is a runbook fix (#145).
-- `OCTONOMY_STATIC_URL` and `OCTONOMY_FORCE_SCRIPT_NAME` for subpath deployments (the app
-  mounted at `/octonomy` rather than `/`). `STATIC_URL` is now absolute by default
-  (`/static/`) instead of relative. A relative value is script-prefixed by Django on first
-  read and then cached for the life of the process, so which prefix got baked in depended
-  on which request arrived first — and a Kubernetes health probe reaches the pod with no
-  prefix at all. Set both variables together to serve a subpath correctly; the effective
-  value is unchanged for every deployment that is not on a subpath. Both are validated at
-  boot: a relative `OCTONOMY_STATIC_URL`, or an `OCTONOMY_FORCE_SCRIPT_NAME` carrying a
-  scheme, host, query or fragment, refuses to start. Django prepends `FORCE_SCRIPT_NAME`
-  to every `reverse()` result verbatim, so a value like `https://evil.example` would
-  otherwise render the admin login form posting to another host. A second check,
-  `octonomy.W003`, warns when `FORCE_SCRIPT_NAME` is set but `STATIC_URL` is not under it —
-  the half-configured subpath that links assets outside the app's own mount. A warning
-  rather than a refusal, because whether it breaks depends on proxy routing the process
-  cannot see.
-
-### Security
 - **The deployment docs no longer claim the service rejects a weak secret — because it never
   did.** `deploy/.env.production.example` and `docs/deployment.md` stated that a half-edited
   production env file "fails fast instead of running on a weak/publicly-known secret". The boot
@@ -209,6 +214,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is tracked as `CFG-2` in `TODOS.md`, with `CFG-3` covering the related
   `OCTONOMY_WEBHOOK_SIGNING_SECRET` gap. **Operators who supplied a hand-written secret should
   rotate it to a generated one** (`python -c "import secrets; print(secrets.token_urlsafe(64))"`).
+
+### Documentation
+
+- **Corrected the operator runbooks for static assets** (#145). The VPS/systemd runbook never
+  mentioned `collectstatic`, on install or on upgrade. The upgrade omission was the one that
+  bit: an upgrade moving Django or django-unfold ships new templates against the old assets,
+  `STATIC_ROOT` is still non-empty so `octonomy.W002` stays quiet, and nothing warns. Both
+  steps are now explicit, with the ordering spelled out — collecting *after* the restart
+  leaves the running workers disagreeing with each other (measured: ten requests to
+  `/admin/login/` on a two-worker container returned five 500s, two 200s, then three more
+  500s).
+- Added an **Enabling the admin console** recipe covering flag → superuser → verify on all
+  three channels, so the journey is one section instead of three spread across two documents.
+  Post-deploy verification now includes static delivery, and checks the *page* as well as the
+  asset — a stale collect shows up as a 500 while the asset path still answers 200.
+- Recorded on the 3.0.0 entry that its "no WhiteNoise" decision has since been reversed, and
+  noted in `deploy/kubernetes/deployment.yaml` that static needs no sidecar, static
+  Deployment, shared volume or Ingress path.
 
 ## [3.1.1] - 2026-08-26
 
@@ -559,7 +582,8 @@ Initial public release.
 - OpenAPI schema and Swagger/ReDoc docs via drf-spectacular.
 - Apache License 2.0.
 
-[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.1.1...HEAD
+[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/octoverse-id/octonomy/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/octoverse-id/octonomy/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/octoverse-id/octonomy/compare/v3.0.1...v3.1.0
 [3.0.1]: https://github.com/octoverse-id/octonomy/compare/v3.0.0...v3.0.1

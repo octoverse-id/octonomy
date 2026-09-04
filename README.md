@@ -78,7 +78,7 @@ Octonomy is self-hosted — run it on your own infrastructure. Official multi-ar
 so there is nothing to build and nothing to log into:
 
 ```bash
-docker pull ghcr.io/octoverse-id/octonomy:3.1.1
+docker pull ghcr.io/octoverse-id/octonomy:3.2.0
 ```
 
 ### Quickstart (Docker Compose)
