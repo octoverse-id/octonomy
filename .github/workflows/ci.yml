@@ -72,6 +72,14 @@ jobs:
           uv run python manage.py spectacular --api-version v1 --file docs/openapi.yaml --format openapi
           uv run python manage.py spectacular --api-version v2 --file docs/openapi-v2.yaml --format openapi
           git diff --exit-code docs/openapi.yaml docs/openapi-v2.yaml
+      - name: Version stamp consistency check
+        # Runs on every PR and every push to main, not only at release time. Before 3.2.0 this
+        # target executed in exactly two places: a human remembering `make release-check`, and
+        # publish-image.yml — which runs AFTER the tag is pushed. A release tag can never be
+        # moved (the `release tags: never move` ruleset has no bypass), so "the gate that
+        # protects the stamps first runs after the irreversible step" was the wrong shape.
+        # Between releases this asserts the status quo cheaply; on a release PR it is the gate.
+        run: make version-check
 
   security:
     runs-on: ubuntu-latest
