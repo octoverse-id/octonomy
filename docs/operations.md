@@ -57,9 +57,10 @@ system check `octonomy.W001` surfaces on `python manage.py check --deploy` as a 
 - **Apply migrations.** Run `python manage.py migrate` — the admin uses Django's built-in
   `admin`/`sessions`/`auth` tables (created by Django's own migrations; Octonomy adds no domain
   migration for the console).
-- **Static assets are served by the app.** Octonomy bundles WhiteNoise, so the admin/unfold and
-  DRF browsable-API assets in `STATIC_ROOT` are served by the application process itself — no
-  external web server or CDN step is required. The container image runs `collectstatic` at build
+- **Static assets are served by the app.** Octonomy bundles WhiteNoise, so everything in
+  `STATIC_ROOT` — admin/unfold, the DRF browsable API, and the Swagger UI / Redoc bundles behind
+  `/api/docs/` — is served by the application process itself, with no external web server, CDN
+  or internet egress required. The container image runs `collectstatic` at build
   time, so Docker and Kubernetes need nothing further. On a venv install run `make collectstatic`
   (or `python manage.py collectstatic --noinput`) before starting the service, and again after
   every upgrade; `octonomy.W002` warns at boot if `STATIC_ROOT` is missing, empty or unreadable.
@@ -438,8 +439,18 @@ python manage.py verify_namespace_scope
   a deployment with stale or missing assets answers a healthy-looking 403 while a browser gets a
   500. A 500 on the page while the asset path still answers 200 is the signature of a stale
   `collectstatic`. With the admin on, `/admin/login/` should render styled. Do not substitute
-  `manage.py check` for this probe: `octonomy.W002` is gated on `OCTONOMY_ADMIN_ENABLED` and stays
-  silent on a default deploy.
+  `manage.py check` for this probe: `octonomy.W002` fires on an empty `STATIC_ROOT` but is blind
+  to a stale one, which is the failure an upgrade produces.
+- The docs UI renders and is self-contained: `GET /api/docs/swagger/` returns 200 and the HTML it
+  returns contains no `http://` or `https://` URL. Since the Swagger/Redoc bundles ship inside the
+  release, an absolute URL there means a page has reverted to fetching code from a third party —
+  and a 500 means the bundles were never collected. (A deployment that points `OCTONOMY_STATIC_URL`
+  at its own CDN is the one exception: its asset origin appears here legitimately.) Check the
+  response also carries a `Content-Security-Policy` header — `curl -sI .../api/docs/swagger/ |
+  grep -i content-security`. That header is what blocks the requests the *bundles* make on their
+  own, which no amount of reading the HTML will reveal; a proxy that strips response headers
+  removes the enforcement while every other check above still passes. See
+  [api.md, "Interactive Docs"](api.md#interactive-docs).
 - `request_completed` and `outbox_dispatch_summary` are visible in the log pipeline and the
   namespace dashboards render.
 - Smoke tests below pass against the deployed environment.

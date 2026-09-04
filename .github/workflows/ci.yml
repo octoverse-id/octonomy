@@ -234,15 +234,20 @@ jobs:
         # assets its own pages reference — which is why the container above now starts with
         # OCTONOMY_ADMIN_ENABLED=true.
         #
-        # It renders /admin/login/ and the browsable API and fetches a HASHED url out of
-        # each, rather than probing a known filename: collectstatic writes both the original
-        # and the hashed name, so an unhashed path answers 200 even with a broken manifest.
-        # Scope is two pages, not every page — see the script header for what that does and
-        # does not establish.
+        # It renders /admin/login/, the browsable API, and the Swagger and Redoc docs pages,
+        # and fetches a HASHED url out of each, rather than probing a known filename:
+        # collectstatic writes both the original and the hashed name, so an unhashed path
+        # answers 200 even with a broken manifest. Scope is four pages, not every page — see
+        # the script header for what that does and does not establish.
+        #
+        # For the two docs pages it also asserts they reference no third-party host at all
+        # (#146), which is the only automated proof that the Swagger/Redoc bundles are still
+        # coming out of the image rather than a CDN.
         #
         # Verified against real images by deleting the WhiteNoise middleware line (hashed
-        # asset 404s) and by deleting collectstatic from the Dockerfile (the admin page
-        # 500s); both make this step fail.
+        # asset 404s), by deleting collectstatic from the Dockerfile (the admin page 500s),
+        # and by running it against a pre-#146 image (the docs pages still name jsDelivr);
+        # all three make this step fail.
         #
         # Adds a couple of seconds and no credential: the container is already running, and
         # this is plain curl against localhost.

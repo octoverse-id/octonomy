@@ -45,10 +45,12 @@ scanned: it runs ``runserver`` with ``DEBUG=true``, where static resolves throug
 staticfiles finders rather than STATIC_ROOT.
 
 ``deploy/systemd/octonomy.service`` is not scanned. It used to be, matching its
-``manage.py check`` line — but that is not a static signal: ``octonomy.W002`` is gated on
-``OCTONOMY_ADMIN_ENABLED``, which is off by default, so on a default deploy that check
-reports "no issues" with nothing collected at all. Counting it here meant deleting the VPS
-runbook's ``collectstatic`` steps left this gate green. A systemd unit genuinely declares
+``manage.py check`` line — but that is not a static signal. ``octonomy.W002`` does now fire
+on a default deploy that collected nothing (#146 removed its ``OCTONOMY_ADMIN_ENABLED``
+gate), yet it is a runtime readiness warning, not a statement by this FILE about how the
+channel serves static — and it is blind to the stale-root case the VPS runbook exists to
+prevent. Counting the line here meant deleting the VPS runbook's ``collectstatic`` steps
+left this gate green. A systemd unit genuinely declares
 nothing about static; what carries that channel is the RUNBOOK telling the operator to
 collect, on install and on upgrade, so that is asserted in
 ``tests/tooling/test_check_static_serving.py`` against ``docs/deployment.md`` instead.

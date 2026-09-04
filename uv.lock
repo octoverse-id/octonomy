@@ -314,6 +314,23 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/56/74dd7b45bbde6d24494220b98d6961cb1200b63a1800332b430daa2c4551/drf_spectacular-0.30.0-py3-none-any.whl", hash = "sha256:006cf5921ebe20a9bd24f7c846261ebbf78780be5961b0d6e87afaa82afd62ff", size = 111150, upload-time = "2026-07-06T11:29:45.12Z" },
 ]
 
+[package.optional-dependencies]
+sidecar = [
+    { name = "drf-spectacular-sidecar" },
+]
+
+[[package]]
+name = "drf-spectacular-sidecar"
+version = "2026.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "django" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/67/87/ef9f1693499ac2c1bf3c33ce57e72c423aed51ab51f7ebd5d3a38f20c606/drf_spectacular_sidecar-2026.9.1.tar.gz", hash = "sha256:99c2b845d0a52b01a7a8e96736a48ef2099dc3dedea103012dfea41a9e4e9ecc", size = 2605997, upload-time = "2026-09-01T15:27:00.127Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/3b/c4866e6304d09d8813883774dadc5ff70a355279fc2527af3a4004fdb5f0/drf_spectacular_sidecar-2026.9.1-py3-none-any.whl", hash = "sha256:1e521d0ff78c7ab1a873423fc6e6b82ef6bae863f170762e7410ac63b2c7b72f", size = 2628532, upload-time = "2026-09-01T15:26:58.472Z" },
+]
+
 [[package]]
 name = "factory-boy"
 version = "3.3.3"
@@ -499,7 +516,7 @@ dependencies = [
     { name = "django" },
     { name = "django-unfold" },
     { name = "djangorestframework" },
-    { name = "drf-spectacular" },
+    { name = "drf-spectacular", extra = ["sidecar"] },
     { name = "gunicorn" },
     { name = "psycopg", extra = ["binary"] },
     { name = "python-dotenv" },
@@ -522,7 +539,7 @@ requires-dist = [
     { name = "django", specifier = ">=5.2.8,<5.3" },
     { name = "django-unfold", specifier = ">=0.101,<0.103" },
     { name = "djangorestframework", specifier = ">=3.15,<3.18" },
-    { name = "drf-spectacular", specifier = ">=0.27,<0.31" },
+    { name = "drf-spectacular", extras = ["sidecar"], specifier = ">=0.27,<0.31" },
     { name = "factory-boy", marker = "extra == 'dev'", specifier = ">=3.3,<3.4" },
     { name = "gunicorn", specifier = ">=23.0,<24.0" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.7,<3.0" },

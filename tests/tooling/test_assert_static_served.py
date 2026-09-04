@@ -34,6 +34,43 @@ ADMIN_HTML = (
 )
 DRF_HTML = f'<html><head><link rel="stylesheet" href="{HASHED_DRF_CSS}"></head></html>'
 
+# The docs UI (#146). Its bundles live under /static/drf_spectacular_sidecar/, which the
+# script asserts on by name: that prefix is what distinguishes "served from this
+# deployment" from "fetched from jsDelivr", which is the whole point of the surface.
+HASHED_SWAGGER_CSS = "/static/drf_spectacular_sidecar/swagger-ui-dist/swagger-ui.aabbccdd0011.css"
+HASHED_SWAGGER_JS = (
+    "/static/drf_spectacular_sidecar/swagger-ui-dist/swagger-ui-bundle.bbccddee1122.js"
+)
+HASHED_REDOC_JS = "/static/drf_spectacular_sidecar/redoc/bundles/redoc.standalone.ccddeeff2233.js"
+# The Swagger page self-hosts its favicon too, and it is the only non-css/js asset any
+# probed page references — so it is also the one that a css/js-only extractor never fetched
+# while the gate's closing line claimed every referenced asset had been served.
+HASHED_FAVICON = "/static/drf_spectacular_sidecar/swagger-ui-dist/favicon-32x32.ddeeff334455.png"
+
+# The inline <script> is not decoration. drf-spectacular inlines its Swagger init script
+# into the page, and that script contains `//` line comments — so a single
+# `(https?:)?//` pattern would flag every healthy docs page as protocol-relative. This
+# fixture is what keeps the two-grep split honest.
+SWAGGER_HTML = (
+    f'<html><head><link rel="icon" href="{HASHED_FAVICON}">'
+    f'<link rel="stylesheet" href="{HASHED_SWAGGER_CSS}"></head>'
+    f'<body><script src="{HASHED_SWAGGER_JS}"></script>'
+    "<script>\n// only retry once to prevent endless loop.\nconst ui = 1;\n</script>"
+    "</body></html>"
+)
+REDOC_HTML = f'<html><head></head><body><script src="{HASHED_REDOC_JS}"></script></body></html>'
+
+# The egress policy the docs views stamp on every response. The gate checks it because
+# the HTML sweep cannot see a URL baked into a bundle, and both bundles carry one — Redoc
+# fetches its Redocly attribution logo from a CDN with no setting to disable it.
+SHIPPED_CSP = (
+    "default-src 'self'; base-uri 'self'; form-action 'self'; "
+    "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+    "worker-src 'self' blob:; child-src blob:"
+)
+DOCS_CSP = {"Content-Security-Policy": SHIPPED_CSP}
+
 # What a non-manifest deployment renders. The script must reject it: the whole point is to
 # probe the content-addressed path a browser really requests.
 UNHASHED_HTML = (
@@ -42,6 +79,7 @@ UNHASHED_HTML = (
 
 CSS = 'text/css; charset="utf-8"'
 JS = 'text/javascript; charset="utf-8"'
+PNG = "image/png"
 
 
 class _Stub(BaseHTTPRequestHandler):
@@ -57,7 +95,9 @@ class _Stub(BaseHTTPRequestHandler):
         self.send_response(status)
         if ctype:
             self.send_header("Content-Type", ctype)
-        for key, value in headers.items():
+        # A list of (name, value) pairs, not only a dict: a response may legitimately repeat
+        # a header, and one of the cases below is exactly that (two CSPs).
+        for key, value in headers.items() if isinstance(headers, dict) else headers:
             self.send_header(key, value)
         # Declaring more than is sent is how a real truncated transfer looks on the wire:
         # curl reports the status and content type, then fails part-way through the body.
@@ -100,6 +140,12 @@ def _healthy(**overrides):
         HASHED_CSS_2: (200, CSS, "body{}", {}, False),
         HASHED_JS: (200, JS, "1;", {}, False),
         HASHED_DRF_CSS: (200, CSS, "body{}", {}, False),
+        "/api/docs/swagger/": (200, "text/html", SWAGGER_HTML, DOCS_CSP, False),
+        "/api/docs/redoc/": (200, "text/html", REDOC_HTML, DOCS_CSP, False),
+        HASHED_SWAGGER_CSS: (200, CSS, "body{}", {}, False),
+        HASHED_SWAGGER_JS: (200, JS, "1;", {}, False),
+        HASHED_FAVICON: (200, PNG, "\x89PNG", {}, False),
+        HASHED_REDOC_JS: (200, JS, "1;", {}, False),
     }
     routes.update(overrides)
     return routes
@@ -211,6 +257,364 @@ def test_a_denied_but_rendered_browsable_api_is_accepted(run_script, stub_server
     base = stub_server(_healthy(**{"/api/v2/tags": (401, "text/html", DRF_HTML, {}, False)}))
 
     assert run_script("assert-static-served.sh", base).returncode == 0
+
+
+# --- The docs UI surface -------------------------------------------------------------
+#
+# Added with #146, which moved the Swagger UI and Redoc bundles off cdn.jsdelivr.net@latest
+# and into the image. Two distinct guarantees are asserted per page and both can regress
+# on their own: the page renders and its assets resolve (the same manifest guarantee as
+# the surfaces above), and the page references nothing off-box.
+
+
+def test_a_docs_page_that_500s_fails(run_script, stub_server):
+    """Under manifest storage an uncollected sidecar bundle is a 500 on the page.
+
+    That is the shape of "drf_spectacular_sidecar is not in INSTALLED_APPS" or "the image
+    was built without collectstatic" — not a 404 on the asset.
+    """
+
+    base = stub_server(
+        _healthy(**{"/api/docs/swagger/": (500, "text/html", "Server Error", {}, False)})
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "returned 500" in result.output
+
+
+def test_a_docs_page_still_pointing_at_a_cdn_fails(run_script, stub_server):
+    """The exact pre-#146 shape, reproduced from a real render of the previous image."""
+
+    cdn = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@latest/swagger-ui-bundle.js"
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/swagger/": (
+                    200,
+                    "text/html",
+                    f'<html><head><link rel="stylesheet" href="{HASHED_SWAGGER_CSS}">'
+                    f'<script src="{cdn}"></script></head></html>',
+                    {},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "no CDN, no font host" in result.output
+    assert cdn in result.output
+
+
+def test_a_redoc_page_loading_google_fonts_fails(run_script, stub_server):
+    """The regression the override template exists to prevent.
+
+    ``REDOC_DIST = "SIDECAR"`` relocates the bundle and nothing else: the shipped
+    ``drf_spectacular/redoc.html`` still links a stylesheet from fonts.googleapis.com. A
+    check that only looked for jsDelivr would call this page self-hosted.
+    """
+
+    fonts = "https://fonts.googleapis.com/css2?family=Roboto"
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/redoc/": (
+                    200,
+                    "text/html",
+                    f'<html><head><link rel="stylesheet" href="{fonts}"></head>'
+                    f'<body><script src="{HASHED_REDOC_JS}"></script></body></html>',
+                    {},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "fonts.googleapis.com" in result.output
+
+
+def test_a_protocol_relative_asset_on_a_docs_page_fails(run_script, stub_server):
+    """`//cdn.example/x.js` fetches from a third party exactly as an absolute URL does."""
+
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/swagger/": (
+                    200,
+                    "text/html",
+                    f'<html><head><link rel="stylesheet" href="{HASHED_SWAGGER_CSS}">'
+                    '<script src="//cdn.example.test/swagger-ui-bundle.js"></script></head></html>',
+                    {},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "protocol-relative" in result.output
+
+
+def test_an_inline_script_comment_is_not_read_as_a_protocol_relative_url(run_script, stub_server):
+    """The healthy Swagger fixture carries a `//` line comment, as the real page does.
+
+    Asserted explicitly rather than left to the happy-path test: folding the two greps
+    into one `(https?:)?//` pattern makes every correctly self-hosted docs page fail, and
+    the resulting error would point at the wrong thing entirely.
+    """
+
+    assert "//" in SWAGGER_HTML.split("<script>")[-1]
+
+    assert run_script("assert-static-served.sh", stub_server(_healthy())).returncode == 0
+
+
+def test_a_docs_page_referencing_no_sidecar_asset_fails(run_script, stub_server):
+    """A page carrying only hashed assets from elsewhere proves nothing about the bundles."""
+
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/swagger/": (
+                    200,
+                    "text/html",
+                    f'<html><head><link rel="stylesheet" href="{HASHED_CSS}"></head></html>',
+                    {},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "no hashed drf_spectacular_sidecar asset" in result.output
+
+
+def test_swagger_assets_do_not_satisfy_the_redoc_page_assertion(run_script, stub_server):
+    """Each docs page is judged on its own references.
+
+    Accumulating both pages' assets into one list before checking would let Swagger's
+    bundle vouch for a Redoc page that had reverted to the CDN — and Redoc is the page
+    with the extra failure mode (its own override template).
+    """
+
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/redoc/": (
+                    200,
+                    "text/html",
+                    f'<html><head><link rel="stylesheet" href="{HASHED_CSS}"></head></html>',
+                    {},
+                    False,
+                )
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "no hashed drf_spectacular_sidecar asset" in result.output
+
+
+def test_a_docs_page_without_the_egress_csp_fails(run_script, stub_server):
+    """A header can be stripped between the view and the browser.
+
+    A proxy, a WSGI config, or a well-meaning "clean up the headers" change removes it and
+    every other assertion in this gate still passes — while Redoc's bundle resumes calling
+    cdn.redoc.ly on every page view. Nothing in the served HTML would show that.
+    """
+
+    base = stub_server(_healthy(**{"/api/docs/redoc/": (200, "text/html", REDOC_HTML, {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "no Content-Security-Policy" in result.output
+
+
+@pytest.mark.parametrize(
+    ("label", "policy"),
+    [
+        # --- An EXTRA source: an egress hole the page would never show. ---
+        #
+        # A wildcard permits the very request img-src is here to refuse.
+        ("wildcard images", SHIPPED_CSP.replace("img-src 'self' data:", "img-src *")),
+        # And so does naming the host outright. This is the case a substring check for
+        # "img-src 'self'" reported as enforced — the directive still starts with 'self'.
+        (
+            "the blocked host allowed back",
+            SHIPPED_CSP.replace(
+                "img-src 'self' data:", "img-src 'self' data: https://cdn.redoc.ly"
+            ),
+        ),
+        # A scheme source is just as broad in practice.
+        ("any https image", SHIPPED_CSP.replace("img-src 'self' data:", "img-src 'self' https:")),
+        # Same substring trap one directive over: "default-src 'self' *" contains
+        # "default-src 'self'" and permits everything the policy meant to refuse.
+        ("widened default-src", SHIPPED_CSP.replace("default-src 'self'", "default-src 'self' *")),
+        # Egress by another route: fetch/XHR to anywhere.
+        ("open connect-src", SHIPPED_CSP.replace("connect-src 'self'", "connect-src 'self' *")),
+        # --- A MISSING source: the page breaks, and curl cannot see it. ---
+        #
+        # Without 'unsafe-inline' Swagger's inline bootstrap never runs and the UI is blank,
+        # while every asset this gate fetches still returns a healthy 200.
+        (
+            "script-src without unsafe-inline",
+            SHIPPED_CSP.replace("script-src 'self' 'unsafe-inline'", "script-src 'self'"),
+        ),
+        # Same for Redoc's styled-components rules.
+        (
+            "style-src without unsafe-inline",
+            SHIPPED_CSP.replace("style-src 'self' 'unsafe-inline'", "style-src 'self'"),
+        ),
+        # Redoc's search index worker is created from a Blob URL; without this it dies.
+        (
+            "worker-src without blob",
+            SHIPPED_CSP.replace("worker-src 'self' blob:", "worker-src 'self'"),
+        ),
+        # --- A directive removed outright. ---
+        ("no img-src at all", SHIPPED_CSP.replace("img-src 'self' data:; ", "")),
+    ],
+)
+def test_a_rewritten_docs_csp_fails(run_script, stub_server, label, policy):
+    """Every directive is compared as a SET, so both failure directions are caught.
+
+    An extra source is an egress hole — and the reason it cannot be a substring test is
+    that most of the cases above still contain the exact string the substring version
+    looked for. A missing source is the opposite problem: the policy gets stricter and the
+    page stops working, which no amount of fetching assets reveals, because this gate is
+    curl and never executes the JavaScript.
+    """
+
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/swagger/": (
+                    200,
+                    "text/html",
+                    SWAGGER_HTML,
+                    {"Content-Security-Policy": policy},
+                    False,
+                ),
+                "/api/docs/redoc/": (
+                    200,
+                    "text/html",
+                    REDOC_HTML,
+                    {"Content-Security-Policy": policy},
+                    False,
+                ),
+            }
+        )
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1, label
+    assert "Content-Security-Policy" in result.output
+
+
+def test_a_second_csp_header_fails(run_script, stub_server):
+    """Browsers enforce every policy present and apply the intersection.
+
+    So a proxy that appends its own `default-src 'self'` blocks the inline Swagger and
+    Redoc bootstrap and blanks both pages, while the app's own header is still exactly
+    right. Reading only the first header reported that as enforced.
+    """
+
+    two = [
+        ("Content-Security-Policy", SHIPPED_CSP),
+        ("Content-Security-Policy", "default-src 'self'"),
+    ]
+    base = stub_server(
+        _healthy(**{"/api/docs/swagger/": (200, "text/html", SWAGGER_HTML, two, False)})
+    )
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "2 Content-Security-Policy headers" in result.output
+
+
+def test_the_directive_order_of_the_policy_does_not_matter(run_script, stub_server):
+    """Sources are compared as sets, so a proxy that reorders a correct policy still passes.
+
+    Worth an explicit case: a gate that compared the header as one string would fail a
+    deployment whose policy is exactly right, and that false alarm is how a real gate gets
+    switched off.
+    """
+
+    reordered = "; ".join(reversed(SHIPPED_CSP.split("; ")))
+    shuffled = reordered.replace("img-src 'self' data:", "img-src data: 'self'")
+    base = stub_server(
+        _healthy(
+            **{
+                "/api/docs/swagger/": (
+                    200,
+                    "text/html",
+                    SWAGGER_HTML,
+                    {"Content-Security-Policy": shuffled},
+                    False,
+                ),
+                "/api/docs/redoc/": (
+                    200,
+                    "text/html",
+                    REDOC_HTML,
+                    {"Content-Security-Policy": shuffled},
+                    False,
+                ),
+            }
+        )
+    )
+
+    assert run_script("assert-static-served.sh", base).returncode == 0
+
+
+def test_a_missing_swagger_favicon_fails(run_script, stub_server):
+    """The asset the extractor used to skip entirely.
+
+    Cosmetic on its own, but the gate's closing line claims every hashed asset the pages
+    reference was served — and a css/js-only extractor made that claim false for the one
+    PNG on the page. Fixing the claim means probing it.
+    """
+
+    base = stub_server(_healthy(**{HASHED_FAVICON: (404, "text/html", "nope", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert HASHED_FAVICON in result.output
+
+
+def test_a_favicon_served_as_something_other_than_an_image_fails(run_script, stub_server):
+    base = stub_server(_healthy(**{HASHED_FAVICON: (200, "text/html", "nope", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert "is a PNG but was served as" in result.output
+
+
+def test_a_docs_asset_that_404s_fails(run_script, stub_server):
+    """The page can render while the bundle it names is not actually served."""
+
+    base = stub_server(_healthy(**{HASHED_SWAGGER_JS: (404, "text/html", "nope", {}, False)}))
+
+    result = run_script("assert-static-served.sh", base)
+
+    assert result.returncode == 1
+    assert HASHED_SWAGGER_JS in result.output
 
 
 # --- Transport and headers ---------------------------------------------------------------

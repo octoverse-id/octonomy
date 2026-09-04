@@ -3,10 +3,10 @@
 from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
-from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView
+from drf_spectacular.views import SpectacularAPIView
 
 from octonomy.core.views import live, ready
-from octonomy.openapi.views import VersionedSwaggerView
+from octonomy.openapi.views import SelfHostedRedocView, VersionedSwaggerView
 
 # One view tree serves both API versions (the v1/v2 shim). URL-path versioning
 # captures <version>; NamespaceURLPathVersioning validates it against
@@ -27,7 +27,9 @@ api_patterns = [
 # schema-v1 / redoc-v1 routes. v1 is supported, not deprecated.
 #
 # Swagger UI is a single page with a v1/v2 "Select a definition" dropdown, wired via
-# VersionedSwaggerView. Redoc has no such dropdown, so it stays per-version.
+# VersionedSwaggerView. Redoc has no such dropdown, so it stays per-version, and it is
+# SelfHostedRedocView rather than the shipped SpectacularRedocView so the page carries
+# no Google Fonts links (#146); its bundle, and Swagger's, come from the sidecar app.
 urlpatterns = [
     path("health/live", live, name="health-live"),
     path("health/ready", ready, name="health-ready"),
@@ -35,9 +37,9 @@ urlpatterns = [
     path("api/v1/schema/", SpectacularAPIView.as_view(api_version="v1"), name="schema-v1"),
     path("api/v2/schema/", SpectacularAPIView.as_view(api_version="v2"), name="schema-v2"),
     path("api/docs/swagger/", VersionedSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
-    path("api/docs/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
-    path("api/docs/v1/redoc/", SpectacularRedocView.as_view(url_name="schema-v1"), name="redoc-v1"),
-    path("api/docs/v2/redoc/", SpectacularRedocView.as_view(url_name="schema-v2"), name="redoc-v2"),
+    path("api/docs/redoc/", SelfHostedRedocView.as_view(url_name="schema"), name="redoc"),
+    path("api/docs/v1/redoc/", SelfHostedRedocView.as_view(url_name="schema-v1"), name="redoc-v1"),
+    path("api/docs/v2/redoc/", SelfHostedRedocView.as_view(url_name="schema-v2"), name="redoc-v2"),
     path("api/<version>/", include(api_patterns)),
 ]
 

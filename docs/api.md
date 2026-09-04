@@ -44,6 +44,75 @@ python manage.py create_service_token \
   --scope tags:write
 ```
 
+## Interactive Docs
+
+Four routes — one Swagger page and three Redoc pages — all served by the app itself:
+
+```text
+GET /api/docs/swagger/    # Swagger UI, with a v1/v2 "Select a definition" dropdown
+GET /api/docs/redoc/      # Redoc, v2 (the default routes serve v2)
+GET /api/docs/v1/redoc/   # Redoc, v1
+GET /api/docs/v2/redoc/   # Redoc, v2
+```
+
+**They are self-contained.** The Swagger UI and Redoc bundles, and Swagger's favicon, are
+shipped inside the release and served from this deployment's own `/static/` — the pages make
+**no request to any third-party host**, so they render on an isolated network exactly as they
+do on a connected one. Nothing is fetched from a CDN, and no third party learns that someone
+opened your API docs.
+
+Two consequences worth knowing:
+
+- The docs UI version is pinned by `uv.lock` and listed in the image SBOM, like every other
+  dependency. Previously the pages loaded `swagger-ui-dist@latest` and `redoc@latest` from
+  jsDelivr, so the JavaScript could change under a fixed Octonomy release.
+- Because they are ordinary static assets, these pages need `STATIC_ROOT` collected, just like
+  the admin console and the DRF browsable API. The container image does that at build time; a
+  venv install runs `make collectstatic` (see [deployment.md](deployment.md)). Without it the
+  docs pages return 500 rather than falling back to the internet — deliberately, since a silent
+  fallback is the behaviour this replaced.
+
+Redoc's default theme asks for Roboto and Montserrat, which are **not** fetched from Google
+Fonts; the page renders in whatever the browser resolves those names to locally, usually its
+default sans-serif.
+
+**Two of those requests come from inside the bundles, not from the page.** Self-hosting a
+bundle does not change what that bundle asks for at runtime, and both of these ask for
+something — neither URL appears anywhere in the HTML:
+
+- Swagger UI's "online validator" badge defaults to sending your deployment's absolute schema
+  URL to `https://validator.swagger.io/validator` on every page load, and rendering the result
+  as an image. It is disabled outright (`validatorUrl: null`).
+- Redoc's sidebar attribution fetches its small "API docs by Redocly" logo from `cdn.redoc.ly`.
+  Redoc offers no setting to turn this off.
+
+Both pages therefore carry a `Content-Security-Policy` that permits scripts, styles, images,
+fonts and connections from this origin only (plus `data:` URIs, and `blob:` for the worker
+Redoc builds its search index in). If a bundle tries to reach a third party, the browser
+refuses. Redoc drops the logo element when its request fails, so the attribution renders as
+text with no broken image. The policy also covers what a future upgrade *adds*: a new CDN
+reference inside a bundle is invisible to anything that inspects the served HTML.
+
+The `Content-Security-Policy` here is an **egress** control, not an XSS one — it permits
+`'unsafe-inline'` because both pages are inline-script by construction upstream. If
+`OCTONOMY_STATIC_URL` points at a CDN of your own, that origin is added to the policy
+automatically.
+
+Some asset origins cannot be named in a CSP, and on those the docs pages send **no policy at
+all** rather than one that would block your own bundles:
+
+- an **IPv6 literal** (`http://[::1]:9000/static/`) — CSP's grammar has no IPv6 form, and
+  browsers discard such a source;
+- a **non-ASCII hostname** — Python's IDNA-2003 encoder and your browser disagree on hosts
+  like `faß.de`;
+- a URL whose origin **your browser reads and Python does not**: extra leading slashes or a
+  backslash (`///cdn.example.com/static/`, `https:////cdn.example.com/static/`,
+  `/\cdn.example.com/static/`). Browsers resolve all of those to `cdn.example.com`.
+
+Each keeps working, just without the enforcement. Spelling the origin plainly restores it:
+`https://cdn.example.com/static/` or `//cdn.example.com/static/`, punycode for an IDN, and a
+DNS name rather than an IPv6 literal.
+
 ## Namespace Trust Model
 
 Octonomy enforces exact namespace grants against the request namespace. A token restricted to

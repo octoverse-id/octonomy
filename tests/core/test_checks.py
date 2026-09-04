@@ -284,11 +284,18 @@ def test_w002_is_silent_once_static_is_collected(populated_static_root):
         assert static_root_populated_check(None) == []
 
 
-def test_w002_is_silent_when_the_admin_is_disabled(empty_static_root):
-    # T-D3. Accepted ceiling of dec-797303d8: the browsable API still needs static here,
-    # and this check deliberately says nothing about it.
+def test_w002_fires_even_when_the_admin_is_disabled(empty_static_root):
+    """T-D3, inverted by #146 — this used to assert silence (dec-797303d8).
+
+    The admin-off shape is the DEFAULT production deployment, and it is no longer a
+    shape where static is merely nice to have: `/api/docs/swagger/` and the three Redoc
+    pages now serve their own bundles, so an uncollected root 500s the product's
+    primary documented surface. Keeping the gate would have meant staying quiet for
+    precisely the deployments that regressed.
+    """
+
     with override_settings(DEBUG=False, ADMIN_ENABLED=False, STATIC_ROOT=empty_static_root):
-        assert static_root_populated_check(None) == []
+        assert {m.id for m in static_root_populated_check(None)} == {"octonomy.W002"}
 
 
 def test_w002_is_silent_in_debug(empty_static_root):

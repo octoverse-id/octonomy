@@ -198,7 +198,7 @@ def _contains_a_readable_file(root: Path) -> bool:
 
 
 def _static_readiness_problem() -> str | None:
-    """Describe why STATIC_ROOT cannot back the admin, or None when it looks collected."""
+    """Describe why STATIC_ROOT cannot back the rendered pages, or None when collected."""
 
     static_root = getattr(settings, "STATIC_ROOT", None)
     if not static_root:
@@ -249,13 +249,22 @@ def _static_readiness_problem() -> str | None:
 
 @register(Tags.staticfiles)
 def static_root_populated_check(app_configs, **kwargs):
-    """Warn when the admin is on with DEBUG=false but STATIC_ROOT cannot back it.
+    """Warn when DEBUG=false but STATIC_ROOT cannot back the pages this app renders.
 
     Octonomy serves its own bundled assets through WhiteNoise, which indexes STATIC_ROOT
     at process start. A deploy that never ran ``collectstatic`` therefore has an empty
-    index, and — under the manifest staticfiles backend — the first admin page render
-    raises instead of merely looking unstyled. Name that at boot rather than at the first
+    index, and — under the manifest staticfiles backend — the first HTML render raises
+    instead of merely looking unstyled. Name that at boot rather than at the first
     operator request.
+
+    NOT gated on ``ADMIN_ENABLED``, and that is the correction #146 forced. The gate was
+    an accepted ceiling (dec-797303d8) while the admin was the only page anyone was
+    likely to open: the DRF browsable API needed static too, but it is a developer
+    convenience. Self-hosting the docs assets added ``/api/docs/swagger/`` and the three
+    Redoc pages to the list — the product's PRIMARY documented surface, always on, and
+    they now 500 under manifest storage on an uncollected root where they previously
+    rendered from a CDN. A warning that stays silent for the default deployment shape
+    (admin off) would have been silent for exactly the deployments that regressed.
 
     This is a readiness heuristic, not a proof: it catches an absent, empty, unreadable or
     manifest-less STATIC_ROOT. It deliberately says nothing about a populated-but-STALE
@@ -270,15 +279,11 @@ def static_root_populated_check(app_configs, **kwargs):
     It reads settings and the filesystem only, never the database, so it is safe to run
     before migrations apply.
 
-    A ``Warning``, never an ``Error``: a missing optional console must not take down a
-    healthy REST API.
+    A ``Warning``, never an ``Error``: unrenderable HTML pages must not take down a
+    healthy JSON API, which needs no static at all.
     """
 
-    # gstack-shortcut(dec-797303d8): W002 is gated on ADMIN_ENABLED, so a default
-    # production deploy with the admin off gets no warning even though the DRF browsable
-    # API still needs static; upgrade when an operator reports an unstyled browsable API
-    # with the admin disabled, or when DEFAULT_RENDERER_CLASSES is set explicitly.
-    if settings.DEBUG or not getattr(settings, "ADMIN_ENABLED", False):
+    if settings.DEBUG:
         return []
 
     problem = _static_readiness_problem()
@@ -287,8 +292,10 @@ def static_root_populated_check(app_configs, **kwargs):
 
     return [
         Warning(
-            f"The Octonomy admin is enabled with DEBUG=false but {problem}, so the app "
-            "has no bundled CSS/JS to serve and admin pages will fail to render.",
+            f"DEBUG is false but {problem}, so the app has no bundled CSS/JS to serve. "
+            "Every HTML surface fails to render: the /api/docs/ Swagger and Redoc pages "
+            "and the DRF browsable API, plus the admin console when it is enabled. The "
+            "JSON API is unaffected.",
             hint="Run `python manage.py collectstatic --noinput` on this host and restart "
             "the service — the asset index is built at process start, so collecting "
             "afterwards is not picked up promptly (Gunicorn workers only re-index as they "

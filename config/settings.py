@@ -89,6 +89,13 @@ INSTALLED_APPS = [
     "django.contrib.postgres",
     "rest_framework",
     "drf_spectacular",
+    # Ships the Swagger UI and Redoc bundles as ordinary app static files so
+    # collectstatic finds them (#146). Without it the docs pages would keep loading
+    # their JS/CSS from cdn.jsdelivr.net at an unpinned @latest tag: no offline story,
+    # and third-party code executing in an operator's browser outside the lockfile,
+    # the SBOM and the image attestation that cover everything else we ship. It
+    # contributes static only — no models, no checks, no URLs.
+    "drf_spectacular_sidecar",
     "octonomy.service_auth",
     "octonomy.audit",
     "octonomy.events",
@@ -183,7 +190,8 @@ ADMIN_ENABLED = env_bool("OCTONOMY_ADMIN_ENABLED", DEBUG)
 # browsable API is on by default, so /static/rest_framework/* is required even when the
 # admin console is off.
 #
-# Boundary: first-party BUNDLED assets only (django.contrib.admin, unfold, DRF).
+# Boundary: first-party BUNDLED assets only (django.contrib.admin, unfold, DRF, and the
+# Swagger UI / Redoc bundles that drf_spectacular_sidecar ships — see #146).
 # Octonomy stores no user uploads and defines no MEDIA_ROOT; WhiteNoise must never be
 # pointed at user-supplied files.
 #
@@ -277,8 +285,8 @@ if FORCE_SCRIPT_NAME is not None:
 # from staticfiles.json, so a deploy that skipped collectstatic fails loudly with a 500
 # instead of quietly rendering unstyled. That is intended. octonomy.W002 catches the
 # common shapes of it at boot — absent, empty, unreadable or manifest-less STATIC_ROOT —
-# but it is a readiness heuristic, not a guarantee: it is gated on ADMIN_ENABLED and
-# cannot see a populated-but-stale root. Most tests run the plain, non-manifest backend;
+# but it is a readiness heuristic, not a guarantee: it cannot see a populated-but-stale
+# root. Most tests run the plain, non-manifest backend;
 # see config/settings_pytest.py for that divergence and what still covers this one.
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
@@ -492,6 +500,21 @@ SPECTACULAR_SETTINGS = {
     # The single Swagger UI with the v1/v2 version dropdown is wired in
     # octonomy.openapi.views.VersionedSwaggerView, which builds SWAGGER_UI_SETTINGS
     # per request so the dropdown's schema URLs carry any script-name prefix.
+    #
+    # "SIDECAR" is drf-spectacular's sentinel (drf_spectacular/views.py): it resolves
+    # each asset through {% static %} against drf_spectacular_sidecar instead of the
+    # default https://cdn.jsdelivr.net/npm/...@latest. All three must be set — the
+    # favicon is a separate key and would otherwise stay on the CDN on its own, which
+    # is still an outbound request from the docs page.
+    #
+    # Consequences worth knowing. The bundles now go through the manifest staticfiles
+    # backend like every other asset, so a deploy that skipped collectstatic gets a 500
+    # on /api/docs/* rather than a page that quietly reaches the internet
+    # (octonomy.W002 names it at boot). And the UI version is pinned by uv.lock and
+    # appears in the image SBOM, so it can no longer drift under a fixed release.
+    "SWAGGER_UI_DIST": "SIDECAR",
+    "SWAGGER_UI_FAVICON_HREF": "SIDECAR",
+    "REDOC_DIST": "SIDECAR",
 }
 
 SERVICE_TOKEN_PEPPER = os.getenv("SERVICE_TOKEN_PEPPER", "")

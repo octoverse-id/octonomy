@@ -6,16 +6,19 @@
 # `{% static %}` through staticfiles.json.
 #
 # WHAT THIS ESTABLISHES, precisely: the BUILT IMAGE carries a usable production manifest,
-# and the two surfaces probed here — the admin login page and the DRF browsable API —
-# render and serve the hashed assets they reference. That is a packaging and
-# global-collection guarantee.
+# and the four surfaces probed here — the admin login page, the DRF browsable API, and the
+# Swagger UI and Redoc docs pages — render and serve the hashed assets they reference. For
+# the docs pages it also establishes that they reference NOTHING off-box, and that the
+# egress CSP that blocks what the BUNDLES ask for survives to the wire (#146). That is a
+# packaging and global-collection guarantee.
 #
-# WHAT IT DOES NOT: it renders two pages, not every page. A changelist or form template
+# WHAT IT DOES NOT: it renders four pages, not every page. A changelist or form template
 # referencing an uncollected asset still passes the suite (plain backend) and passes here
 # (never rendered), and fails only for the operator who opens that page. Closing that would
 # mean a session-scoped production collectstatic fixture, as config/settings_pytest.py
-# describes. tests/admin/test_static_serving.py already covers these same two surfaces
-# under manifest storage in-process; what this adds is the real image, really built.
+# describes. tests/admin/test_static_serving.py and tests/openapi/test_docs_assets.py cover
+# these same surfaces under manifest storage in-process; what this adds is the real image,
+# really built.
 #
 # Probing /static/admin/css/base.css would prove nothing. collectstatic writes BOTH the
 # original and the hashed name, so the unhashed path returns 200 even when the manifest is
@@ -48,7 +51,7 @@ trap 'rm -rf "$work"' EXIT
 CURL=(curl -sS --connect-timeout 5 --max-time 30 --max-filesize 5000000)
 
 # An upper bound on how many assets a page may reference before this is treated as a
-# problem in its own right. The two real pages reference 23 between them; a page emitting
+# problem in its own right. The four real pages reference 28 between them; a page emitting
 # hundreds means a template regression, and probing them all sequentially is how a bounded
 # per-request timeout still adds up to a job timeout. Fails loudly rather than truncating,
 # because silently probing a subset is the sampling defect this loop exists to avoid.
@@ -69,6 +72,71 @@ fail() {
   # ::error:: renders as an annotation on the CI job and as plain text anywhere else.
   echo "::error::$1" >&2
   exit 1
+}
+
+# The policy the shipped configuration serves on a docs page, directive by directive, as
+# "<name> <source>..." entries. Compared as SETS: an extra source is an egress hole, and a
+# MISSING one breaks the page — dropping 'unsafe-inline' from script-src leaves Swagger's
+# inline bootstrap blocked and the UI blank, which no amount of fetching assets would reveal
+# (this gate is curl; it never executes the JavaScript).
+#
+# This is the SHIPPED configuration's policy — CI runs that, the same premise the
+# Access-Control-Allow-Origin assertion rests on. A deployment fronting /static/ with a CDN
+# legitimately carries that origin in the asset directives; such a deployment is changing
+# this contract and should change this table with it.
+EXPECTED_CSP=(
+  "default-src 'self'"
+  "base-uri 'self'"
+  "form-action 'self'"
+  "script-src 'self' 'unsafe-inline'"
+  "style-src 'self' 'unsafe-inline'"
+  "img-src 'self' data:"
+  "font-src 'self' data:"
+  "connect-src 'self'"
+  "worker-src 'self' blob:"
+  "child-src blob:"
+)
+
+# Assert one CSP directive carries EXACTLY the sources expected — no more, no fewer.
+#
+# Exact, not a substring match, and for the same reason the content-type comparison below is
+# exact: `img-src 'self'` appears just as happily inside `img-src 'self' *` and
+# `img-src 'self' https://cdn.redoc.ly`. Both permit the request this gate claims to have
+# blocked, so a substring test would report enforcement while the egress regression is live.
+#
+# usage: assert_csp_directive PAGE POLICY "DIRECTIVE SOURCE..."
+assert_csp_directive() {
+  local page=$1 policy=$2 expected=$3
+  local directive=${expected%% *}
+
+  # Directive names are case-insensitive; source values are not. Split the policy on ';'
+  # and take the first entry whose first token is this directive.
+  local found="" entry name
+  while IFS= read -r entry; do
+    name=$(awk '{print tolower($1)}' <<<"$entry")
+    if [ "$name" = "$directive" ]; then
+      found=$entry
+      break
+    fi
+  done < <(tr ';' '\n' <<<"$policy")
+
+  if [ -z "$found" ]; then
+    fail "$page has a Content-Security-Policy with no $directive directive; expected '$expected'. Without it that resource type falls back to default-src, or to nothing at all."
+  fi
+
+  # Compare as sets: `read -ra` collapses whitespace, `sort` removes ordering. Deliberately
+  # not `xargs` for the tokenising — xargs strips shell quoting, so every keyword source
+  # would arrive as a bare `self` and match nothing.
+  local -a got_tokens want_tokens
+  read -ra got_tokens <<<"$found"
+  read -ra want_tokens <<<"$expected"
+  local got want
+  got=$(printf '%s\n' "${got_tokens[@]:1}" | sort | tr '\n' ' ')
+  want=$(printf '%s\n' "${want_tokens[@]:1}" | sort | tr '\n' ' ')
+
+  if [ "$got" != "$want" ]; then
+    fail "$page has '$found' in its Content-Security-Policy; expected exactly '$expected'. An EXTRA source is an egress hole; a MISSING one breaks the page — without 'unsafe-inline' on script-src, Swagger's inline bootstrap is blocked and the UI renders blank, which fetching assets cannot detect."
+  fi
 }
 
 # --- The admin page must render at all ------------------------------------------------
@@ -92,7 +160,7 @@ echo "ok    GET /admin/login/ -> 200"
 # --- It must reference hashed assets --------------------------------------------------
 # If nothing in the page is content-addressed, manifest storage is not in effect and every
 # assertion below would be testing the wrong backend.
-grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/admin.html" |
+grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js|png)' "$work/admin.html" |
   sort -u >"$work/admin-assets.txt" || true
 if [ ! -s "$work/admin-assets.txt" ]; then
   fail "the rendered admin page references no hashed asset URL — the manifest staticfiles backend is not in effect, so this gate would be checking the wrong thing."
@@ -136,7 +204,7 @@ echo "ok    browsable API rendered ($api_status)"
 # ALL hashed assets on this page, not only the rest_framework ones. Scoping the extractor
 # to /static/rest_framework/ meant a broken asset from anywhere else on the same page — a
 # project-level override, say — was never probed at all: status, type and CORS all skipped.
-grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js)' "$work/api.html" |
+grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js|png)' "$work/api.html" |
   sort -u >"$work/api-assets.txt" || true
 # The rest_framework requirement stays, as a separate assertion: it is what proves the page
 # really is the browsable renderer rather than some other 4xx that happens to carry assets.
@@ -145,6 +213,92 @@ if ! grep -q '/static/rest_framework/' "$work/api-assets.txt"; then
 fi
 echo "ok    browsable API references $(wc -l <"$work/api-assets.txt" | tr -d ' ') hashed asset(s)"
 
+# --- The docs UI: rendered, self-hosted, and reaching no third party ---------------------
+# Added by #146, which moved the Swagger UI and Redoc bundles out of cdn.jsdelivr.net@latest
+# and into the image. That makes /api/docs/* a static-dependent surface for the first time:
+# under manifest storage an uncollected sidecar asset is a 500 on the page, not a fallback
+# to the internet. It is also the surface most operators open first, and unlike the admin it
+# is always on.
+#
+# Both templates are checked because they are different templates with different failure
+# modes: Swagger's asset URLs come from three separate settings keys, while Redoc's page is
+# rendered from an override template (octonomy.openapi.views.SelfHostedRedocView) whose only
+# job is to drop the Google Fonts links the shipped one carries. A regression in either is
+# invisible from the other.
+#
+# No token is needed: SERVE_PERMISSIONS leaves the docs public, like the schema they render.
+: >"$work/docs-assets.txt"
+for page in /api/docs/swagger/ /api/docs/redoc/; do
+  rc=0
+  status=$("${CURL[@]}" -D "$work/docs-headers.txt" -o "$work/docs.html" \
+    -w '%{http_code}' "$base$page") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    fail "GET $page did not complete (curl exit $rc)"
+  fi
+  if [ "$status" != "200" ]; then
+    echo "--- first 2 KB of the response ---" >&2
+    head -c 2048 "$work/docs.html" >&2 || true
+    echo >&2
+    fail "GET $page returned $status (expected 200). A 500 means the docs UI bundles were not collected — check that drf_spectacular_sidecar is in INSTALLED_APPS and that collectstatic ran."
+  fi
+
+  # The air-gap assertion, and the reason this section exists at all. Any scheme, any host:
+  # the contract is that these pages reach NOTHING off-box, and the last regression here was
+  # Google Fonts rather than the CDN this issue was named for.
+  #
+  # Two greps rather than one pattern. A combined `(https?:)?//` would match the `//` line
+  # comments in the Swagger init script that drf-spectacular inlines into the page, so
+  # protocol-relative URLs are looked for only where they can actually be fetched from — a
+  # src or href attribute.
+  if grep -qE 'https?://' "$work/docs.html"; then
+    grep -oE 'https?://[^"'"'"' <>]+' "$work/docs.html" | sort -u >&2
+    fail "$page references the absolute URL(s) above. The docs UI must serve every asset from this deployment: no CDN, no font host, nothing an air-gapped install cannot reach."
+  fi
+  if grep -qE '(src|href)="//' "$work/docs.html"; then
+    fail "$page references a protocol-relative URL, which resolves to a third-party host just as an absolute one does."
+  fi
+
+  # Extracted per page and asserted per page BEFORE appending to the accumulated list: a
+  # shared file would let Swagger's assets satisfy Redoc's assertion, which is exactly the
+  # regression (an override template silently reverting to the CDN) this is here to catch.
+  grep -oE '/static/[^"'"'"']+\.[0-9a-f]{8,}\.(css|js|png)' "$work/docs.html" |
+    sort -u >"$work/page-assets.txt" || true
+  # Same reasoning as the rest_framework assertion above: a page carrying no hashed asset
+  # at all would satisfy every check so far while proving nothing about the manifest.
+  if ! grep -q '/static/drf_spectacular_sidecar/' "$work/page-assets.txt"; then
+    fail "$page references no hashed drf_spectacular_sidecar asset — the bundles are not being served from this deployment, so the page is either still pointing at a CDN or not the docs UI."
+  fi
+  cat "$work/page-assets.txt" >>"$work/docs-assets.txt"
+  # The HTML sweep above cannot see a URL that lives inside a bundle, and both bundles
+  # carry one — Redoc requests its Redocly attribution logo from a CDN with no setting to
+  # turn it off. The response CSP is what refuses those, so its absence is a regression
+  # even though every assertion above still passes. Checked here rather than only in
+  # pytest because a header is exactly the kind of thing a proxy or a WSGI config can
+  # strip between the view and the browser.
+  # `|| true` is load-bearing under `set -e -o pipefail`: with no such header grep exits 1
+  # and the assignment would kill the script silently — exit 1 with no diagnostic at all,
+  # which is the opposite of what this gate is for. Let it come back empty and report it.
+  csp_count=$(grep -ci '^content-security-policy:' "$work/docs-headers.txt" || true)
+  if [ "$csp_count" -eq 0 ]; then
+    fail "$page carries no Content-Security-Policy header. That header is what stops the bundles' own JavaScript reaching a third party — nothing in the HTML shows those requests."
+  fi
+  # A browser enforces EVERY policy present and takes the intersection, so a second header
+  # can block what the first permits: an appended `default-src 'self'` kills the inline
+  # Swagger bootstrap and blanks the page while the app's own header is still perfect.
+  # Validating only the first (the earlier `head -1`) would report that as enforced.
+  if [ "$csp_count" -gt 1 ]; then
+    grep -i '^content-security-policy:' "$work/docs-headers.txt" >&2
+    fail "$page carries $csp_count Content-Security-Policy headers (listed above). Browsers enforce all of them and apply the intersection, so an appended policy can blank the page even when the app's own is correct. Whatever adds the second one must be reconciled with the app's, not layered on top of it."
+  fi
+  csp=$(grep -i '^content-security-policy:' "$work/docs-headers.txt" |
+    cut -d: -f2- | tr -d '\r')
+  for expected in "${EXPECTED_CSP[@]}"; do
+    assert_csp_directive "$page" "$csp" "$expected"
+  done
+
+  echo "ok    GET $page -> 200, self-hosted, CSP enforced, references $(wc -l <"$work/page-assets.txt" | tr -d ' ') hashed asset(s)"
+done
+
 # --- EVERY hashed asset those pages reference must actually be served -------------------
 # Not just the first of each. Two reasons, both observed rather than theorised: in the
 # shipped Unfold and DRF templates stylesheets precede scripts, so sampling one URL per
@@ -152,10 +306,11 @@ echo "ok    browsable API references $(wc -l <"$work/api-assets.txt" | tr -d ' '
 # all; and a page whose first stylesheet is fine while a later one 404s would have passed.
 # These are localhost requests against an already-running container, so probing all of them
 # costs milliseconds.
-sort -u "$work/admin-assets.txt" "$work/api-assets.txt" >"$work/all-assets.txt"
+sort -u "$work/admin-assets.txt" "$work/api-assets.txt" "$work/docs-assets.txt" \
+  >"$work/all-assets.txt"
 asset_count=$(wc -l <"$work/all-assets.txt" | tr -d ' ')
 if [ "$asset_count" -gt "$MAX_ASSETS" ]; then
-  fail "the two pages reference $asset_count hashed assets, over the $MAX_ASSETS ceiling. That is a template regression rather than a static-serving fault; probing them all sequentially would turn this gate into a job timeout."
+  fail "the probed pages reference $asset_count hashed assets, over the $MAX_ASSETS ceiling. That is a template regression rather than a static-serving fault; probing them all sequentially would turn this gate into a job timeout."
 fi
 probe_started=$(date +%s)
 while IFS= read -r url; do
@@ -214,9 +369,18 @@ while IFS= read -r url; do
         *) fail "GET $url is a script but was served as '$ctype' — a browser will not execute it" ;;
       esac
       ;;
+    *.png)
+      # The Swagger page self-hosts a hashed favicon, and it is the only non-css/js asset
+      # any probed page references. Left out of the extractor it was the one referenced
+      # asset this gate never fetched, while its closing line claimed all of them.
+      case "$essence" in
+        image/png) ;;
+        *) fail "GET $url is a PNG but was served as '$ctype'" ;;
+      esac
+      ;;
     *)
-      # Unreachable through the extraction regexes above, which only ever yield .css or
-      # .js. Kept so widening them cannot silently skip this check.
+      # Unreachable through the extraction regexes above, which only ever yield .css, .js
+      # or .png. Kept so widening them cannot silently skip this check.
       fail "GET $url has an extension this gate does not know how to type-check"
       ;;
   esac
@@ -238,4 +402,4 @@ done <"$work/all-assets.txt"
 
 echo "ok    no Access-Control-Allow-Origin on any static response"
 
-echo "assert-static-served OK: $base renders its admin page and serves the hashed assets it references"
+echo "assert-static-served OK: $base renders its admin, browsable-API and docs pages, serves every hashed asset they reference, and reaches no third-party host"
