@@ -417,9 +417,9 @@ admin/session tables may remain unused). As the immediate admin-surface rollback
   public surface.
 - `make collectstatic` target and `STATIC_URL`/`STATIC_ROOT` settings for serving the admin's
   static assets in production (no WhiteNoise or external service introduced). **Superseded:**
-  that decision was reversed under [Unreleased] above — nothing served `STATIC_ROOT` on any
-  container channel, so every asset 404'd with `DEBUG=false`. The app bundles WhiteNoise and
-  serves them itself now.
+  that decision was reversed in 3.2.0 above — nothing served `STATIC_ROOT` on any container
+  channel, so every asset 404'd with `DEBUG=false`. The app bundles WhiteNoise and serves them
+  itself now.
 
 ### Changed
 - **Runtime floor raised.** Minimum Python is now **3.12** (was 3.10) and Django is pinned to the

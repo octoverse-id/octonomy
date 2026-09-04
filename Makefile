@@ -60,6 +60,16 @@ openapi-check:
 audit:
 	uv export --format requirements-txt --no-emit-project --frozen | uv run pip-audit --no-deps -r /dev/stdin
 
+# Asserts every place the release version is stamped agrees. Runs on every PR and push
+# via the CI `checks` job, not only at release time — a release tag can never be moved
+# (the `release tags: never move` ruleset has no bypass), so a gate that first ran at tag
+# time ran after the irreversible step.
+#
+# The SECURITY.md block encodes a POLICY, not just a format: exactly one release line is
+# supported at a time. Listing a second line is a commitment to backport into it, which is
+# a decision to make deliberately rather than by editing a table row. If the project ever
+# does decide to support two lines, this gate has to be updated in the same change — that
+# coupling is the point.
 version-check:
 	@pyproject_version=$$(grep -E '^version = ' pyproject.toml | sed -E 's/version = "([^"]+)"/\1/'); \
 	semver=$$(echo "$$pyproject_version" | sed -E 's/(a|b|rc)([0-9]+)$$/-\1.\2/'); \
@@ -83,7 +93,7 @@ version-check:
 	lock_version=$$(awk '/^\[\[package\]\]/ { name=""; ver="" } \
 		/^name = / { name=$$0 } \
 		/^version = / { ver=$$0 } \
-		/^source = \{ virtual/ { if (name == "name = \"octonomy\"") { sub(/^version = "/, "", ver); sub(/"$$/, "", ver); print ver; exit } }' uv.lock); \
+		/^source = \{ virtual = "\." \}$$/ { if (name == "name = \"octonomy\"") { sub(/^version = "/, "", ver); sub(/"$$/, "", ver); print ver; exit } }' uv.lock); \
 	if [ -z "$$lock_version" ]; then \
 		echo "version-check FAILED: could not read the octonomy package version from uv.lock"; exit 1; \
 	fi; \
