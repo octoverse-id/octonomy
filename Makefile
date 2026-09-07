@@ -60,6 +60,16 @@ openapi-check:
 audit:
 	uv export --format requirements-txt --no-emit-project --frozen | uv run pip-audit --no-deps -r /dev/stdin
 
+# Asserts every place the release version is stamped agrees. Runs on every PR and push
+# via the CI `checks` job, not only at release time — a release tag can never be moved
+# (the `release tags: never move` ruleset has no bypass), so a gate that first ran at tag
+# time ran after the irreversible step.
+#
+# The SECURITY.md block encodes a POLICY, not just a format: exactly one release line is
+# supported at a time. Listing a second line is a commitment to backport into it, which is
+# a decision to make deliberately rather than by editing a table row. If the project ever
+# does decide to support two lines, this gate has to be updated in the same change — that
+# coupling is the point.
 version-check:
 	@pyproject_version=$$(grep -E '^version = ' pyproject.toml | sed -E 's/version = "([^"]+)"/\1/'); \
 	semver=$$(echo "$$pyproject_version" | sed -E 's/(a|b|rc)([0-9]+)$$/-\1.\2/'); \
@@ -72,9 +82,28 @@ version-check:
 	if ! grep -q "## \[$$semver\]" CHANGELOG.md; then \
 		echo "version-check FAILED: CHANGELOG.md has no '## [$$semver]' section"; exit 1; \
 	fi; \
+	env_count=$$(grep -cE '^OCTONOMY_API_VERSION=' .env.example || true); \
+	if [ "$$env_count" != "1" ]; then \
+		echo "version-check FAILED: .env.example has $$env_count active OCTONOMY_API_VERSION lines, expected exactly 1"; exit 1; \
+	fi; \
+	env_version=$$(grep -E '^OCTONOMY_API_VERSION=' .env.example | sed -E 's/^OCTONOMY_API_VERSION=//'); \
+	if [ "$$env_version" != "$$semver" ]; then \
+		echo "version-check FAILED: .env.example pins OCTONOMY_API_VERSION=$$env_version, expected $$semver"; exit 1; \
+	fi; \
+	lock_version=$$(awk '/^\[\[package\]\]/ { name=""; ver="" } \
+		/^name = / { name=$$0 } \
+		/^version = / { ver=$$0 } \
+		/^source = \{ virtual = "\." \}$$/ { if (name == "name = \"octonomy\"") { sub(/^version = "/, "", ver); sub(/"$$/, "", ver); print ver; exit } }' uv.lock); \
+	if [ -z "$$lock_version" ]; then \
+		echo "version-check FAILED: could not read the octonomy package version from uv.lock"; exit 1; \
+	fi; \
+	if [ "$$lock_version" != "$$pyproject_version" ]; then \
+		echo "version-check FAILED: uv.lock has octonomy $$lock_version, pyproject.toml has $$pyproject_version — run 'uv lock'"; exit 1; \
+	fi; \
 	case "$$semver" in \
 	*[!0-9.]*) \
 		echo "version-check: $$semver is a prerelease — skipping the image gate (publish-image.yml's tag glob only publishes vX.Y.Z, so no image exists to point at)"; \
+		echo "version-check: $$semver is a prerelease — skipping the SECURITY.md gate (a prerelease is not a supported line)"; \
 		;; \
 	*) \
 		./scripts/check-image-refs.sh "$$semver" \
@@ -97,9 +126,26 @@ version-check:
 		if [ -n "$$stale_tag_refs" ]; then \
 			echo "version-check FAILED: stale release-tag reference(s) $$stale_tag_refs — this tree is v$$semver"; exit 1; \
 		fi; \
+		minor_line=$$(echo "$$semver" | sed -E 's/^([0-9]+)\.([0-9]+)\..*/\1.\2.x/'); \
+		minor_re=$$(echo "$$minor_line" | sed 's/\./\\./g'); \
+		supported_rows=$$(grep -cE '^\| *[0-9]+\.[0-9]+\.x *\| *✅' SECURITY.md || true); \
+		if [ "$$supported_rows" != "1" ]; then \
+			echo "version-check FAILED: SECURITY.md marks $$supported_rows release lines as supported, expected exactly 1 — a second supported line is a backport commitment nobody decided to make"; exit 1; \
+		fi; \
+		if ! grep -qE "^\| *$$minor_re *\| *✅" SECURITY.md; then \
+			echo "version-check FAILED: SECURITY.md has no supported-table row marking $$minor_line as supported (a row present but marked unsupported fails here too)"; exit 1; \
+		fi; \
+		cutoff=$$(echo "$$semver" | sed -E 's/^([0-9]+)\.([0-9]+)\..*/\1.\2/'); \
+		cutoff_re=$$(echo "$$cutoff" | sed 's/\./\\./g'); \
+		if ! grep -qE "^\| *< *$$cutoff_re *\| *❌" SECURITY.md; then \
+			echo "version-check FAILED: SECURITY.md has no '< $$cutoff' unsupported cutoff row — a stale cutoff silently keeps older lines looking covered"; exit 1; \
+		fi; \
+		if ! grep -qE "latest \`$$minor_re\` line" SECURITY.md; then \
+			echo "version-check FAILED: SECURITY.md prose does not name $$minor_line as the supported line (it can drift from the table)"; exit 1; \
+		fi; \
 		;; \
 	esac; \
-	echo "version-check OK: $$semver"
+	echo "version-check OK: $$semver (env=$$env_version lock=$$lock_version)"
 
 release-check: lint check static-check migration-check test openapi-check audit version-check
 

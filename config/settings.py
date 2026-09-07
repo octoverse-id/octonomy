@@ -42,7 +42,7 @@ def env_int(name: str, default: int) -> int:
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "local-dev-secret")
 DEBUG = env_bool("DJANGO_DEBUG", True)
-API_VERSION = os.getenv("OCTONOMY_API_VERSION", "3.1.1")
+API_VERSION = os.getenv("OCTONOMY_API_VERSION", "3.2.0")
 ALLOWED_HOSTS = [
     host.strip() for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 ]
@@ -57,7 +57,7 @@ ALLOWED_HOSTS = [
 # SECRET_KEY shapes, but it is a warning and runs only under `manage.py check --deploy`,
 # which the container entrypoint never invokes.
 # gstack-shortcut(dec-584a8f2c): no secret-strength check — upgrade when this guard is next
-#   edited for any reason, or at the 3.2.0 release. See TODOS.md CFG-2.
+#   edited for any reason, or at the 4.0.0 release. See TODOS.md CFG-2.
 # gstack-shortcut(dec-f77c11e8): whitespace-only values are accepted — same fix, same PR.
 if not DEBUG and (not SECRET_KEY or SECRET_KEY == "local-dev-secret"):
     raise ImproperlyConfigured(
@@ -523,7 +523,7 @@ SERVICE_TOKEN_PEPPER = os.getenv("SERVICE_TOKEN_PEPPER", "")
 # SECRET_KEY alone, so beyond this empty/default test nothing inspects SERVICE_TOKEN_PEPPER
 # anywhere, at boot or under `check --deploy`.
 # gstack-shortcut(dec-584a8f2c): no secret-strength check — upgrade when this guard is next
-#   edited for any reason, or at the 3.2.0 release. See TODOS.md CFG-2.
+#   edited for any reason, or at the 4.0.0 release. See TODOS.md CFG-2.
 # gstack-shortcut(dec-f77c11e8): whitespace-only values are accepted — same fix, same PR.
 if not DEBUG and (
     not SERVICE_TOKEN_PEPPER or SERVICE_TOKEN_PEPPER == "local-dev-service-token-pepper"

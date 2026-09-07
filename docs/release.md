@@ -68,9 +68,17 @@ token to a later release and say why in the entry. Do not leave it ambiguous; an
 release has already shipped is exactly the silent rot this step exists to prevent. Match the token,
 not the surrounding prose: a wrapped sentence stops being greppable the moment someone reflows it.
 
-**Currently pending:** `CFG-2` (secret boot guard does not judge strength) names the **3.2.0**
+**Currently pending:** `CFG-2` (secret boot guard does not judge strength) names the **4.0.0**
 release. It also fires on any edit to either boot guard in `config/settings.py`, where
 `gstack-shortcut` markers sit on the guards themselves.
+
+It names a major deliberately. The guard CFG-2 asks for raises `ImproperlyConfigured` at settings
+import, so a deployment running a short-but-random secret would boot today and fail to boot after
+the upgrade unless its operator sets `OCTONOMY_ALLOW_WEAK_SECRETS`. [`versioning.md`](versioning.md)
+calls that a breaking runtime/deployment requirement — the same clause that made 3.0.0 a major for
+the Python 3.12 / Django 5.2 floor. Scheduling CFG-2 into a minor would silently make that minor a
+major, so the token and the bump have to be decided together. This was caught while cutting 3.2.0,
+where CFG-2 was originally scoped in.
 
 ## Cutting a Release
 
@@ -85,6 +93,23 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
    - regenerate both schemas with `make openapi` (updates `info.version` in `docs/openapi.yaml`
      **and** `docs/openapi-v2.yaml` — `make version-check` only inspects the v1 file, but the
      OpenAPI drift gate in CI regenerates and diffs both)
+
+     **A project-root `.env` silently wins over the new default.** `config/settings.py` calls
+     `load_dotenv(BASE_DIR / ".env")` before any `os.getenv`, and `make openapi` shells
+     `uv run python manage.py spectacular`, which imports settings. So a `.env` still pinning
+     `OCTONOMY_API_VERSION` to the *previous* version stamps that previous version into both
+     schemas — after you have already bumped `pyproject.toml`. `version-check` does catch it, but
+     it reports "version strings disagree" and points at the OpenAPI file, not at `.env`, which is
+     a slow thing to debug at release time. Update or unset the pin first, or run the whole release
+     with the version in the environment:
+
+     ```bash
+     OCTONOMY_API_VERSION=<version> make openapi
+     OCTONOMY_API_VERSION=<version> make release-check
+     ```
+
+     Cutting the release from a dedicated `git worktree` sidesteps this entirely: `.env` is
+     gitignored, so a fresh worktree has none and the application default applies.
    - refresh the lock with `uv lock` (the project's own `version` in `uv.lock`)
    - the example image tags, which have no default to fall back on:
      `deploy/kubernetes/{deployment,migrate-job,dispatcher-cronjob}.yaml` (one `image:` each),
@@ -107,8 +132,14 @@ Routine releases are cut manually. Pick the bump (`PATCH` / `MINOR` / `MAJOR`) p
      **leave the example tags on the last published final release**; do not bump them to the
      prerelease version, which would document a pull that cannot work. They get stamped when the
      final release is cut.
+   - the literal **`refs/tags/vX.Y.Z`** references in `docs/deployment.md`, `docs/release.md` and
+     `README.md`. These are easy to miss because they are prose, not configuration — but
+     `make version-check` greps all three files for `refs/tags/v<semver>` and fails on any that
+     names a different version. As of 3.2.0 there is one live reference, in the attestation
+     example in `docs/deployment.md`. Same caveat as the image list: the gate only looks at those
+     three files, so a fourth file naming a release tag would go unchecked until it is added.
    - `SECURITY.md` — only when the supported line changes (a patch inside the same `x.y` line
-     does not move it)
+     does not move it). A **minor** bump does move it.
 
    Deliberately **not** stamped: `deploy/.env.production.example` and
    `deploy/kubernetes/configmap.yaml` leave `OCTONOMY_API_VERSION` unset so the application default

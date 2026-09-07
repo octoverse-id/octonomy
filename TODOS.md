@@ -239,6 +239,50 @@ container and VPS channels different manifests, which is the channel divergence
   metered pull bandwidth), or drf-spectacular-sidecar's maps grow materially past their current
   ~6 MB.
 
+### DEP-6: The version stamps are hand-written, and their gate is untested shell — DEFERRED (raised 2026-09-04, issue #160)
+Cutting a release means editing the version in 16 places across 11 files. 3.2.0 closed the part
+that was genuinely dangerous — `.env.example`, `SECURITY.md` and `uv.lock` were verified by nothing
+and now are — but it closed it with ~20 more lines of untested inline shell in the `version-check`
+Makefile target, and it did not remove a single hand edit.
+
+- **What:** Two halves, and they can land independently.
+  1. **Extract the verifier.** Move `version-check`'s inline shell into
+     `scripts/check-version-stamps.sh` with a `tests/tooling/test_check_version_stamps.py`,
+     following `check-image-refs.sh` and its test exactly. The target keeps its name and its
+     place in `release-check`.
+  2. **Add a writer.** `make version-bump X.Y.Z` that *writes* every stamp the verifier checks,
+     so the release step becomes one command plus a review of the diff.
+- **Why:** The verifier half is the one with real risk. `version-check` now performs eleven
+  distinct assertions and **not one of them is covered by a test** — only `check-image-refs.sh`,
+  the script it delegates to, is. That shell guards a one-way door: the `release tags: never move`
+  ruleset has no bypass, so a gate that silently stops asserting something is discovered after the
+  bytes are immutable. The writer half is friction rather than risk, but it is where the hand
+  edits actually go away, and this release proved the hand-maintained list drifts — `docs/release.md`
+  step 2 was missing the `refs/tags/vX.Y.Z` site the gate had been enforcing all along.
+- **Pros:** Brings the release gate up to the same bar as every other script in `scripts/`. The
+  writer and the verifier stay separate programs, so the writer never certifies its own output —
+  which is what keeps `version-check` meaningful. Makes prerelease behaviour testable; today the
+  PEP 440 / SemVer split (`uv.lock` holds `3.2.0rc1`, `.env.example` holds `3.2.0-rc.1`) is
+  asserted only by whoever last cut a prerelease.
+- **Cons:** Zero user-visible benefit; it is entirely release-process work. The repo's
+  release-tooling ratio puts this at roughly 150 script lines and 250 test lines
+  (`check-image-refs.sh` 92/151, `check-release-merge.sh` 106/182, `resolve-latest-tag.sh` 111/168,
+  `check-tag-unpublished.sh` 144/223). A writer is also the one place a bug produces a
+  *consistent* wrong answer that the verifier then happily passes — the prerelease branch is the
+  likeliest spot for that, which is an argument for doing the verifier's tests first.
+- **Context:** Start from `Makefile` `version-check` (the full contract) and mirror
+  `scripts/check-image-refs.sh`, which already models per-file presence, tag classification and
+  refusing a permissive default. The verifier and any future writer must derive their file lists
+  from one place, or the new script reintroduces exactly the drift it exists to remove. Note the
+  two version *forms* in play: `uv.lock` and `pyproject.toml` carry PEP 440, everything else
+  carries SemVer, and `version-check` converts between them.
+- **Effort:** M (human ~1 day / CC ~1h) for both halves; S for the verifier extraction alone.
+  **Priority:** P3. **Depends on:** nothing.
+- **Trigger:** the next release where a stamp is missed, **or** the next file added to any
+  `version-check` file list — that is the moment the lists can silently disagree. Deliberately not
+  a `release-trigger:` token: this is friction and test debt, not a correctness gap, and the gate
+  does hold meanwhile.
+
 ## Configuration
 
 ### CFG-1: Rename `OCTONOMY_API_VERSION` — DEFERRED (raised 2026-08-05)
@@ -368,7 +412,7 @@ of promising a strength check that never existed. This entry is the half that wa
   shapes under `manage.py check --deploy`, but it is a warning, is deploy-tagged, and covers
   `SECRET_KEY` alone.
 - **Effort:** M (human ~1 day). **Priority:** P2. **Depends on:** nothing.
-- **Trigger:** `release-trigger: 3.2.0` — checked by the "Deferred work triggered by this release"
+- **Trigger:** `release-trigger: 4.0.0` — checked by the "Deferred work triggered by this release"
   step in `docs/release.md`. That token is on one line on purpose: the step greps for it, and a
   trigger phrased only in prose stops being greppable the moment the sentence rewraps. It also fires
   on the next edit to either boot guard in `config/settings.py` for any reason, whichever comes
@@ -376,6 +420,17 @@ of promising a strength check that never existed. This entry is the half that wa
   inside one minor version means extract the predicate rather than add another clause. Deliberately
   **not** "another incident": one already happened, and it is what #147 reports. A trigger already
   satisfied on the day it is written is how the DEP-2 entry above rotted.
+
+  **Moved from `3.2.0` to `4.0.0` on 2026-09-04, while cutting 3.2.0 (issue #160).** The reason is
+  semver, not scheduling. This entry's own Cons note the guard "could refuse to start a deployment
+  already running a short but random secret" — and a deployment that boots today, then does not
+  boot after upgrading unless its operator acts, is exactly what [`versioning.md`](docs/versioning.md)
+  defines as a breaking runtime/deployment requirement: a **major**. Landing CFG-2 in 3.2.0 would
+  have made 3.2.0 a major by the project's own policy without anyone deciding that, so the token now
+  names the release where the bump is already on the table. Two consequences for whoever picks this
+  up. The escape hatch does not rescue a minor — requiring an operator to set
+  `OCTONOMY_ALLOW_WEAK_SECRETS` before the service will start *is* the breaking action. And shipping
+  it warning-only stays a legitimate alternative, trading the boot guarantee for the smaller bump.
 
 ### CFG-3: Webhook signing secret accepts the shipped `CHANGE_ME` placeholder — DEFERRED (raised 2026-09-01, found while reviewing #147)
 `OCTONOMY_WEBHOOK_SIGNING_SECRET` has no boot guard **and** no system check — unlike
