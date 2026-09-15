@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GET /tags` emitted no `ORDER BY`, so paging it could repeat and skip rows** (#162), on both
+  `/api/v1` and `/api/v2` — `config/urls.py` routes one `api/<version>/` path into the same view.
+  The list annotates `usage_count=Count("assignments")`, which makes it an aggregate query, and
+  Django stopped applying `Meta.ordering` to aggregate queries in 3.1 ([ticket #32811]), so
+  `Tag.Meta.ordering` (`name, slug, id`) was silently dropped. `LIMIT`/`OFFSET` over a query with
+  no `ORDER BY` is undefined in SQL: when PostgreSQL switched between `HashAggregate` and
+  `GroupAggregate` — which an `ANALYZE`, growth past `work_mem`, a parameter change or a version
+  upgrade can do on its own — two consecutive pages delivered some rows twice and dropped others,
+  with **no concurrent writes involved** and no error to tell the caller. The reproduction on the
+  issue lost 23 of 100 rows across a two-page walk. `tags_for_tenant` now orders explicitly after
+  annotating; the `id` tiebreaker is what makes it total, since `name` and `slug` are both
+  non-unique. No migration, no schema change, and `usage_count` values are unaffected — adding an
+  `ORDER BY` changes neither the grouping cardinality nor the counts. (On PostgreSQL the `GROUP BY`
+  stays keyed on the primary key alone; SQLite groups by every selected non-aggregate column, as it
+  already did before this change, and the pk in that list keeps the groups identical.)
+
+  Callers that worked around this are safe to stop: the Go SDK's best-effort-walk caveat on
+  `Each` (octoverse-id/octonomy-go#49) no longer applies once a release carrying this fix is
+  deployed. Paging a list that is being written to stays best-effort regardless — ordering cannot fix
+  that, and comparing `pagination.count` against the distinct ids you walked only detects the drift
+  in one direction. `docs/api.md` now says so, and says what is actually available instead.
+
+- **Pagination could not warn about this, so nothing did.**
+  `django.core.paginator.Paginator` raises `UnorderedObjectListWarning` for exactly this hazard,
+  but DRF's `LimitOffsetPagination` never builds a `Paginator` — it slices the queryset directly —
+  so that detector could not fire anywhere in this codebase, which is how an unordered tags list
+  survived to 3.2.0. `OctonomyLimitOffsetPagination.paginate_queryset` now runs the same check and
+  warns at runtime (a warning, not a 500: an unordered page is degraded, not unserveable), and
+  pytest promotes it to an error so the next occurrence fails in CI. All six `paginate_queryset`
+  call sites route through that class. The check proves an `ORDER BY` exists, not that it is
+  total — `.ordered` is `True` for `order_by("?")` too — so endpoint tests still pin the full
+  tiebreaker chain.
+
+[ticket #32811]: https://code.djangoproject.com/ticket/32811
+
 ## [3.2.0] - 2026-09-04
 
 A **minor** release. Both live REST surfaces keep the same paths, fields, validation, and runtime

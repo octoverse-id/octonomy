@@ -188,8 +188,28 @@ global tag object when a merchant has assigned a global tag, regardless of the `
 default — that is the intended contract, not a leak.
 
 Mixed merchant+global result sets are ordered by the endpoint's existing ordering plus an `id`
-tiebreaker, so pagination is stable. Slug collisions across scopes (e.g. a global `premium` and a
-merchant `premium`) are **distinct rows and are not de-duplicated**.
+tiebreaker, so a **fixed** result set pages deterministically. Slug collisions across scopes (e.g. a
+global `premium` and a merchant `premium`) are **distinct rows and are not de-duplicated**.
+
+That guarantee has a boundary worth stating plainly: ordering makes an unchanging result set
+deterministic, it does not give you a snapshot. A row inserted, renamed or deactivated between two
+requests shifts every later offset, so a limit/offset walk over a *changing* list can still repeat or
+miss rows. Comparing `pagination.count` against the number of distinct ids you walked catches some of
+that, but only in one direction: a **mismatch proves** the list drifted under you, while a match
+proves nothing. One delete plus one insert during a walk leaves the count unchanged and still skips a
+row — page 1 of `A,B,C,D` returns `A,B`; `A` is then deleted and `E` appended; offset 2 returns `D,E`;
+four distinct ids, `count` still 4, and `C` was never delivered.
+
+Octonomy offers **offset pagination only**. There is no cursor parameter, and the list filters
+(`type`, `slug`, `parent_id`, `vocabulary_id`, `application_id`, `is_active`, `q`) all narrow a set
+rather than resume from a position, so a client cannot assemble a key-set walk on top of them. If you
+need a complete inventory, walk while writes are quiesced, or re-walk and union by id — treating a
+`count` mismatch as proof that you have to. A cursor would not settle this on its own either: `name`
+and `slug` are mutable, so a rename can move a row from ahead of the cursor to behind it and a
+key-set walk would miss it just the same. Snapshot semantics need more than an ordering.
+
+(Before the fix for issue #162, `GET /tags` had no ordering at all and could lose rows with no
+concurrent writes whatsoever; see the CHANGELOG.)
 
 ### Namespaced writes are gated
 
