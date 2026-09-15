@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from octonomy.tags.models import Tag, TagAlias, Vocabulary
 
 
@@ -27,6 +29,7 @@ def make_vocabulary(
 
 def make_tag(
     *,
+    id: uuid.UUID | None = None,
     tenant_id: str = "tenant_a",
     application_id: str | None = None,
     namespace_type: str | None = None,
@@ -39,6 +42,8 @@ def make_tag(
     vocabulary: Vocabulary | None = None,
 ) -> Tag:
     return Tag.objects.create(
+        # Pinnable so ordering tests can make id order disagree with every other order.
+        id=id or uuid.uuid4(),
         tenant_id=tenant_id,
         application_id=application_id,
         namespace_type=namespace_type,

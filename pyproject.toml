@@ -41,6 +41,12 @@ filterwarnings = [
   # (tests/admin/test_static_serving.py), so nothing is hidden here except ~50 repeats
   # of a message about a directory the suite deliberately does without.
   "ignore:No directory at:UserWarning",
+  # Paginating an unordered queryset is a correctness bug, not a style nit: LIMIT/OFFSET
+  # over a query with no ORDER BY is undefined in SQL, so pages can repeat and skip rows
+  # (issue #162). OctonomyLimitOffsetPagination warns at runtime rather than 500-ing a
+  # live read; this turns the same warning into a test failure, which is where the cost
+  # of catching it is lowest.
+  "error::django.core.paginator.UnorderedObjectListWarning",
 ]
 
 [tool.coverage.run]

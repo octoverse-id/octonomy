@@ -98,6 +98,11 @@ def test_merged_pagination_is_stable_and_has_no_dedup(wildcard_token, scoped_tag
     first, second = page_through(), page_through()
     # Same-(name, slug) rows across scopes are distinct rows: two ids, no dedup,
     # and the id tiebreaker keeps the merged order stable across paginations.
+    #
+    # That tiebreaker only became real in #162 — before it, this endpoint carried no
+    # ORDER BY at all and this comparison still passed, because a two-row fixture is
+    # consistent under any plan inside one process. Self-comparison is not evidence of a
+    # stable order; tests/tags/test_list_ordering.py pins the sequence itself.
     assert first == second
     assert len(first) == len(set(first)) == 2
 
