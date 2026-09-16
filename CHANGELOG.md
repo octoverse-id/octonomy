@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-09-16
+
+A **patch** release. One user-visible fix: `GET /tags` emitted no `ORDER BY`, so paging it could
+repeat and skip rows. No new endpoint, field, setting, system check or dependency; no database
+migration; both generated OpenAPI schemas regenerate byte-identical apart from `info.version`.
+Rollback is a redeploy of 3.2.0.
+
+**Operator note.** The tags list now sorts on `name, slug, id`, and no tags index begins with
+`name`, so its plan gains a sort over the set the `GROUP BY` already had to materialise. A bounded
+top-N heapsort there is expected; an external merge sort spilling to disk is the signal to add an
+index or raise `work_mem`. `docs/operations.md` folds this into the existing per-deployment
+`EXPLAIN` step. `usage_count` values are unchanged.
+
+The only other commits in this release are two dependabot bumps that never reach runtime: ruff
+0.16.5 → 0.16.6 (a dev extra, #163) and `docker/setup-qemu-action` (#164).
+
 ### Fixed
 
 - **`GET /tags` emitted no `ORDER BY`, so paging it could repeat and skip rows** (#162), on both
@@ -621,7 +637,8 @@ Initial public release.
 - OpenAPI schema and Swagger/ReDoc docs via drf-spectacular.
 - Apache License 2.0.
 
-[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/octoverse-id/octonomy/compare/v3.2.1...HEAD
+[3.2.1]: https://github.com/octoverse-id/octonomy/compare/v3.2.0...v3.2.1
 [3.2.0]: https://github.com/octoverse-id/octonomy/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/octoverse-id/octonomy/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/octoverse-id/octonomy/compare/v3.0.1...v3.1.0

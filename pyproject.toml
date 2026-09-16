@@ -1,6 +1,6 @@
 [project]
 name = "octonomy"
-version = "3.2.0"
+version = "3.2.1"
 description = "Multi-tenant tag management and taxonomy service."
 readme = "README.md"
 license = "Apache-2.0"
