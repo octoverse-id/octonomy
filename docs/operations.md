@@ -250,7 +250,10 @@ EXPLAIN (ANALYZE, BUFFERS)
 ```
 
 Run it against a prod-sized copy of your database and confirm the merchant branch and the global
-branch each use an index (no unexpected seq scan or external sort). If it degrades, add the missing
+branch each use an index (no unexpected seq scan or external sort). One thing to expect on the tags
+list specifically: it orders by `name, slug, id` and no tags index begins with `name`, so the plan
+carries a sort over the set the `GROUP BY` already had to materialise. A bounded top-N heapsort there
+is normal; an external merge sort spilling to disk is the signal to add an index or raise `work_mem`. If it degrades, add the missing
 per-branch index and re-check before enabling merchant reads at scale. This is an operator step for a
 given deployment's data volume — there is nothing to change in the application to perform it.
 

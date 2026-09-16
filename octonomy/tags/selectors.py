@@ -6,6 +6,20 @@ from octonomy.core.auth import GLOBAL_SCOPE, ScopeContext
 from octonomy.core.selectors import apply_namespace_filter, namespace_q
 from octonomy.tags.models import Tag
 
+# The tags list is an aggregate query (usage_count is a Count), and Django stopped
+# applying Meta.ordering to GROUP BY queries in 3.1, so Tag.Meta.ordering is silently
+# dropped here. LIMIT/OFFSET over an unordered query is undefined in SQL, which let the
+# tags list repeat and skip rows across pages whenever the planner changed its mind
+# (issue #162). The chain is ordered explicitly instead, and it must stay total: name and
+# slug are both non-unique, so the id tiebreaker is what makes the sequence deterministic.
+TAG_LIST_ORDERING = ("name", "slug", "id")
+
+
+def annotate_usage_count(queryset: QuerySet[Tag], count_filter: Q | None) -> QuerySet[Tag]:
+    if count_filter is None:
+        return queryset.annotate(usage_count=Count("assignments"))
+    return queryset.annotate(usage_count=Count("assignments", filter=count_filter))
+
 
 def usage_count_filter(
     scope_context: ScopeContext = GLOBAL_SCOPE,
@@ -52,9 +66,11 @@ def tags_for_tenant(
         application_ids=application_ids,
         include_global=include_global,
     )
-    if count_filter is None:
-        return queryset.annotate(usage_count=Count("assignments"))
-    return queryset.annotate(usage_count=Count("assignments", filter=count_filter))
+    # Ordered after the annotate, so the ORDER BY lands on the aggregate query rather
+    # than on a queryset that annotate() would re-plan. The single by-id caller
+    # (get_tag_or_404) inherits it too, which is free on a primary-key lookup and keeps
+    # the next caller ordered by default.
+    return annotate_usage_count(queryset, count_filter).order_by(*TAG_LIST_ORDERING)
 
 
 def apply_usage_counts(
@@ -70,11 +86,7 @@ def apply_usage_counts(
     count_filter = usage_count_filter(
         scope_context, mode=mode, application_ids=application_ids, include_global=include_global
     )
-    queryset = Tag.objects.filter(id__in=tag_ids)
-    if count_filter is None:
-        queryset = queryset.annotate(usage_count=Count("assignments"))
-    else:
-        queryset = queryset.annotate(usage_count=Count("assignments", filter=count_filter))
+    queryset = annotate_usage_count(Tag.objects.filter(id__in=tag_ids), count_filter)
     counts = dict(queryset.values_list("id", "usage_count"))
     for tag in tag_list:
         tag.usage_count = counts.get(tag.id, 0)
