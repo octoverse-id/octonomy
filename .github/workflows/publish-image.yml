@@ -267,7 +267,7 @@ jobs:
         # the digest is already published that action is skipped, and promotion,
         # attestation verification and the pull check still need the credential.
         if: steps.guard.outputs.build == 'false'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
